@@ -193,13 +193,13 @@ output "waf_web_acl_arn" {
 output "environment_info" {
   description = "Summary of environment configuration"
   value = {
-    environment        = var.environment
-    region             = var.aws_region
-    name_prefix        = local.name_prefix
-    is_local           = local.is_local
-    is_production      = local.is_production
-    nat_gateway        = var.enable_nat_gateway
-    fips_compliant     = true
+    environment    = var.environment
+    region         = var.aws_region
+    name_prefix    = local.name_prefix
+    is_local       = local.is_local
+    is_production  = local.is_production
+    nat_gateway    = var.enable_nat_gateway
+    fips_compliant = true
   }
 }
 

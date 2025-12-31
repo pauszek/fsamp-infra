@@ -2,7 +2,11 @@
 **/.terraform/
 *.tfstate
 *.tfstate.*
-*.terraform.lock.hcl
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
 crash.log
 crash.*.log
 override.tf
@@ -11,6 +15,8 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+
+# Note: .terraform.lock.hcl SHOULD be committed (dependency lock)
 
 # Lambda build artifacts
 terraform/modules/compute/files/*.zip
