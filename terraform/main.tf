@@ -21,9 +21,9 @@ variable "environment" {
 }
 
 variable "aws_region" {
-  description = "AWS region"
+  description = "AWS region (us-west-2 for FIPS support)"
   type        = string
-  default     = "eu-central-1"
+  default     = "us-west-2"
 }
 
 variable "project_name" {
