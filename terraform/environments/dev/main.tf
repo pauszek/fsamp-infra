@@ -1,8 +1,5 @@
 # =============================================================================
-# Dev Environment Configuration (AWS Free Tier)
-# =============================================================================
-# This configuration targets real AWS for development/testing
-# Optimized for AWS Free Tier with FIPS 140-3 compliance
+# Dev Environment Configuration (AWS)
 # =============================================================================
 
 terraform {
@@ -15,9 +12,9 @@ terraform {
     }
   }
 
-  # Remote backend - uncomment after running bootstrap
+  # Remote backend - uncomment after bootstrap
   # backend "s3" {
-  #   bucket         = "fsamp-terraform-state-ACCOUNT_ID"  # Update with your account ID
+  #   bucket         = "fsamp-terraform-state"
   #   key            = "dev/terraform.tfstate"
   #   region         = "us-west-2"
   #   encrypt        = true
@@ -26,33 +23,12 @@ terraform {
 }
 
 # =============================================================================
-# AWS Provider Configuration
+# AWS Provider (FIPS 140-3)
 # =============================================================================
 
 provider "aws" {
-  region = var.aws_region
-
-  # FIPS 140-3: Use FIPS-validated endpoints (us-west-2 supports FIPS)
-  use_fips_endpoint = true
-
-  default_tags {
-    tags = {
-      Environment = "dev"
-      ManagedBy   = "terraform"
-      Project     = "fsamp"
-      Compliance  = "FIPS-140-3"
-    }
-  }
-}
-
-# =============================================================================
-# Variables
-# =============================================================================
-
-variable "aws_region" {
-  description = "AWS region (us-west-2 for FIPS support)"
-  type        = string
-  default     = "us-west-2"
+  region            = var.aws_region
+  use_fips_endpoint = var.use_fips_endpoint
 }
 
 # =============================================================================
@@ -62,66 +38,10 @@ variable "aws_region" {
 module "fsamp" {
   source = "../../"
 
-  environment        = "dev"
+  environment        = var.environment
   aws_region         = var.aws_region
-  project_name       = "fsamp"
-  enable_nat_gateway = false # Use VPC Endpoints - saves ~$32/month
-
-  tags = {
-    Team       = "development"
-    CostCenter = "fsamp-dev"
-  }
+  project_name       = var.project_name
+  enable_nat_gateway = var.enable_nat_gateway
+  tags               = var.tags
 }
 
-# =============================================================================
-# Outputs
-# =============================================================================
-
-output "kms_key_arn" {
-  value = module.fsamp.kms_key_arn
-}
-
-output "s3_buckets" {
-  value = module.fsamp.s3_buckets
-}
-
-output "sqs_queue_urls" {
-  value = module.fsamp.sqs_queue_urls
-}
-
-output "sns_topic_arns" {
-  value = module.fsamp.sns_topic_arns
-}
-
-output "dynamodb_tables" {
-  value = module.fsamp.dynamodb_table_names
-}
-
-output "ecr_repository_urls" {
-  value = module.fsamp.ecr_repository_urls
-}
-
-output "cognito_user_pool_id" {
-  description = "Cognito User Pool ID"
-  value       = module.fsamp.cognito_user_pool_id
-}
-
-output "cognito_web_client_id" {
-  description = "Cognito Web Client ID"
-  value       = module.fsamp.cognito_web_client_id
-}
-
-output "api_gateway_endpoint" {
-  description = "API Gateway invoke URL"
-  value       = module.fsamp.api_gateway_endpoint
-}
-
-output "vpc_id" {
-  description = "VPC ID"
-  value       = module.fsamp.vpc_id
-}
-
-output "ecs_cluster_name" {
-  description = "ECS Cluster name"
-  value       = module.fsamp.ecs_cluster_name
-}
