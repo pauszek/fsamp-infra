@@ -1,14 +1,21 @@
 # =============================================================================
-# FSAMP Infrastructure - Root Module
+# FSAMP Infrastructure - Main Configuration
 # =============================================================================
-# This is the main entry point for Terraform configuration.
-# Environment-specific configurations are in /environments/{env}/
+# Single configuration for all environments. Values come from tfvars.
 #
-# Files in this directory:
-#   - variables.tf: Input variable definitions
-#   - locals.tf: Computed local values
-#   - outputs.tf: Output definitions
-#   - versions.tf: Provider version constraints
+# Usage:
+#   terraform init -backend-config=backends/local.hcl   # or dev.hcl, prod.hcl
+#   terraform plan -var-file=envs/local.tfvars          # or dev.tfvars, prod.tfvars
+#   terraform apply -var-file=envs/local.tfvars
+#
+# Files:
+#   - provider.tf:  AWS/LocalStack provider configuration
+#   - backend.tf:   State backend (partial config)
+#   - variables.tf: Input variables
+#   - locals.tf:    Computed values
+#   - outputs.tf:   Output definitions
+#   - envs/*.tfvars: Environment-specific values
+#   - backends/*.hcl: Backend configs per environment
 # =============================================================================
 
 # =============================================================================

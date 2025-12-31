@@ -78,6 +78,12 @@ variable "enable_nat_gateway" {
 # Feature Flags
 # -----------------------------------------------------------------------------
 
+variable "use_fips_endpoint" {
+  description = "Use FIPS 140-3 validated endpoints. Only works in supported regions (us-*)"
+  type        = bool
+  default     = true
+}
+
 variable "enable_waf" {
   description = "Enable WAF for API Gateway. Automatically enabled in prod"
   type        = bool
@@ -88,5 +94,15 @@ variable "enable_container_insights" {
   description = "Enable CloudWatch Container Insights for ECS. Adds observability but increases costs"
   type        = bool
   default     = true
+}
+
+# -----------------------------------------------------------------------------
+# LocalStack Configuration (only used when environment = "local")
+# -----------------------------------------------------------------------------
+
+variable "localstack_endpoint" {
+  description = "LocalStack endpoint URL for local development"
+  type        = string
+  default     = "http://localhost:4566"
 }
 

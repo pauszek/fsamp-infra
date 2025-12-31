@@ -1,6 +1,7 @@
 # =============================================================================
-# Production Environment Values
+# Production Environment (AWS)
 # =============================================================================
+# Usage: terraform plan -var-file=envs/prod.tfvars
 
 environment        = "prod"
 aws_region         = "us-west-2"
