@@ -1,91 +1,155 @@
 # FSAMP Infrastructure
 
-Infrastructure as Code (IaC) for the FSAMP (File Secure Architecture Microservices Platform).
+Infrastructure as Code (IaC) for the FSAMP (File Secure Architecture Microservices Platform) using Terraform and LocalStack Pro.
 
-**Master's Thesis Project**: *Bezpieczna platforma mikroserwisowa w chmurze AWS z wykorzystaniem architektury sterowanej zdarzeniami i infrastruktury jako kod (IaC)*
+## 🚀 Quick Start
+
+```bash
+# 1. Start LocalStack
+docker-compose up -d
+
+# 2. Initialize Terraform
+make init-local
+
+# 3. Deploy infrastructure
+make apply-local
+
+# 4. Verify
+make plan-local
+```
+
+## 📁 Project Structure
+
+```
+terraform/
+├── main.tf          # Module orchestration
+├── variables.tf     # Input variables
+├── outputs.tf       # Output definitions
+├── locals.tf        # Computed values
+├── provider.tf      # AWS/LocalStack provider
+├── versions.tf      # Version constraints
+├── envs/            # Environment-specific values
+│   ├── local.tfvars # LocalStack
+│   ├── dev.tfvars   # AWS Dev
+│   └── prod.tfvars  # AWS Prod
+├── backends/        # State backend configs
+│   ├── local.hcl
+│   ├── dev.hcl
+│   └── prod.hcl
+└── modules/         # Reusable modules
+    ├── security/    # KMS, IAM
+    ├── storage/     # S3, DynamoDB
+    ├── messaging/   # SNS, SQS
+    ├── networking/  # VPC, subnets
+    ├── compute/     # ECS, Lambda
+    ├── auth/        # Cognito
+    ├── api-gateway/ # API Gateway, WAF
+    ├── ecr/         # Container registry
+    └── observability/ # CloudWatch
+```
+
+## 🔧 Usage
+
+```bash
+# Local (LocalStack)
+make init-local
+make plan-local
+make apply-local
+
+# AWS Dev
+make init-dev
+make plan-dev
+make apply-dev
+
+# AWS Prod
+make init-prod
+make plan-prod
+make apply-prod
+
+# Or directly with terraform:
+terraform plan -var-file=envs/dev.tfvars
+terraform apply -var-file=envs/dev.tfvars
+```
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         FSAMP Platform Architecture                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌─────────────┐     ┌─────────────┐     ┌─────────────────────────────────┐│
-│  │   Client    │────▶│ API Gateway │────▶│    Application Load Balancer   ││
-│  │  (Browser)  │     │  + WAF      │     │                                 ││
-│  └─────────────┘     └──────┬──────┘     └───────────────┬─────────────────┘│
-│                             │                             │                  │
-│                      ┌──────┴──────┐                      │                  │
-│                      │   Cognito   │                      │                  │
-│                      │  User Pool  │                      │                  │
-│                      └─────────────┘                      │                  │
-│                                                           ▼                  │
-│  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │                        ECS Fargate Cluster                              │ │
-│  │  ┌────────────────────────┐     ┌─────────────────────────────────┐   │ │
-│  │  │   Spring Gateway       │     │   (Future: Python Processor)    │   │ │
-│  │  │   - REST API           │     │   - Async processing            │   │ │
-│  │  │   - FIPS 140-3 crypto  │     │   - File analysis               │   │ │
-│  │  └───────────┬────────────┘     └─────────────────────────────────┘   │ │
-│  └──────────────┼────────────────────────────────────────────────────────┘ │
-│                 │                                                           │
-│  ┌──────────────┼───────────────────────────────────────────────────────┐  │
-│  │              │         Event-Driven Architecture                      │  │
-│  │              ▼                                                        │  │
-│  │  ┌───────────────────┐     ┌───────────────────┐                     │  │
-│  │  │   SNS Topics      │────▶│   SQS Queues      │                     │  │
-│  │  │   - file-events   │     │   - processing    │                     │  │
-│  │  │   - proc-events   │     │   - analysis      │──────┐              │  │
-│  │  │   - dlq-alerts    │     │   - dlq           │      │              │  │
-│  │  └───────────────────┘     └───────────────────┘      │              │  │
-│  │                                                        ▼              │  │
-│  │  ┌────────────────────────────────────────┐    ┌─────────────────┐   │  │
-│  │  │           Lambda Processor             │    │   CloudWatch    │   │  │
-│  │  │   - Python 3.12                        │    │   - Logs        │   │  │
-│  │  │   - Event processing                   │    │   - Alarms      │   │  │
-│  │  │   - Idempotency (DynamoDB)             │    │   - Dashboard   │   │  │
-│  │  └────────────────────────────────────────┘    └─────────────────┘   │  │
-│  └──────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-│  ┌──────────────────────────────────────────────────────────────────────┐  │
-│  │                            Storage Layer                              │  │
-│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐       │  │
-│  │  │  S3: files      │  │  S3: processed  │  │  S3: quarantine │       │  │
-│  │  │  (SSE-KMS)      │  │  (SSE-KMS)      │  │  (SSE-KMS)      │       │  │
-│  │  └─────────────────┘  └─────────────────┘  └─────────────────┘       │  │
-│  │  ┌─────────────────────────────┐  ┌───────────────────────────────┐  │  │
-│  │  │  DynamoDB: file-metadata   │  │  DynamoDB: events             │  │  │
-│  │  │  (KMS encrypted, PITR)     │  │  (KMS encrypted, PITR)        │  │  │
-│  │  └─────────────────────────────┘  └───────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-│  ════════════════════════ Security Layer ═══════════════════════════════   │
-│  KMS (FIPS 140-3) │ IAM │ VPC │ Security Groups │ NACLs │ VPC Flow Logs    │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    FSAMP Infrastructure                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Security Module          Storage Module         Messaging      │
+│  ├── KMS Key (FIPS)       ├── S3 Buckets         ├── SNS Topics │
+│  ├── IAM Roles            │   ├── files          │   ├── file-events
+│  │   ├── ECS Task         │   ├── processed      │   ├── processing
+│  │   └── Lambda           │   └── quarantine     │   └── dlq-alerts
+│  └── IAM Policies         └── DynamoDB           ├── SQS Queues │
+│                               ├── file-metadata  │   ├── processing
+│                               └── events         │   ├── analysis
+│                                                  │   └── dlq    │
+│  Observability Module                            └──────────────┘
+│  ├── CloudWatch Log Groups                                      │
+│  │   ├── /ecs/{prefix}                                          │
+│  │   ├── /aws/lambda/{prefix}                                   │
+│  │   └── /aws/apigateway/{prefix}                               │
+│  ├── CloudWatch Dashboard                                       │
+│  └── CloudWatch Alarms (DLQ)                                    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## 🌍 Environments
 
-| Environment | Target | Modules Deployed | State Backend |
-|-------------|--------|------------------|---------------|
-| `local` | LocalStack Pro | security, storage, messaging, observability | Local file |
-| `dev` | AWS Free Tier | All modules (ECR, Cognito, API GW, etc.) | S3 + DynamoDB |
-| `prod` | AWS | All modules + WAF enabled | S3 + DynamoDB |
+| Environment | Backend | Use Case |
+|-------------|---------|----------|
+| `local` | LocalStack Pro + local state | Development, testing |
+| `dev` | AWS + S3 backend | Integration testing |
+| `prod` | AWS + S3 backend (encrypted) | Production |
 
-## 📦 Terraform Modules
+## 🧪 Testing Strategy
 
-| Module | Resources | Local | AWS |
-|--------|-----------|-------|-----|
-| `security` | KMS, IAM Roles & Policies | ✅ | ✅ |
-| `storage` | S3 Buckets, DynamoDB Tables | ✅ | ✅ |
-| `messaging` | SNS Topics, SQS Queues, DLQ | ✅ | ✅ |
-| `observability` | CloudWatch Logs, Dashboard, Alarms | ✅ | ✅ |
-| `networking` | VPC, Subnets, Security Groups, VPC Endpoints | ❌ | ✅ |
-| `compute` | ECS Cluster, Task Definitions, Lambda | ❌ | ✅ |
-| `ecr` | Container Registry | ❌ | ✅ |
-| `auth` | Cognito User Pool, App Clients | ❌ | ✅ |
-| `api-gateway` | REST API, WAF | ❌ | ✅ |
+### Enterprise Testing Pyramid
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              E2E Tests (fsamp-infra/e2e/)                       │
+│     Full stack: Gateway + Processor + LocalStack                │
+│     When: Pre-release, critical path validation                 │
+│     Frequency: Per release (rare, expensive)                    │
+├─────────────────────────────────────────────────────────────────┤
+│          Integration Tests (per-repo)                           │
+│     fsamp-gateway/docker-compose.test.yml                       │
+│     fsamp-processor/docker-compose.test.yml                     │
+│     Each repo has OWN LocalStack (isolation!)                   │
+│     Frequency: Every commit                                     │
+├─────────────────────────────────────────────────────────────────┤
+│              Unit Tests (per-repo)                              │
+│     Mocks, no Docker, fast                                      │
+│     Frequency: Every commit                                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Principles
+
+1. **Isolation**: Each repo has its own LocalStack - no shared state between test runs
+2. **Cloud Pods**: Save/restore LocalStack state for consistent baselines
+3. **Fast Feedback**: Unit tests > Integration > E2E (pyramid approach)
+4. **Single Source of Truth**: `fsamp-infra` = infrastructure definition
+
+### Docker Compose Structure
+
+```
+fsamp-infra/
+  docker-compose.yml           ← LocalStack for Terraform testing
+  docker-compose.override.yml  ← Local dev overrides (gitignored)
+  e2e/
+    docker-compose.yml         ← Full stack E2E (used later)
+
+fsamp-gateway/
+  docker-compose.test.yml      ← Gateway + own LocalStack
+
+fsamp-processor/
+  docker-compose.test.yml      ← Processor + own LocalStack
+```
 
 ## 🚀 Quick Start
 
@@ -94,120 +158,124 @@ Infrastructure as Code (IaC) for the FSAMP (File Secure Architecture Microservic
 - Docker & Docker Compose
 - Terraform >= 1.7.0
 - AWS CLI v2
-- LocalStack Pro token (`LOCALSTACK_AUTH_TOKEN`)
+- LocalStack Pro auth token
 
-### Local Development (LocalStack)
+### Setup
 
 ```bash
-# 1. Setup
-cp .env.example .env
-# Edit .env - add LOCALSTACK_AUTH_TOKEN
+# 1. Clone and enter directory
+cd fsamp-infra
 
-# 2. Start LocalStack
+# 2. Configure environment
+cp .env.example .env
+# Edit .env and add your LOCALSTACK_AUTH_TOKEN
+
+# 3. (Optional) Create local overrides
+cp docker-compose.override.yml.example docker-compose.override.yml
+```
+
+### Local Development
+
+```bash
+# 1. Start LocalStack
 docker-compose up -d
 
-# 3. Deploy infrastructure
+# 2. Wait for initialization
+docker-compose logs -f localstack
+# Wait for "LocalStack initialization complete!"
+
+# 3. Deploy with Terraform
 cd terraform/environments/local
 terraform init
 terraform apply
 
-# 4. Verify
-./scripts/localstack-test.sh
+# 4. Verify resources
+../../scripts/localstack-test.sh
 ```
 
-### AWS Deployment
+### Cloud Pods (State Snapshots)
 
 ```bash
-# 1. Bootstrap remote state (one-time)
-./scripts/bootstrap-terraform-state.sh
+# Save infrastructure state (after terraform apply)
+./scripts/cloud-pods.sh save fsamp-local-base
 
-# 2. Uncomment backend in terraform/environments/dev/main.tf
+# Load state on new machine or in CI
+./scripts/cloud-pods.sh load fsamp-local-base
 
-# 3. Deploy
-cd terraform/environments/dev
-terraform init
-terraform apply
+# List available pods
+./scripts/cloud-pods.sh list
+```
+
+### E2E Tests (when services exist)
+
+```bash
+cd e2e
+./run-e2e.sh --local    # Use locally built images
+./run-e2e.sh --ci       # CI mode (no TTY)
 ```
 
 ## 📁 Project Structure
 
 ```
 fsamp-infra/
-├── docker-compose.yml              # LocalStack Pro
+├── docker-compose.yml              # LocalStack Pro (single source of truth)
+├── docker-compose.override.yml.example  # Local overrides template
 ├── localstack/
-│   └── init-aws.sh                 # Auto-creates resources on startup
+│   └── init-aws.sh                 # Bootstrap script
 ├── scripts/
-│   ├── localstack-test.sh          # Verify LocalStack resources
-│   ├── cloud-pods.sh               # Save/load LocalStack state
-│   └── bootstrap-terraform-state.sh # Setup S3 backend for AWS
-├── docs/
-│   └── adr/                        # Architecture Decision Records
-├── e2e/                            # E2E tests (when apps exist)
+│   ├── localstack-test.sh          # Resource verification
+│   └── cloud-pods.sh               # Cloud Pods management
+├── e2e/
+│   ├── docker-compose.yml          # Full stack E2E composition
+│   ├── run-e2e.sh                  # E2E test runner
+│   └── README.md                   # E2E documentation
 ├── terraform/
 │   ├── main.tf                     # Root module
+│   ├── versions.tf                 # Provider versions
 │   ├── environments/
-│   │   ├── local/                  # LocalStack config
-│   │   ├── dev/                    # AWS dev config
-│   │   └── prod/                   # AWS prod config
+│   │   ├── local/                  # LocalStack (local backend)
+│   │   ├── dev/                    # AWS dev (S3 backend)
+│   │   └── prod/                   # AWS prod (S3 backend)
 │   └── modules/
 │       ├── security/               # KMS, IAM
 │       ├── storage/                # S3, DynamoDB
 │       ├── messaging/              # SNS, SQS
-│       ├── networking/             # VPC, Subnets
-│       ├── compute/                # ECS, Lambda
-│       ├── ecr/                    # Container Registry
-│       ├── auth/                   # Cognito
-│       ├── api-gateway/            # REST API + WAF
 │       └── observability/          # CloudWatch
+├── .tflint.hcl
+├── .gitignore
+├── .env.example                    # Environment variables template
+├── release.version
 └── README.md
 ```
 
-## 💰 AWS Free Tier Optimization
+## 🔐 Security Features
 
-| Service | Free Tier | Configuration |
-|---------|-----------|---------------|
-| S3 | 5GB | ✅ Lifecycle → Glacier |
-| DynamoDB | 25GB | ✅ PAY_PER_REQUEST |
-| SQS | 1M requests | ✅ |
-| SNS | 1M publishes | ✅ |
-| Lambda | 1M requests | ✅ 512MB, 5min timeout |
-| KMS | 20k requests | ✅ 1 CMK + Bucket Keys |
-| ECR | 500MB | ✅ Lifecycle policies |
-| Cognito | 50k MAU | ✅ |
-| API Gateway | 1M calls | ✅ |
-| CloudWatch | 5GB logs | ✅ 30-day retention |
-| **NAT Gateway** | ❌ NOT FREE | ⚠️ **Disabled** - using VPC Endpoints |
+| Feature | Implementation |
+|---------|----------------|
+| **FIPS 140-3 Encryption** | AWS KMS with AES-256-GCM, automatic key rotation |
+| **Least Privilege IAM** | Separate roles for ECS/Lambda with scoped policies |
+| **IAM Enforcement** | LocalStack Pro ENFORCE_IAM for realistic testing |
+| **Encrypted Storage** | S3 SSE-KMS, DynamoDB encryption at rest |
+| **Encrypted Messaging** | SQS/SNS with KMS encryption |
+| **S3 Hardening** | Versioning, lifecycle policies, public access blocked |
+| **DLQ Monitoring** | CloudWatch alarms on dead letter queue |
 
-**Estimated monthly cost**: ~$10-15 (ECS Fargate only)
+## 🔄 CI/CD
 
-## 🔐 Security Features (FIPS 140-3)
+| Trigger | Actions |
+|---------|---------|
+| PR | `terraform fmt`, `terraform validate`, `tflint`, `checkov` |
+| Push to main | Tag release, bump version PR |
 
-| Layer | Implementation |
-|-------|----------------|
-| **Encryption at Rest** | KMS (AES-256-GCM) for S3, DynamoDB, SQS, SNS, CloudWatch |
-| **Encryption in Transit** | TLS 1.2+, VPC Endpoints, HTTPS-only |
-| **Authentication** | Cognito User Pool with MFA |
-| **Authorization** | IAM Roles (least privilege), Cognito groups |
-| **Network Security** | VPC, private subnets, Security Groups, NACLs |
-| **API Protection** | WAF (SQL injection, rate limiting), API throttling |
-| **Monitoring** | VPC Flow Logs, CloudTrail, CloudWatch Alarms |
+## 📊 Resource Naming Convention
 
-## 📚 Documentation
+All resources follow: `{project}-{environment}-{resource}`
 
-- [Architecture Decision Records](docs/adr/README.md)
-- [ADR-001: LocalStack for Local Development](docs/adr/001-use-localstack-for-local-development.md)
-- [ADR-002: Event-Driven Architecture](docs/adr/002-event-driven-architecture.md)
-- [ADR-003: ECS Fargate over EKS](docs/adr/003-ecs-fargate-over-eks.md)
-- [ADR-004: FIPS 140-3 Encryption](docs/adr/004-fips-140-3-encryption.md)
-- [ADR-005: VPC Endpoints over NAT](docs/adr/005-vpc-endpoints-over-nat.md)
-
-## 🔗 Related Repositories
-
-| Repository | Description | Status |
-|------------|-------------|--------|
-| `fsamp-infra` | Infrastructure (this repo) | ✅ Complete |
-| `fsamp-gateway` | Spring Boot REST API | 📋 To create |
-| `fsamp-processor` | Python Lambda processor | 📋 To create |
+Example for `local`:
+- S3: `fsamp-local-files`, `fsamp-local-processed`
+- DynamoDB: `fsamp-local-file-metadata`, `fsamp-local-events`
+- SQS: `fsamp-local-file-processing`, `fsamp-local-dlq`
+- KMS: `alias/fsamp-local-master-key`
 
 ## 📝 License
 
