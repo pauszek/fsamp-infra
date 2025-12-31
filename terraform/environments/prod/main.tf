@@ -2,6 +2,7 @@
 # Production Environment Configuration (AWS)
 # =============================================================================
 # Production configuration with enhanced security and monitoring
+# FIPS 140-3 compliant - uses us-west-2 for FIPS endpoints
 # =============================================================================
 
 terraform {
@@ -15,11 +16,11 @@ terraform {
   }
 
   # Remote backend for production - S3 + DynamoDB locking
-  # Uncomment when ready to deploy to AWS
+  # Uncomment after running bootstrap
   # backend "s3" {
-  #   bucket         = "fsamp-terraform-state"
+  #   bucket         = "fsamp-terraform-state-ACCOUNT_ID"  # Update with your account ID
   #   key            = "prod/terraform.tfstate"
-  #   region         = "eu-central-1"
+  #   region         = "us-west-2"
   #   encrypt        = true
   #   dynamodb_table = "fsamp-terraform-locks"
   # }
@@ -32,8 +33,8 @@ terraform {
 provider "aws" {
   region = var.aws_region
 
-  # FIPS 140-3: Use FIPS-validated endpoints for compliance
-  use_fips_endpoint = var.aws_region == "us-east-1" || var.aws_region == "us-east-2" || var.aws_region == "us-west-1" || var.aws_region == "us-west-2"
+  # FIPS 140-3: Use FIPS-validated endpoints (us-west-2 supports FIPS)
+  use_fips_endpoint = true
 
   default_tags {
     tags = {
@@ -50,9 +51,9 @@ provider "aws" {
 # =============================================================================
 
 variable "aws_region" {
-  description = "AWS region"
+  description = "AWS region (us-west-2 for FIPS support)"
   type        = string
-  default     = "eu-central-1"
+  default     = "us-west-2"
 }
 
 # =============================================================================
@@ -62,9 +63,10 @@ variable "aws_region" {
 module "fsamp" {
   source = "../../"
 
-  environment  = "prod"
-  aws_region   = var.aws_region
-  project_name = "fsamp"
+  environment        = "prod"
+  aws_region         = var.aws_region
+  project_name       = "fsamp"
+  enable_nat_gateway = false # Use VPC Endpoints for cost savings
 
   tags = {
     Team       = "platform"

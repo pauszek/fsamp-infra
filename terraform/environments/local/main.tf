@@ -25,7 +25,7 @@ terraform {
 # =============================================================================
 
 provider "aws" {
-  region                      = "eu-central-1"
+  region                      = "us-west-2"
   access_key                  = "test"
   secret_key                  = "test"
   skip_credentials_validation = true
@@ -66,7 +66,7 @@ module "fsamp" {
   source = "../../"
 
   environment  = "local"
-  aws_region   = "eu-central-1"
+  aws_region   = "us-west-2"
   project_name = "fsamp"
 
   tags = {
