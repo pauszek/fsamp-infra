@@ -38,6 +38,18 @@ variable "tags" {
   default     = {}
 }
 
+variable "vpc_cidr" {
+  description = "CIDR block for VPC"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "enable_nat_gateway" {
+  description = "Enable NAT Gateway (costs ~$32/month per gateway)"
+  type        = bool
+  default     = false
+}
+
 # =============================================================================
 # Local Values
 # =============================================================================
@@ -74,6 +86,19 @@ module "security" {
   enable_key_rotation = !local.is_local
 }
 
+# Networking only for non-local environments
+module "networking" {
+  source = "./modules/networking"
+  count  = local.is_local ? 0 : 1
+
+  environment        = var.environment
+  name_prefix        = local.name_prefix
+  tags               = local.common_tags
+  vpc_cidr           = var.vpc_cidr
+  enable_nat_gateway = var.enable_nat_gateway || local.is_production
+  single_nat_gateway = !local.is_production
+}
+
 module "storage" {
   source = "./modules/storage"
 
@@ -105,6 +130,30 @@ module "observability" {
   name_prefix        = local.name_prefix
   tags               = local.common_tags
   log_retention_days = local.is_production ? 90 : 30
+}
+
+# Compute only for non-local environments (LocalStack handles this via init-aws.sh)
+module "compute" {
+  source = "./modules/compute"
+  count  = local.is_local ? 0 : 1
+
+  environment            = var.environment
+  name_prefix            = local.name_prefix
+  tags                   = local.common_tags
+  aws_region             = var.aws_region
+  kms_key_arn            = module.security.kms_key_arn
+  ecs_task_role_arn      = module.security.ecs_task_role_arn
+  ecs_execution_role_arn = module.security.ecs_execution_role_arn
+  lambda_role_arn        = module.security.lambda_role_arn
+  log_group_name         = module.observability.log_group_names.ecs
+  lambda_log_group_name  = module.observability.log_group_names.lambda
+  sqs_queue_arn          = module.messaging.queue_arns.file_processing
+  dlq_arn                = module.messaging.queue_arns.dlq
+  vpc_id                 = module.networking[0].vpc_id
+  subnet_ids             = module.networking[0].private_subnet_ids
+  security_group_id      = module.networking[0].ecs_security_group_id
+
+  depends_on = [module.security, module.networking, module.observability, module.messaging]
 }
 
 # =============================================================================
@@ -146,6 +195,11 @@ output "ecs_task_role_arn" {
   value       = module.security.ecs_task_role_arn
 }
 
+output "ecs_execution_role_arn" {
+  description = "ARN of the ECS execution role"
+  value       = module.security.ecs_execution_role_arn
+}
+
 output "lambda_role_arn" {
   description = "ARN of the Lambda execution role"
   value       = module.security.lambda_role_arn
@@ -154,4 +208,50 @@ output "lambda_role_arn" {
 output "log_group_names" {
   description = "CloudWatch log group names"
   value       = module.observability.log_group_names
+}
+
+# Conditional outputs for non-local environments
+output "vpc_id" {
+  description = "VPC ID (null for local environment)"
+  value       = local.is_local ? null : module.networking[0].vpc_id
+}
+
+output "vpc_cidr" {
+  description = "VPC CIDR block (null for local environment)"
+  value       = local.is_local ? null : module.networking[0].vpc_cidr
+}
+
+output "public_subnet_ids" {
+  description = "Public subnet IDs (null for local environment)"
+  value       = local.is_local ? null : module.networking[0].public_subnet_ids
+}
+
+output "private_subnet_ids" {
+  description = "Private subnet IDs (null for local environment)"
+  value       = local.is_local ? null : module.networking[0].private_subnet_ids
+}
+
+output "ecs_cluster_name" {
+  description = "ECS cluster name (null for local environment)"
+  value       = local.is_local ? null : module.compute[0].ecs_cluster_name
+}
+
+output "ecs_cluster_arn" {
+  description = "ECS cluster ARN (null for local environment)"
+  value       = local.is_local ? null : module.compute[0].ecs_cluster_arn
+}
+
+output "gateway_service_name" {
+  description = "Gateway ECS service name (null for local environment)"
+  value       = local.is_local ? null : module.compute[0].gateway_service_name
+}
+
+output "processor_lambda_name" {
+  description = "Processor Lambda function name (null for local environment)"
+  value       = local.is_local ? null : module.compute[0].processor_lambda_name
+}
+
+output "processor_lambda_arn" {
+  description = "Processor Lambda function ARN (null for local environment)"
+  value       = local.is_local ? null : module.compute[0].processor_lambda_arn
 }
