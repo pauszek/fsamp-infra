@@ -1,0 +1,45 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# LocalStack
+.localstack/
+volume/
+
+# Docker Compose
+docker-compose.override.yml
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Secrets (nigdy nie commituj!)
+*.pem
+*.key
+secrets/
+.env
+!.env.example
+
+# Test artifacts
+coverage/
+.pytest_cache/

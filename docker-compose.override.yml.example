@@ -1,0 +1,24 @@
+# =============================================================================
+# Local Development Overrides (copy to docker-compose.override.yml)
+# =============================================================================
+# This file is automatically merged with docker-compose.yml when running
+# `docker-compose up`. Use it for personal/local customizations.
+#
+# Copy: cp docker-compose.override.yml.example docker-compose.override.yml
+# =============================================================================
+
+services:
+  localstack:
+    environment:
+      # Enable debug for local development
+      - DEBUG=1
+      
+      # Disable persistence for faster restarts (optional)
+      # - PERSISTENCE=0
+      
+      # Soft IAM mode for easier local development
+      - IAM_SOFT_MODE=1
+    
+    # Expose additional ports if needed
+    # ports:
+    #   - "8080:8080"

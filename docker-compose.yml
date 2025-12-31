@@ -1,0 +1,62 @@
+# =============================================================================
+# FSAMP Infrastructure - LocalStack Base Configuration
+# =============================================================================
+# This is the single source of truth for LocalStack configuration.
+# 
+# Usage:
+#   Development:  docker-compose up -d
+#   CI/CD:        docker-compose up -d (with PERSISTENCE=0 in CI env)
+#   
+# For local overrides, create docker-compose.override.yml (gitignored)
+# See: docker-compose.override.yml.example
+# =============================================================================
+
+services:
+  localstack:
+    image: localstack/localstack-pro:3.4
+    container_name: fsamp-localstack
+    ports:
+      - "${LOCALSTACK_PORT:-4566}:4566"
+      - "4510-4559:4510-4559"
+      - "${LOCALSTACK_HTTPS_PORT:-443}:443"
+    environment:
+      # Auth & Core
+      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
+      - AWS_DEFAULT_REGION=${AWS_REGION:-eu-central-1}
+      
+      # Services
+      - SERVICES=s3,sqs,sns,dynamodb,kms,lambda,iam,sts,cloudwatch,logs,events,secretsmanager,ssm,apigateway,cognito-idp,ecs
+      - EAGER_SERVICE_LOADING=${EAGER_SERVICE_LOADING:-1}
+      
+      # IAM (Enterprise security)
+      - ENFORCE_IAM=${ENFORCE_IAM:-1}
+      - IAM_SOFT_MODE=${IAM_SOFT_MODE:-1}
+      
+      # Lambda
+      - LAMBDA_EXECUTOR=docker
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      
+      # Persistence & Debug (configurable per environment)
+      - PERSISTENCE=${PERSISTENCE:-1}
+      - DEBUG=${DEBUG:-0}
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+    networks:
+      - fsamp-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  localstack-data:
+    name: fsamp-localstack-data
+
+networks:
+  fsamp-network:
+    driver: bridge
+    name: fsamp-network

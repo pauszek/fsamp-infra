@@ -1,0 +1,196 @@
+#!/bin/bash
+# =============================================================================
+# FSAMP E2E Test Runner
+# =============================================================================
+# Orchestrates end-to-end tests for the complete FSAMP system.
+#
+# Usage:
+#   ./run-e2e.sh [OPTIONS]
+#
+# Options:
+#   --local       Run with locally built images
+#   --ci          Run in CI mode (no TTY, fail fast)
+#   --cleanup     Cleanup after tests (default: true)
+#   --no-cleanup  Keep containers running after tests
+#   --load-pod    Load Cloud Pod before tests
+#   --help        Show this help message
+# =============================================================================
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Default options
+MODE="default"
+CLEANUP="true"
+LOAD_POD=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --local)
+            MODE="local"
+            shift
+            ;;
+        --ci)
+            MODE="ci"
+            shift
+            ;;
+        --cleanup)
+            CLEANUP="true"
+            shift
+            ;;
+        --no-cleanup)
+            CLEANUP="false"
+            shift
+            ;;
+        --load-pod)
+            LOAD_POD="$2"
+            shift 2
+            ;;
+        --help)
+            head -25 "$0" | tail -20
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate environment
+if [[ -z "${LOCALSTACK_AUTH_TOKEN:-}" ]]; then
+    echo -e "${RED}Error: LOCALSTACK_AUTH_TOKEN not set${NC}"
+    echo "Export your LocalStack Pro token: export LOCALSTACK_AUTH_TOKEN=your-token"
+    exit 1
+fi
+
+log() {
+    echo -e "${BLUE}[E2E]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[E2E]${NC} $1"
+}
+
+log_warning() {
+    echo -e "${YELLOW}[E2E]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[E2E]${NC} $1"
+}
+
+cleanup() {
+    if [[ "$CLEANUP" == "true" ]]; then
+        log "Cleaning up..."
+        docker-compose down -v --remove-orphans 2>/dev/null || true
+    else
+        log_warning "Skipping cleanup (--no-cleanup specified)"
+        log "To cleanup manually: docker-compose down -v"
+    fi
+}
+
+# Trap for cleanup on exit
+trap cleanup EXIT
+
+# Main execution
+main() {
+    log "Starting E2E tests (mode: $MODE)"
+    
+    # Set mode-specific options
+    case $MODE in
+        local)
+            log "Using locally built images..."
+            export GATEWAY_IMAGE="fsamp-gateway:local"
+            export PROCESSOR_IMAGE="fsamp-processor:local"
+            export E2E_IMAGE="fsamp-e2e:local"
+            ;;
+        ci)
+            log "CI mode: fail fast, no TTY..."
+            export COMPOSE_INTERACTIVE_NO_CLI=1
+            ;;
+    esac
+    
+    # Cleanup previous runs
+    log "Cleaning up previous runs..."
+    docker-compose down -v --remove-orphans 2>/dev/null || true
+    
+    # Start infrastructure
+    log "Starting LocalStack..."
+    docker-compose up -d localstack
+    
+    # Wait for LocalStack to be healthy
+    log "Waiting for LocalStack to be ready..."
+    local retries=30
+    while [[ $retries -gt 0 ]]; do
+        if docker-compose exec -T localstack curl -sf http://localhost:4566/_localstack/health > /dev/null 2>&1; then
+            log_success "LocalStack is ready!"
+            break
+        fi
+        retries=$((retries - 1))
+        sleep 2
+    done
+    
+    if [[ $retries -eq 0 ]]; then
+        log_error "LocalStack failed to start"
+        docker-compose logs localstack
+        exit 1
+    fi
+    
+    # Load Cloud Pod if specified
+    if [[ -n "$LOAD_POD" ]]; then
+        log "Loading Cloud Pod: $LOAD_POD..."
+        ../scripts/cloud-pods.sh load "$LOAD_POD"
+    fi
+    
+    # Start application services
+    log "Starting gateway and processor..."
+    docker-compose up -d gateway processor
+    
+    # Wait for gateway to be healthy
+    log "Waiting for gateway to be ready..."
+    retries=30
+    while [[ $retries -gt 0 ]]; do
+        if docker-compose exec -T gateway curl -sf http://localhost:8080/actuator/health > /dev/null 2>&1; then
+            log_success "Gateway is ready!"
+            break
+        fi
+        retries=$((retries - 1))
+        sleep 2
+    done
+    
+    if [[ $retries -eq 0 ]]; then
+        log_error "Gateway failed to start"
+        docker-compose logs gateway
+        exit 1
+    fi
+    
+    # Run E2E tests
+    log "Running E2E tests..."
+    if docker-compose --profile test up --abort-on-container-exit e2e-tests; then
+        log_success "✅ E2E tests passed!"
+        exit 0
+    else
+        log_error "❌ E2E tests failed!"
+        
+        # Show logs on failure
+        log "Gateway logs:"
+        docker-compose logs --tail=50 gateway
+        log "Processor logs:"
+        docker-compose logs --tail=50 processor
+        
+        exit 1
+    fi
+}
+
+main

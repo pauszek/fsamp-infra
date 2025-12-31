@@ -1,0 +1,114 @@
+# =============================================================================
+# FSAMP E2E Tests - Full Stack Composition
+# =============================================================================
+# Runs all FSAMP services together for end-to-end testing.
+#
+# Usage:
+#   docker-compose up -d                    # Start all services
+#   docker-compose up e2e-tests             # Run E2E tests
+#   docker-compose down -v                  # Cleanup
+#
+# Prerequisites:
+#   - LOCALSTACK_AUTH_TOKEN set in environment
+#   - Service images available (or build locally)
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Infrastructure Layer
+  # ---------------------------------------------------------------------------
+  localstack:
+    image: localstack/localstack-pro:3.4
+    container_name: fsamp-e2e-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
+      - AWS_DEFAULT_REGION=eu-central-1
+      - SERVICES=s3,sqs,sns,dynamodb,kms,lambda,iam,sts,cloudwatch,logs
+      - PERSISTENCE=0
+      - DEBUG=0
+      - ENFORCE_IAM=1
+      - IAM_SOFT_MODE=1
+      - LAMBDA_EXECUTOR=docker
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+    networks:
+      - fsamp-e2e-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Application Layer
+  # ---------------------------------------------------------------------------
+  gateway:
+    image: ${GATEWAY_IMAGE:-ghcr.io/pauszek/fsamp-gateway:latest}
+    container_name: fsamp-e2e-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=localstack,e2e
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_REGION=eu-central-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      localstack:
+        condition: service_healthy
+    networks:
+      - fsamp-e2e-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  processor:
+    image: ${PROCESSOR_IMAGE:-ghcr.io/pauszek/fsamp-processor:latest}
+    container_name: fsamp-e2e-processor
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=eu-central-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - LOG_LEVEL=INFO
+    depends_on:
+      localstack:
+        condition: service_healthy
+    networks:
+      - fsamp-e2e-network
+
+  # ---------------------------------------------------------------------------
+  # Test Runner
+  # ---------------------------------------------------------------------------
+  e2e-tests:
+    image: ${E2E_IMAGE:-ghcr.io/pauszek/fsamp-e2e:latest}
+    container_name: fsamp-e2e-tests
+    environment:
+      - GATEWAY_URL=http://gateway:8080
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_DEFAULT_REGION=eu-central-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      gateway:
+        condition: service_healthy
+      processor:
+        condition: service_started
+    networks:
+      - fsamp-e2e-network
+    # Exit after tests complete
+    profiles:
+      - test
+
+networks:
+  fsamp-e2e-network:
+    driver: bridge
+    name: fsamp-e2e-network
