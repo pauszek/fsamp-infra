@@ -32,6 +32,9 @@ terraform {
 provider "aws" {
   region = var.aws_region
 
+  # FIPS 140-3: Use FIPS-validated endpoints for compliance
+  use_fips_endpoint = var.aws_region == "us-east-1" || var.aws_region == "us-east-2" || var.aws_region == "us-west-1" || var.aws_region == "us-west-2"
+
   default_tags {
     tags = {
       Environment = "prod"
@@ -100,3 +103,40 @@ output "dynamodb_tables" {
   description = "DynamoDB table names"
   value       = module.fsamp.dynamodb_table_names
 }
+
+output "ecr_repository_urls" {
+  description = "ECR repository URLs"
+  value       = module.fsamp.ecr_repository_urls
+  sensitive   = true
+}
+
+output "cognito_user_pool_id" {
+  description = "Cognito User Pool ID"
+  value       = module.fsamp.cognito_user_pool_id
+}
+
+output "cognito_web_client_id" {
+  description = "Cognito Web Client ID"
+  value       = module.fsamp.cognito_web_client_id
+}
+
+output "api_gateway_endpoint" {
+  description = "API Gateway invoke URL"
+  value       = module.fsamp.api_gateway_endpoint
+}
+
+output "vpc_id" {
+  description = "VPC ID"
+  value       = module.fsamp.vpc_id
+}
+
+output "ecs_cluster_name" {
+  description = "ECS Cluster name"
+  value       = module.fsamp.ecs_cluster_name
+}
+
+output "waf_web_acl_arn" {
+  description = "WAF Web ACL ARN"
+  value       = module.fsamp.waf_web_acl_arn
+}
+

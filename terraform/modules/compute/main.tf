@@ -96,7 +96,7 @@ variable "aws_region" {
 variable "gateway_image" {
   description = "Docker image for gateway service"
   type        = string
-  default     = "ghcr.io/pauszek/fsamp-gateway:latest"
+  default     = "public.ecr.aws/docker/library/nginx:alpine"
 }
 
 variable "gateway_cpu" {

@@ -132,6 +132,46 @@ module "observability" {
   log_retention_days = local.is_production ? 90 : 30
 }
 
+# Auth (Cognito) - only for non-local environments
+module "auth" {
+  source = "./modules/auth"
+  count  = local.is_local ? 0 : 1
+
+  environment = var.environment
+  name_prefix = local.name_prefix
+  tags        = local.common_tags
+
+  callback_urls = var.environment == "prod" ? ["https://app.fsamp.example.com/callback"] : ["http://localhost:3000/callback"]
+  logout_urls   = var.environment == "prod" ? ["https://app.fsamp.example.com"] : ["http://localhost:3000"]
+}
+
+# API Gateway with WAF - only for non-local environments
+module "api_gateway" {
+  source = "./modules/api-gateway"
+  count  = local.is_local ? 0 : 1
+
+  environment           = var.environment
+  name_prefix           = local.name_prefix
+  tags                  = local.common_tags
+  cognito_user_pool_arn = module.auth[0].user_pool_arn
+  enable_waf            = local.is_production
+
+  depends_on = [module.auth]
+}
+
+# ECR only for non-local environments
+module "ecr" {
+  source = "./modules/ecr"
+  count  = local.is_local ? 0 : 1
+
+  environment = var.environment
+  name_prefix = local.name_prefix
+  kms_key_arn = module.security.kms_key_arn
+  tags        = local.common_tags
+
+  depends_on = [module.security]
+}
+
 # Compute only for non-local environments (LocalStack handles this via init-aws.sh)
 module "compute" {
   source = "./modules/compute"
@@ -255,3 +295,51 @@ output "processor_lambda_arn" {
   description = "Processor Lambda function ARN (null for local environment)"
   value       = local.is_local ? null : module.compute[0].processor_lambda_arn
 }
+
+output "ecr_repository_urls" {
+  description = "ECR repository URLs (null for local environment)"
+  value       = local.is_local ? null : module.ecr[0].repository_urls
+}
+
+output "ecr_repository_names" {
+  description = "ECR repository names (null for local environment)"
+  value       = local.is_local ? null : module.ecr[0].repository_names
+}
+
+# Auth outputs (Cognito)
+output "cognito_user_pool_id" {
+  description = "Cognito User Pool ID (null for local environment)"
+  value       = local.is_local ? null : module.auth[0].user_pool_id
+}
+
+output "cognito_user_pool_arn" {
+  description = "Cognito User Pool ARN (null for local environment)"
+  value       = local.is_local ? null : module.auth[0].user_pool_arn
+}
+
+output "cognito_web_client_id" {
+  description = "Cognito Web Client ID (null for local environment)"
+  value       = local.is_local ? null : module.auth[0].web_client_id
+}
+
+output "cognito_domain_url" {
+  description = "Cognito Domain URL (null for local environment)"
+  value       = local.is_local ? null : module.auth[0].cognito_domain_url
+}
+
+# API Gateway outputs
+output "api_gateway_endpoint" {
+  description = "API Gateway invoke URL (null for local environment)"
+  value       = local.is_local ? null : module.api_gateway[0].api_endpoint
+}
+
+output "api_gateway_id" {
+  description = "API Gateway REST API ID (null for local environment)"
+  value       = local.is_local ? null : module.api_gateway[0].api_id
+}
+
+output "waf_web_acl_arn" {
+  description = "WAF Web ACL ARN (null for local/dev environment)"
+  value       = local.is_local ? null : module.api_gateway[0].waf_web_acl_arn
+}
+
