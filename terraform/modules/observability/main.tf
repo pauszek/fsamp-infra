@@ -118,12 +118,12 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "📊 Lambda Processor - Invocations"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/Lambda", "Invocations", "FunctionName", "${var.name_prefix}-processor", { "stat": "Sum", "color": "#2ca02c" }],
-            [".", "Errors", ".", ".", { "stat": "Sum", "color": "#d62728" }],
-            [".", "Throttles", ".", ".", { "stat": "Sum", "color": "#ff7f0e" }]
+            ["AWS/Lambda", "Invocations", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Sum", "color" : "#2ca02c" }],
+            [".", "Errors", ".", ".", { "stat" : "Sum", "color" : "#d62728" }],
+            [".", "Throttles", ".", ".", { "stat" : "Sum", "color" : "#ff7f0e" }]
           ]
-          period = 60
-          view   = "timeSeries"
+          period  = 60
+          view    = "timeSeries"
           stacked = false
         }
       },
@@ -137,10 +137,10 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "⏱️ Lambda Processor - Duration"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/Lambda", "Duration", "FunctionName", "${var.name_prefix}-processor", { "stat": "Average", "color": "#1f77b4" }],
-            ["...", { "stat": "p50", "color": "#2ca02c" }],
-            ["...", { "stat": "p95", "color": "#ff7f0e" }],
-            ["...", { "stat": "p99", "color": "#d62728" }]
+            ["AWS/Lambda", "Duration", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Average", "color" : "#1f77b4" }],
+            ["...", { "stat" : "p50", "color" : "#2ca02c" }],
+            ["...", { "stat" : "p95", "color" : "#ff7f0e" }],
+            ["...", { "stat" : "p99", "color" : "#d62728" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -156,7 +156,7 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "🔄 Lambda Processor - Concurrency"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/Lambda", "ConcurrentExecutions", "FunctionName", "${var.name_prefix}-processor", { "stat": "Maximum", "color": "#9467bd" }]
+            ["AWS/Lambda", "ConcurrentExecutions", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Maximum", "color" : "#9467bd" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -175,8 +175,8 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "📤 Outbox Publisher - Invocations"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/Lambda", "Invocations", "FunctionName", "${var.name_prefix}-outbox-publisher", { "stat": "Sum", "color": "#2ca02c" }],
-            [".", "Errors", ".", ".", { "stat": "Sum", "color": "#d62728" }]
+            ["AWS/Lambda", "Invocations", "FunctionName", "${var.name_prefix}-outbox-publisher", { "stat" : "Sum", "color" : "#2ca02c" }],
+            [".", "Errors", ".", ".", { "stat" : "Sum", "color" : "#d62728" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -192,9 +192,9 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "📬 SQS Queue - Messages"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/SQS", "NumberOfMessagesSent", "QueueName", "${var.name_prefix}-file-processing", { "stat": "Sum", "color": "#2ca02c" }],
-            [".", "NumberOfMessagesReceived", ".", ".", { "stat": "Sum", "color": "#1f77b4" }],
-            [".", "ApproximateNumberOfMessagesVisible", ".", ".", { "stat": "Average", "color": "#ff7f0e" }]
+            ["AWS/SQS", "NumberOfMessagesSent", "QueueName", "${var.name_prefix}-file-processing", { "stat" : "Sum", "color" : "#2ca02c" }],
+            [".", "NumberOfMessagesReceived", ".", ".", { "stat" : "Sum", "color" : "#1f77b4" }],
+            [".", "ApproximateNumberOfMessagesVisible", ".", ".", { "stat" : "Average", "color" : "#ff7f0e" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -210,8 +210,8 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "💀 Dead Letter Queue"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${var.name_prefix}-dlq", { "stat": "Sum", "color": "#d62728" }],
-            [".", "NumberOfMessagesSent", ".", ".", { "stat": "Sum", "color": "#ff7f0e" }]
+            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${var.name_prefix}-dlq", { "stat" : "Sum", "color" : "#d62728" }],
+            [".", "NumberOfMessagesSent", ".", ".", { "stat" : "Sum", "color" : "#ff7f0e" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -239,8 +239,8 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "💾 DynamoDB - Consumed Capacity"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${var.name_prefix}-file-metadata", { "stat": "Sum", "color": "#1f77b4" }],
-            [".", "ConsumedWriteCapacityUnits", ".", ".", { "stat": "Sum", "color": "#2ca02c" }]
+            ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${var.name_prefix}-file-metadata", { "stat" : "Sum", "color" : "#1f77b4" }],
+            [".", "ConsumedWriteCapacityUnits", ".", ".", { "stat" : "Sum", "color" : "#2ca02c" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -256,9 +256,9 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "📦 DynamoDB Outbox - Operations"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${var.name_prefix}-outbox", { "stat": "Sum", "color": "#1f77b4" }],
-            [".", "ConsumedWriteCapacityUnits", ".", ".", { "stat": "Sum", "color": "#2ca02c" }],
-            [".", "TransactionConflict", ".", ".", { "stat": "Sum", "color": "#d62728" }]
+            ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${var.name_prefix}-outbox", { "stat" : "Sum", "color" : "#1f77b4" }],
+            [".", "ConsumedWriteCapacityUnits", ".", ".", { "stat" : "Sum", "color" : "#2ca02c" }],
+            [".", "TransactionConflict", ".", ".", { "stat" : "Sum", "color" : "#d62728" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -274,8 +274,8 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "⚠️ DynamoDB - Throttled Requests"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/DynamoDB", "ThrottledRequests", "TableName", "${var.name_prefix}-file-metadata", { "stat": "Sum", "color": "#d62728" }],
-            [".", "ThrottledRequests", "TableName", "${var.name_prefix}-outbox", { "stat": "Sum", "color": "#ff7f0e" }]
+            ["AWS/DynamoDB", "ThrottledRequests", "TableName", "${var.name_prefix}-file-metadata", { "stat" : "Sum", "color" : "#d62728" }],
+            [".", "ThrottledRequests", "TableName", "${var.name_prefix}-outbox", { "stat" : "Sum", "color" : "#ff7f0e" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -294,9 +294,9 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "📁 Files Processed"
           region = data.aws_region.current.name
           metrics = [
-            ["FSAMP/Processor", "FilesProcessed", { "stat": "Sum", "color": "#2ca02c" }],
-            [".", "FilesProcessedSuccess", { "stat": "Sum", "color": "#1f77b4" }],
-            [".", "FilesProcessedFailed", { "stat": "Sum", "color": "#d62728" }]
+            ["FSAMP/Processor", "FilesProcessed", { "stat" : "Sum", "color" : "#2ca02c" }],
+            [".", "FilesProcessedSuccess", { "stat" : "Sum", "color" : "#1f77b4" }],
+            [".", "FilesProcessedFailed", { "stat" : "Sum", "color" : "#d62728" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -312,9 +312,9 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "⏱️ Processing Duration (Custom)"
           region = data.aws_region.current.name
           metrics = [
-            ["FSAMP/Processor", "ProcessingDuration", { "stat": "Average", "color": "#1f77b4" }],
-            ["...", { "stat": "p95", "color": "#ff7f0e" }],
-            ["...", { "stat": "p99", "color": "#d62728" }]
+            ["FSAMP/Processor", "ProcessingDuration", { "stat" : "Average", "color" : "#1f77b4" }],
+            ["...", { "stat" : "p95", "color" : "#ff7f0e" }],
+            ["...", { "stat" : "p99", "color" : "#d62728" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -330,9 +330,9 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "📤 Outbox Events Published"
           region = data.aws_region.current.name
           metrics = [
-            ["FSAMP/OutboxPublisher", "EventsPublished", { "stat": "Sum", "color": "#2ca02c" }],
-            [".", "EventsFailedToPublish", { "stat": "Sum", "color": "#d62728" }],
-            [".", "EventsRetried", { "stat": "Sum", "color": "#ff7f0e" }]
+            ["FSAMP/OutboxPublisher", "EventsPublished", { "stat" : "Sum", "color" : "#2ca02c" }],
+            [".", "EventsFailedToPublish", { "stat" : "Sum", "color" : "#d62728" }],
+            [".", "EventsRetried", { "stat" : "Sum", "color" : "#ff7f0e" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -351,8 +351,8 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "🗂️ S3 Bucket Metrics"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/S3", "NumberOfObjects", "BucketName", "${var.name_prefix}-files", "StorageType", "AllStorageTypes", { "stat": "Average", "period": 86400 }],
-            [".", "BucketSizeBytes", ".", ".", ".", ".", { "stat": "Average", "period": 86400 }]
+            ["AWS/S3", "NumberOfObjects", "BucketName", "${var.name_prefix}-files", "StorageType", "AllStorageTypes", { "stat" : "Average", "period" : 86400 }],
+            [".", "BucketSizeBytes", ".", ".", ".", ".", { "stat" : "Average", "period" : 86400 }]
           ]
           view = "singleValue"
         }
@@ -367,8 +367,8 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "📢 SNS Topic - Messages"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/SNS", "NumberOfMessagesPublished", "TopicName", "${var.name_prefix}-events", { "stat": "Sum", "color": "#2ca02c" }],
-            [".", "NumberOfNotificationsFailed", ".", ".", { "stat": "Sum", "color": "#d62728" }]
+            ["AWS/SNS", "NumberOfMessagesPublished", "TopicName", "${var.name_prefix}-events", { "stat" : "Sum", "color" : "#2ca02c" }],
+            [".", "NumberOfNotificationsFailed", ".", ".", { "stat" : "Sum", "color" : "#d62728" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -415,8 +415,8 @@ resource "aws_cloudwatch_dashboard" "main" {
               id         = "e1"
               color      = "#2ca02c"
             }],
-            ["AWS/Lambda", "Errors", "FunctionName", "${var.name_prefix}-processor", { "stat": "Sum", "id": "errors", "visible": false }],
-            [".", "Invocations", ".", ".", { "stat": "Sum", "id": "invocations", "visible": false }]
+            ["AWS/Lambda", "Errors", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Sum", "id" : "errors", "visible" : false }],
+            [".", "Invocations", ".", ".", { "stat" : "Sum", "id" : "invocations", "visible" : false }]
           ]
           period = 300
           view   = "singleValue"
@@ -433,7 +433,7 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "Total Files Today"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/Lambda", "Invocations", "FunctionName", "${var.name_prefix}-processor", { "stat": "Sum", "color": "#1f77b4" }]
+            ["AWS/Lambda", "Invocations", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Sum", "color" : "#1f77b4" }]
           ]
           period = 86400
           view   = "singleValue"
@@ -449,7 +449,7 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "Avg Duration"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/Lambda", "Duration", "FunctionName", "${var.name_prefix}-processor", { "stat": "Average", "color": "#ff7f0e" }]
+            ["AWS/Lambda", "Duration", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Average", "color" : "#ff7f0e" }]
           ]
           period = 3600
           view   = "singleValue"
@@ -465,7 +465,7 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "DLQ Messages"
           region = data.aws_region.current.name
           metrics = [
-            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${var.name_prefix}-dlq", { "stat": "Sum", "color": "#d62728" }]
+            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${var.name_prefix}-dlq", { "stat" : "Sum", "color" : "#d62728" }]
           ]
           period = 300
           view   = "singleValue"
@@ -578,7 +578,7 @@ resource "aws_cloudwatch_metric_alarm" "processor_latency" {
   namespace           = "AWS/Lambda"
   period              = 300
   extended_statistic  = "p95"
-  threshold           = 60000  # 60 seconds
+  threshold           = 60000 # 60 seconds
   alarm_description   = "Lambda Processor p95 latency is high"
   treat_missing_data  = "notBreaching"
 
@@ -678,7 +678,7 @@ resource "aws_cloudwatch_metric_alarm" "sqs_message_age" {
   namespace           = "AWS/SQS"
   period              = 300
   statistic           = "Maximum"
-  threshold           = 300  # 5 minutes
+  threshold           = 300 # 5 minutes
   alarm_description   = "Old messages in queue - processing may be stuck"
   treat_missing_data  = "notBreaching"
 

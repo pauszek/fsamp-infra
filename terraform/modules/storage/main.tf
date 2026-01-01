@@ -304,6 +304,48 @@ resource "aws_dynamodb_table" "outbox" {
 }
 
 # =============================================================================
+# Idempotency Keys Table
+# =============================================================================
+# Implements the Idempotency Key pattern for safe API retries.
+# Stores idempotency keys with responses for deduplication.
+# TTL automatically cleans up keys after 24 hours.
+# =============================================================================
+
+resource "aws_dynamodb_table" "idempotency_keys" {
+  name         = "${var.name_prefix}-idempotency-keys"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "idempotencyKey"
+  range_key    = "userId"
+
+  attribute {
+    name = "idempotencyKey"
+    type = "S"
+  }
+
+  attribute {
+    name = "userId"
+    type = "S"
+  }
+
+  # Server-side encryption with KMS
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = var.kms_key_arn
+  }
+
+  # TTL for automatic cleanup (keys expire after 24 hours)
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-idempotency-keys"
+    Purpose = "Idempotency Key Pattern"
+  })
+}
+
+# =============================================================================
 # Outputs
 # =============================================================================
 
@@ -324,18 +366,20 @@ output "bucket_arns" {
 output "dynamodb_table_names" {
   description = "Map of table purposes to names"
   value = {
-    file_metadata = aws_dynamodb_table.file_metadata.name
-    events        = aws_dynamodb_table.events.name
-    outbox        = aws_dynamodb_table.outbox.name
+    file_metadata    = aws_dynamodb_table.file_metadata.name
+    events           = aws_dynamodb_table.events.name
+    outbox           = aws_dynamodb_table.outbox.name
+    idempotency_keys = aws_dynamodb_table.idempotency_keys.name
   }
 }
 
 output "dynamodb_table_arns" {
   description = "Map of table purposes to ARNs"
   value = {
-    file_metadata = aws_dynamodb_table.file_metadata.arn
-    events        = aws_dynamodb_table.events.arn
-    outbox        = aws_dynamodb_table.outbox.arn
+    file_metadata    = aws_dynamodb_table.file_metadata.arn
+    events           = aws_dynamodb_table.events.arn
+    outbox           = aws_dynamodb_table.outbox.arn
+    idempotency_keys = aws_dynamodb_table.idempotency_keys.arn
   }
 }
 

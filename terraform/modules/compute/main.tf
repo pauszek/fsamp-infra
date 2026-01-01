@@ -303,23 +303,23 @@ resource "aws_ecs_service" "gateway" {
 
 locals {
   processor_env_vars = {
-    ENVIRONMENT               = var.environment
-    AWS_REGION               = var.aws_region
-    LOG_LEVEL                = var.environment == "prod" ? "INFO" : "DEBUG"
-    LOG_FORMAT               = "json"
-    POWERTOOLS_SERVICE_NAME  = "fsamp-processor"
+    ENVIRONMENT                  = var.environment
+    AWS_REGION                   = var.aws_region
+    LOG_LEVEL                    = var.environment == "prod" ? "INFO" : "DEBUG"
+    LOG_FORMAT                   = "json"
+    POWERTOOLS_SERVICE_NAME      = "fsamp-processor"
     POWERTOOLS_METRICS_NAMESPACE = "FSAMP/Processor"
-    POWERTOOLS_LOG_LEVEL     = var.environment == "prod" ? "INFO" : "DEBUG"
-    
+    POWERTOOLS_LOG_LEVEL         = var.environment == "prod" ? "INFO" : "DEBUG"
+
     # Resource configuration (set by CI/CD or locals)
-    SQS_QUEUE_URL            = var.sqs_queue_url
-    SNS_TOPIC_ARN            = var.sns_topic_arn
-    S3_BUCKET_NAME           = var.s3_bucket_name
-    DYNAMODB_TABLE_NAME      = var.dynamodb_table_name
-    OUTBOX_TABLE_NAME        = var.outbox_table_name
-    KMS_KEY_ID               = var.kms_key_arn
+    SQS_QUEUE_URL       = var.sqs_queue_url
+    SNS_TOPIC_ARN       = var.sns_topic_arn
+    S3_BUCKET_NAME      = var.s3_bucket_name
+    DYNAMODB_TABLE_NAME = var.dynamodb_table_name
+    OUTBOX_TABLE_NAME   = var.outbox_table_name
+    KMS_KEY_ID          = var.kms_key_arn
   }
-  
+
   outbox_publisher_env_vars = {
     ENVIRONMENT                  = var.environment
     AWS_REGION                   = var.aws_region
@@ -339,7 +339,7 @@ resource "aws_lambda_function" "processor" {
   runtime       = "python3.12"
   timeout       = var.processor_timeout
   memory_size   = var.processor_memory
-  
+
   # Architecture - ARM64 is cheaper and faster for Python
   architectures = ["arm64"]
 
@@ -363,7 +363,7 @@ resource "aws_lambda_function" "processor" {
   dead_letter_config {
     target_arn = var.dlq_arn
   }
-  
+
   # Reserved concurrency (optional - limit max concurrent executions)
   # reserved_concurrent_executions = var.environment == "prod" ? 100 : 10
 
@@ -437,7 +437,7 @@ resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   function_name                      = aws_lambda_function.processor.arn
   batch_size                         = 10
   maximum_batching_window_in_seconds = 5
-  
+
   # Enable partial batch response for better error handling
   function_response_types = ["ReportBatchItemFailures"]
 
@@ -445,7 +445,7 @@ resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   scaling_config {
     maximum_concurrency = var.environment == "prod" ? 50 : 10
   }
-  
+
   # Filter events (optional - only process specific event types)
   # filter_criteria {
   #   filter {
@@ -472,7 +472,7 @@ resource "aws_lambda_function" "outbox_publisher" {
   runtime       = "python3.12"
   timeout       = 60
   memory_size   = 256
-  
+
   # ARM64 architecture
   architectures = ["arm64"]
 
@@ -551,27 +551,27 @@ data "archive_file" "outbox_publisher_placeholder" {
 # DynamoDB Streams Event Source Mapping for Outbox Publisher
 resource "aws_lambda_event_source_mapping" "outbox_stream" {
   count = var.outbox_stream_arn != "" ? 1 : 0
-  
+
   event_source_arn  = var.outbox_stream_arn
   function_name     = aws_lambda_function.outbox_publisher.arn
   batch_size        = 100
   starting_position = "LATEST"
-  
+
   # Enable partial batch response for better error handling
   function_response_types = ["ReportBatchItemFailures"]
-  
+
   # Maximum age of records to process (24 hours)
   maximum_record_age_in_seconds = 86400
-  
+
   # Maximum retry attempts for failed records
   maximum_retry_attempts = 3
-  
+
   # Bisect batch on function error (helps isolate bad records)
   bisect_batch_on_function_error = true
-  
+
   # Parallelization factor (process multiple batches concurrently)
   parallelization_factor = 2
-  
+
   # Filter to only process INSERT events (new outbox items)
   filter_criteria {
     filter {
@@ -580,7 +580,7 @@ resource "aws_lambda_event_source_mapping" "outbox_stream" {
       })
     }
   }
-  
+
   # Destination for failed records (optional - send to DLQ)
   # destination_config {
   #   on_failure {

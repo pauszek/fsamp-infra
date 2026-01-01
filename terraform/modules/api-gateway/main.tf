@@ -56,6 +56,30 @@ variable "throttle_burst_limit" {
   default     = 200
 }
 
+variable "vpc_id" {
+  description = "VPC ID for VPC Link"
+  type        = string
+  default     = null
+}
+
+variable "private_subnet_ids" {
+  description = "Private subnet IDs for VPC Link"
+  type        = list(string)
+  default     = []
+}
+
+variable "alb_listener_arn" {
+  description = "ARN of the ALB listener for the Gateway service"
+  type        = string
+  default     = null
+}
+
+variable "alb_dns_name" {
+  description = "DNS name of the ALB for the Gateway service"
+  type        = string
+  default     = null
+}
+
 # =============================================================================
 # Data Sources
 # =============================================================================
@@ -101,6 +125,13 @@ resource "aws_api_gateway_resource" "file" {
   path_part   = "{fileId}"
 }
 
+# /files/upload resource
+resource "aws_api_gateway_resource" "upload" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.files.id
+  path_part   = "upload"
+}
+
 # /health resource
 resource "aws_api_gateway_resource" "health" {
   rest_api_id = aws_api_gateway_rest_api.main.id
@@ -120,6 +151,145 @@ resource "aws_api_gateway_authorizer" "cognito" {
   type            = "COGNITO_USER_POOLS"
   provider_arns   = [var.cognito_user_pool_arn]
   identity_source = "method.request.header.Authorization"
+}
+
+# =============================================================================
+# VPC Link (for private ALB integration)
+# =============================================================================
+
+resource "aws_api_gateway_vpc_link" "main" {
+  count = var.alb_listener_arn != null ? 1 : 0
+
+  name        = "${var.name_prefix}-vpc-link"
+  description = "VPC Link to private ALB"
+  target_arns = [var.alb_listener_arn]
+
+  tags = merge(var.tags, {
+    Name = "${var.name_prefix}-vpc-link"
+  })
+}
+
+# =============================================================================
+# File Upload Endpoint (POST /files/upload)
+# =============================================================================
+
+resource "aws_api_gateway_method" "upload_post" {
+  count = var.alb_dns_name != null ? 1 : 0
+
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.upload.id
+  http_method   = "POST"
+  authorization = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
+  authorizer_id = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+
+  request_parameters = {
+    "method.request.header.X-Idempotency-Key" = false
+    "method.request.header.Content-Type"      = true
+  }
+}
+
+resource "aws_api_gateway_integration" "upload_post" {
+  count = var.alb_dns_name != null ? 1 : 0
+
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.upload.id
+  http_method             = aws_api_gateway_method.upload_post[0].http_method
+  type                    = "HTTP_PROXY"
+  integration_http_method = "POST"
+  uri                     = "http://${var.alb_dns_name}/api/v1/files/upload"
+  connection_type         = "VPC_LINK"
+  connection_id           = aws_api_gateway_vpc_link.main[0].id
+  timeout_milliseconds    = 29000
+
+  request_parameters = {
+    "integration.request.header.X-Idempotency-Key" = "method.request.header.X-Idempotency-Key"
+    "integration.request.header.Content-Type"      = "method.request.header.Content-Type"
+  }
+}
+
+resource "aws_api_gateway_method_response" "upload_post_201" {
+  count = var.alb_dns_name != null ? 1 : 0
+
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.upload.id
+  http_method = aws_api_gateway_method.upload_post[0].http_method
+  status_code = "201"
+
+  response_parameters = {
+    "method.response.header.X-Correlation-Id" = true
+  }
+}
+
+# =============================================================================
+# Get File Endpoint (GET /files/{fileId})
+# =============================================================================
+
+resource "aws_api_gateway_method" "file_get" {
+  count = var.alb_dns_name != null ? 1 : 0
+
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.file.id
+  http_method   = "GET"
+  authorization = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
+  authorizer_id = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+
+  request_parameters = {
+    "method.request.path.fileId" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "file_get" {
+  count = var.alb_dns_name != null ? 1 : 0
+
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.file.id
+  http_method             = aws_api_gateway_method.file_get[0].http_method
+  type                    = "HTTP_PROXY"
+  integration_http_method = "GET"
+  uri                     = "http://${var.alb_dns_name}/api/v1/files/{fileId}"
+  connection_type         = "VPC_LINK"
+  connection_id           = aws_api_gateway_vpc_link.main[0].id
+  timeout_milliseconds    = 29000
+
+  request_parameters = {
+    "integration.request.path.fileId" = "method.request.path.fileId"
+  }
+}
+
+# =============================================================================
+# Delete File Endpoint (DELETE /files/{fileId})
+# =============================================================================
+
+resource "aws_api_gateway_method" "file_delete" {
+  count = var.alb_dns_name != null ? 1 : 0
+
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.file.id
+  http_method   = "DELETE"
+  authorization = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
+  authorizer_id = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+
+  request_parameters = {
+    "method.request.path.fileId" = true
+  }
+}
+
+resource "aws_api_gateway_integration" "file_delete" {
+  count = var.alb_dns_name != null ? 1 : 0
+
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.file.id
+  http_method             = aws_api_gateway_method.file_delete[0].http_method
+  type                    = "HTTP_PROXY"
+  integration_http_method = "DELETE"
+  uri                     = "http://${var.alb_dns_name}/api/v1/files/{fileId}"
+  connection_type         = "VPC_LINK"
+  connection_id           = aws_api_gateway_vpc_link.main[0].id
+  timeout_milliseconds    = 29000
+
+  request_parameters = {
+    "integration.request.path.fileId" = "method.request.path.fileId"
+  }
 }
 
 # =============================================================================
@@ -183,6 +353,7 @@ resource "aws_api_gateway_deployment" "main" {
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.files.id,
       aws_api_gateway_resource.file.id,
+      aws_api_gateway_resource.upload.id,
       aws_api_gateway_resource.health.id,
       aws_api_gateway_method.health_get.id,
       aws_api_gateway_integration.health_get.id,
@@ -415,5 +586,10 @@ output "waf_web_acl_arn" {
 output "api_execution_arn" {
   description = "API Gateway execution ARN (for Lambda permissions)"
   value       = aws_api_gateway_rest_api.main.execution_arn
+}
+
+output "vpc_link_id" {
+  description = "VPC Link ID for ALB integration"
+  value       = length(aws_api_gateway_vpc_link.main) > 0 ? aws_api_gateway_vpc_link.main[0].id : null
 }
 
