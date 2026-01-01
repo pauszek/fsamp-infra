@@ -1,0 +1,39 @@
+{
+  "base_url": "https://api.fsamp.example.com",
+  "auth": {
+    "token_endpoint": "https://cognito-idp.eu-central-1.amazonaws.com/YOUR_USER_POOL_ID",
+    "client_id": "YOUR_CLIENT_ID",
+    "client_secret": "YOUR_CLIENT_SECRET"
+  },
+  "thresholds": {
+    "http_req_failed_rate": 0.005,
+    "http_req_duration_p95_ms": 500,
+    "http_req_duration_p99_ms": 2000
+  },
+  "scenarios": {
+    "smoke": {
+      "vus": 5,
+      "duration": "1m"
+    },
+    "load": {
+      "stages": [
+        { "duration": "2m", "target": 50 },
+        { "duration": "5m", "target": 50 },
+        { "duration": "2m", "target": 0 }
+      ]
+    },
+    "stress": {
+      "stages": [
+        { "duration": "2m", "target": 100 },
+        { "duration": "5m", "target": 100 },
+        { "duration": "2m", "target": 200 },
+        { "duration": "5m", "target": 200 },
+        { "duration": "2m", "target": 0 }
+      ]
+    }
+  },
+  "test_data": {
+    "file_sizes": [1024, 10240, 102400, 1048576],
+    "file_types": ["application/pdf", "image/png", "text/plain"]
+  }
+}
