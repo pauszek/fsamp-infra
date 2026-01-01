@@ -1,173 +1,216 @@
 # FSAMP Infrastructure
 
-Infrastructure as Code (IaC) for the FSAMP (File Secure Architecture Microservices Platform) using Terraform and LocalStack Pro.
+[![Terraform](https://img.shields.io/badge/Terraform-1.6+-623CE4?logo=terraform)](https://www.terraform.io/)
+[![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900?logo=amazonaws)](https://aws.amazon.com/)
+[![LocalStack](https://img.shields.io/badge/LocalStack-Pro-4A154B?logo=docker)](https://localstack.cloud/)
+[![FIPS 140-3](https://img.shields.io/badge/FIPS-140--3-green)](https://csrc.nist.gov/publications/detail/fips/140/3/final)
+
+> Infrastructure as Code (IaC) for a secure, event-driven microservices platform on AWS.
+> 
+> **Master's Thesis Project**: *Bezpieczna platforma mikroserwisowa w chmurze AWS z wykorzystaniem architektury sterowanej zdarzeniami i infrastruktury jako kod (IaC)*
+
+## 🏗️ Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        FSAMP Platform Architecture                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌──────────────┐    ┌─────────────┐    ┌─────────────────────────────────┐ │
+│  │   Cognito    │    │ API Gateway │    │         CloudWatch              │ │
+│  │   (Auth)     │───▶│   + WAF     │    │   Logs │ Metrics │ Alarms      │ │
+│  └──────────────┘    └──────┬──────┘    └─────────────────────────────────┘ │
+│                             │                                                │
+│  ┌──────────────────────────┼──────────────────────────────────────────────┐│
+│  │                     VPC (Private Subnets)                                ││
+│  │                          │                                               ││
+│  │    ┌─────────────────────▼─────────────────────┐                        ││
+│  │    │              ECS Fargate                   │                        ││
+│  │    │  ┌─────────────┐    ┌─────────────────┐   │                        ││
+│  │    │  │   Gateway   │    │    Processor    │   │                        ││
+│  │    │  │  (Spring)   │    │    (Python)     │   │                        ││
+│  │    │  └──────┬──────┘    └────────▲────────┘   │                        ││
+│  │    └─────────┼────────────────────┼────────────┘                        ││
+│  │              │                    │                                      ││
+│  │    ┌─────────▼─────────┐  ┌───────┴────────┐                            ││
+│  │    │   SNS Topics      │  │   SQS Queues   │                            ││
+│  │    │  (file-events)    │─▶│  (processing)  │                            ││
+│  │    └───────────────────┘  │  (DLQ)         │                            ││
+│  │                           └────────────────┘                            ││
+│  │              │                    │                                      ││
+│  │    ┌─────────▼─────────────────────▼────────┐                           ││
+│  │    │               Storage                   │                           ││
+│  │    │   S3 (files)  │  DynamoDB (metadata)   │                           ││
+│  │    └───────────────┼────────────────────────┘                           ││
+│  │                    │                                                     ││
+│  │    ┌───────────────▼────────────────────────┐                           ││
+│  │    │           KMS (FIPS 140-3)             │                           ││
+│  │    │     Encryption at rest & in transit    │                           ││
+│  │    └────────────────────────────────────────┘                           ││
+│  └──────────────────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ## 🚀 Quick Start
 
-```bash
-# 1. Start LocalStack
-docker-compose up -d
+### Prerequisites
 
-# 2. Initialize & Deploy
+- [Docker](https://www.docker.com/) & Docker Compose
+- [Terraform](https://www.terraform.io/) >= 1.6
+- [AWS CLI](https://aws.amazon.com/cli/) v2
+- [LocalStack Pro](https://localstack.cloud/) license (for local development)
+
+### Local Development (LocalStack)
+
+```bash
+# 1. Set LocalStack token
+export LOCALSTACK_AUTH_TOKEN=your-token
+
+# 2. Start LocalStack
+make up
+
+# 3. Initialize & apply Terraform
 make init-local
 make apply-local
 
-# 3. Verify
-make plan-local
+# 4. Verify resources
+aws --endpoint-url=http://localhost:4566 s3 ls
+aws --endpoint-url=http://localhost:4566 sqs list-queues
 ```
 
-## 📁 Project Structure
-
-```
-terraform/
-├── main.tf              # Module orchestration
-├── variables.tf         # Input variables (with validation)
-├── outputs.tf           # Output definitions
-├── locals.tf            # Computed values
-├── provider.tf          # AWS/LocalStack provider (dynamic)
-├── versions.tf          # Version constraints
-├── envs/                # Environment values ONLY
-│   ├── local.tfvars     #   └── LocalStack
-│   ├── dev.tfvars       #   └── AWS Dev
-│   ├── staging.tfvars   #   └── AWS Staging
-│   └── prod.tfvars      #   └── AWS Prod
-└── modules/             # Reusable modules
-    ├── security/        #   └── KMS, IAM
-    ├── storage/         #   └── S3, DynamoDB
-    ├── messaging/       #   └── SNS, SQS
-    ├── networking/      #   └── VPC, Subnets, Endpoints
-    ├── compute/         #   └── ECS Fargate, Lambda
-    ├── auth/            #   └── Cognito
-    ├── api-gateway/     #   └── API Gateway, WAF
-    ├── ecr/             #   └── Container Registry
-    └── observability/   #   └── CloudWatch
-```
-
-## 🔧 Usage
+### AWS Deployment
 
 ```bash
-# Local (LocalStack)
-make up              # Start LocalStack
-make init-local      # Initialize
-make plan-local      # Plan changes
-make apply-local     # Apply changes
+# 1. Configure AWS credentials
+aws configure
 
-# AWS Environments
-make init-dev && make plan-dev && make apply-dev
-make init-staging && make plan-staging && make apply-staging
-make init-prod && make plan-prod && make apply-prod
+# 2. Initialize for dev environment
+make init-dev
 
-# Utilities
-make fmt             # Format code
-make validate        # Validate config
-make lint            # Run tflint
-make security        # Run checkov security scan
+# 3. Plan and review changes
+make plan-dev
+
+# 4. Apply infrastructure
+make apply-dev
 ```
 
-## 🏗️ Architecture
+## 📁 Repository Structure
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         FSAMP Platform                                   │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                 │
-│  │ API Gateway │───▶│   Cognito   │    │     WAF     │                 │
-│  │  (REST)     │    │   (Auth)    │    │  (Prod)     │                 │
-│  └──────┬──────┘    └─────────────┘    └─────────────┘                 │
-│         │                                                                │
-│         ▼                                                                │
-│  ┌─────────────┐         ┌─────────────┐         ┌─────────────┐       │
-│  │ ECS Fargate │────────▶│  SNS/SQS    │────────▶│   Lambda    │       │
-│  │  (Gateway)  │         │ (Events)    │         │ (Processor) │       │
-│  └──────┬──────┘         └─────────────┘         └──────┬──────┘       │
-│         │                                                │              │
-│         ▼                                                ▼              │
-│  ┌─────────────────────────────────────────────────────────────┐       │
-│  │                        Storage Layer                         │       │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────────────┐ │       │
-│  │  │   S3    │  │   S3    │  │   S3    │  │    DynamoDB     │ │       │
-│  │  │ (files) │  │(process)│  │(quarant)│  │   (metadata)    │ │       │
-│  │  └─────────┘  └─────────┘  └─────────┘  └─────────────────┘ │       │
-│  └─────────────────────────────────────────────────────────────┘       │
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────┐       │
-│  │                    Security & Observability                   │       │
-│  │  KMS (FIPS 140-3) │ IAM │ CloudWatch │ VPC │ VPC Endpoints  │       │
-│  └─────────────────────────────────────────────────────────────┘       │
-└─────────────────────────────────────────────────────────────────────────┘
+fsamp-infra/
+├── terraform/
+│   ├── main.tf              # Module composition
+│   ├── variables.tf         # Input variables
+│   ├── outputs.tf           # Output values
+│   ├── locals.tf            # Computed values
+│   ├── provider.tf          # AWS/LocalStack provider
+│   ├── versions.tf          # Provider versions
+│   ├── envs/                # Environment configurations
+│   │   ├── local.tfvars     # LocalStack settings
+│   │   ├── dev.tfvars       # AWS dev settings
+│   │   ├── staging.tfvars   # AWS staging settings
+│   │   └── prod.tfvars      # AWS prod settings
+│   └── modules/             # Terraform modules
+│       ├── api-gateway/     # REST API + WAF
+│       ├── auth/            # Cognito User Pool
+│       ├── compute/         # ECS Fargate + Lambda
+│       ├── ecr/             # Container Registry
+│       ├── messaging/       # SNS + SQS
+│       ├── networking/      # VPC + Endpoints
+│       ├── observability/   # CloudWatch + X-Ray
+│       ├── security/        # KMS + IAM
+│       └── storage/         # S3 + DynamoDB
+├── docs/
+│   └── adr/                 # Architecture Decision Records
+├── e2e/                     # End-to-end tests
+├── docker-compose.yml       # LocalStack configuration
+├── Makefile                 # Task automation
+└── README.md                # This file
 ```
-
-## 🌍 Environments
-
-| Environment | Provider | State | Use Case |
-|-------------|----------|-------|----------|
-| `local` | LocalStack | Local file | Development |
-| `dev` | AWS | S3 | Integration testing |
-| `staging` | AWS | S3 | Pre-production |
-| `prod` | AWS | S3 (encrypted) | Production |
 
 ## 🔐 Security Features
 
-| Feature | Implementation |
-|---------|----------------|
-| **FIPS 140-3** | AWS KMS with AES-256-GCM, FIPS endpoints |
-| **Encryption at Rest** | S3 SSE-KMS, DynamoDB, SQS, SNS |
-| **Encryption in Transit** | TLS 1.2+, VPC Endpoints |
-| **IAM** | Least privilege roles (ECS, Lambda) |
-| **Authentication** | Cognito with MFA (prod) |
-| **WAF** | API Gateway protection (prod) |
-| **Network** | Private subnets, no NAT (VPC Endpoints) |
-| **Monitoring** | CloudWatch, DLQ alerts |
+### FIPS 140-3 Compliance
 
-## 🧪 Testing
+- **KMS Encryption**: All data encrypted at rest using AWS KMS (FIPS 140-3 Level 3 validated)
+- **Encryption in Transit**: TLS 1.2+ for all communications
+- **FIPS Endpoints**: Enabled in supported regions (us-*)
+
+### Multi-Layer Security
+
+| Layer | Implementation |
+|-------|----------------|
+| **Identity** | Cognito User Pools with MFA |
+| **Network** | VPC, Security Groups, VPC Endpoints |
+| **Application** | WAF rules, API throttling |
+| **Data** | KMS encryption, S3 bucket policies |
+| **Monitoring** | CloudWatch, CloudTrail, GuardDuty |
+
+## 📊 Environments
+
+| Environment | Purpose | Infrastructure |
+|-------------|---------|----------------|
+| `local` | Development | LocalStack (Docker) |
+| `dev` | Integration testing | AWS (minimal resources) |
+| `staging` | Pre-production | AWS (production-like) |
+| `prod` | Production | AWS (full redundancy) |
+
+## 🛠️ Make Targets
 
 ```bash
-# Local testing with LocalStack
-make up
-make apply-local
+make help           # Show all available targets
 
-# Security scan
-make security
+# Docker (LocalStack)
+make up             # Start LocalStack
+make down           # Stop LocalStack
+make logs           # View LocalStack logs
 
-# E2E tests (when services ready)
-cd e2e && ./run-e2e.sh
+# Terraform
+make init-local     # Initialize for LocalStack
+make plan-local     # Plan changes
+make apply-local    # Apply changes
+make destroy-local  # Destroy resources
+
+# Same for dev/staging/prod:
+make init-dev       # Initialize for AWS dev
+make plan-dev       # Plan changes
+make apply-dev      # Apply changes
 ```
 
-## 📚 Architecture Decision Records
+## 📚 Architecture Decisions
 
-| ADR | Decision |
-|-----|----------|
-| [001](docs/adr/001-use-localstack-for-local-development.md) | LocalStack for local dev |
-| [002](docs/adr/002-event-driven-architecture.md) | Event-driven with SNS/SQS |
-| [003](docs/adr/003-ecs-fargate-over-eks.md) | ECS Fargate over EKS (cost) |
-| [004](docs/adr/004-fips-140-3-encryption.md) | FIPS 140-3 encryption |
-| [005](docs/adr/005-vpc-endpoints-over-nat.md) | VPC Endpoints over NAT (cost) |
-| [006](docs/adr/006-multi-repository-architecture.md) | Multi-repo architecture |
+Key architecture decisions are documented in [ADRs](docs/adr/):
 
-## 💰 Cost Optimization
-
-| Decision | Savings |
-|----------|---------|
-| ECS Fargate vs EKS | ~$73/month (no control plane) |
-| VPC Endpoints vs NAT | ~$30/month |
-| FARGATE_SPOT | Up to 70% on non-critical |
-| S3 Lifecycle policies | Auto-archive to Glacier |
+- [ADR-001: LocalStack for Local Development](docs/adr/001-use-localstack-for-local-development.md)
+- [ADR-002: Event-Driven Architecture](docs/adr/002-event-driven-architecture.md)
+- [ADR-003: ECS Fargate over EKS](docs/adr/003-ecs-fargate-over-eks.md)
+- [ADR-004: FIPS 140-3 Encryption](docs/adr/004-fips-140-3-encryption.md)
+- [ADR-005: VPC Endpoints over NAT](docs/adr/005-vpc-endpoints-over-nat.md)
+- [ADR-006: Multi-Repository Architecture](docs/adr/006-multi-repository-architecture.md)
 
 ## 🔗 Related Repositories
 
-| Repository | Purpose |
-|------------|---------|
-| `fsamp-gateway` | Spring Boot API Gateway |
-| `fsamp-processor` | Python Lambda Processor |
+| Repository | Description | Tech Stack |
+|------------|-------------|------------|
+| [fsamp-gateway](https://github.com/your-org/fsamp-gateway) | API Gateway Service | Spring Boot, Java 21, ACCP |
+| [fsamp-processor](https://github.com/your-org/fsamp-processor) | File Processing Service | Python 3.12, Lambda |
 
-## 📖 Documentation
+## 💰 Cost Optimization
 
-- [Contributing](CONTRIBUTING.md)
-- [Security Policy](SECURITY.md)
-- [Architecture Decisions](docs/adr/)
+This infrastructure is designed to operate within AWS Free Tier where possible:
 
-## 📝 License
+- **ECS Fargate** instead of EKS (~$100/month savings)
+- **VPC Endpoints** instead of NAT Gateway (~$30/month savings)
+- **FARGATE_SPOT** for non-prod workloads (~70% savings)
+- **S3 Bucket Keys** for KMS cost reduction (~90% reduction)
 
-MIT
+Estimated monthly cost: **~$15-25** (Free Tier + minimal usage)
+
+## 📄 License
+
+This project is developed as part of a Master's Thesis. All rights reserved.
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 

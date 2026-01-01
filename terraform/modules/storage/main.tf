@@ -236,6 +236,74 @@ resource "aws_dynamodb_table" "events" {
 }
 
 # =============================================================================
+# Outbox Table (Transactional Outbox Pattern)
+# =============================================================================
+# Enables reliable event publishing with at-least-once delivery guarantee.
+# DynamoDB Streams triggers the Outbox Publisher Lambda to publish events.
+# =============================================================================
+
+resource "aws_dynamodb_table" "outbox" {
+  name         = "${var.name_prefix}-outbox"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "PK"
+  range_key    = "SK"
+
+  # Enable DynamoDB Streams for CDC (Change Data Capture)
+  stream_enabled   = true
+  stream_view_type = "NEW_IMAGE"
+
+  attribute {
+    name = "PK"
+    type = "S"
+  }
+
+  attribute {
+    name = "SK"
+    type = "S"
+  }
+
+  # GSI for querying events by status (PENDING, PUBLISHED, FAILED)
+  attribute {
+    name = "GSI1PK"
+    type = "S"
+  }
+
+  attribute {
+    name = "GSI1SK"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "GSI1"
+    hash_key        = "GSI1PK"
+    range_key       = "GSI1SK"
+    projection_type = "ALL"
+  }
+
+  # Server-side encryption with KMS
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = var.kms_key_arn
+  }
+
+  # Point-in-time recovery for audit trail
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  # TTL for automatic cleanup of old published events
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-outbox"
+    Purpose = "Transactional Outbox Pattern"
+  })
+}
+
+# =============================================================================
 # Outputs
 # =============================================================================
 
@@ -258,6 +326,7 @@ output "dynamodb_table_names" {
   value = {
     file_metadata = aws_dynamodb_table.file_metadata.name
     events        = aws_dynamodb_table.events.name
+    outbox        = aws_dynamodb_table.outbox.name
   }
 }
 
@@ -266,5 +335,11 @@ output "dynamodb_table_arns" {
   value = {
     file_metadata = aws_dynamodb_table.file_metadata.arn
     events        = aws_dynamodb_table.events.arn
+    outbox        = aws_dynamodb_table.outbox.arn
   }
+}
+
+output "outbox_stream_arn" {
+  description = "ARN of the DynamoDB Streams for the outbox table"
+  value       = aws_dynamodb_table.outbox.stream_arn
 }

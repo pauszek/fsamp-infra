@@ -99,6 +99,30 @@ variable "gateway_image" {
   default     = "public.ecr.aws/docker/library/nginx:alpine"
 }
 
+variable "sqs_queue_url" {
+  description = "SQS queue URL for processor environment"
+  type        = string
+  default     = ""
+}
+
+variable "sns_topic_arn" {
+  description = "SNS topic ARN for processor events"
+  type        = string
+  default     = ""
+}
+
+variable "s3_bucket_name" {
+  description = "S3 bucket name for processor file storage"
+  type        = string
+  default     = ""
+}
+
+variable "dynamodb_table_name" {
+  description = "DynamoDB table name for processor metadata"
+  type        = string
+  default     = ""
+}
+
 variable "gateway_cpu" {
   description = "CPU units for gateway task"
   type        = number
@@ -121,6 +145,18 @@ variable "processor_timeout" {
   description = "Timeout (seconds) for processor Lambda"
   type        = number
   default     = 300
+}
+
+variable "outbox_table_name" {
+  description = "DynamoDB outbox table name"
+  type        = string
+  default     = ""
+}
+
+variable "outbox_stream_arn" {
+  description = "DynamoDB Streams ARN for outbox table"
+  type        = string
+  default     = ""
 }
 
 # =============================================================================
@@ -265,35 +301,71 @@ resource "aws_ecs_service" "gateway" {
 # Lambda Function - Processor
 # =============================================================================
 
+locals {
+  processor_env_vars = {
+    ENVIRONMENT               = var.environment
+    AWS_REGION               = var.aws_region
+    LOG_LEVEL                = var.environment == "prod" ? "INFO" : "DEBUG"
+    LOG_FORMAT               = "json"
+    POWERTOOLS_SERVICE_NAME  = "fsamp-processor"
+    POWERTOOLS_METRICS_NAMESPACE = "FSAMP/Processor"
+    POWERTOOLS_LOG_LEVEL     = var.environment == "prod" ? "INFO" : "DEBUG"
+    
+    # Resource configuration (set by CI/CD or locals)
+    SQS_QUEUE_URL            = var.sqs_queue_url
+    SNS_TOPIC_ARN            = var.sns_topic_arn
+    S3_BUCKET_NAME           = var.s3_bucket_name
+    DYNAMODB_TABLE_NAME      = var.dynamodb_table_name
+    OUTBOX_TABLE_NAME        = var.outbox_table_name
+    KMS_KEY_ID               = var.kms_key_arn
+  }
+  
+  outbox_publisher_env_vars = {
+    ENVIRONMENT                  = var.environment
+    AWS_REGION                   = var.aws_region
+    POWERTOOLS_SERVICE_NAME      = "outbox-publisher"
+    POWERTOOLS_METRICS_NAMESPACE = "FSAMP/OutboxPublisher"
+    POWERTOOLS_LOG_LEVEL         = var.environment == "prod" ? "INFO" : "DEBUG"
+    SNS_TOPIC_ARN                = var.sns_topic_arn
+    OUTBOX_TABLE_NAME            = var.outbox_table_name
+    MAX_RETRY_COUNT              = "3"
+  }
+}
+
 resource "aws_lambda_function" "processor" {
   function_name = "${var.name_prefix}-processor"
   role          = var.lambda_role_arn
-  handler       = "handler.lambda_handler"
+  handler       = "processor.lambda_handler.lambda_handler"
   runtime       = "python3.12"
   timeout       = var.processor_timeout
   memory_size   = var.processor_memory
+  
+  # Architecture - ARM64 is cheaper and faster for Python
+  architectures = ["arm64"]
 
   # Placeholder - will be deployed via CI/CD
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
 
   environment {
-    variables = {
-      ENVIRONMENT = var.environment
-      LOG_LEVEL   = var.environment == "prod" ? "INFO" : "DEBUG"
-      KMS_KEY_ARN = var.kms_key_arn
-    }
+    variables = local.processor_env_vars
   }
 
+  # KMS encryption for environment variables
   kms_key_arn = var.kms_key_arn
 
+  # X-Ray distributed tracing
   tracing_config {
     mode = "Active"
   }
 
+  # Dead letter queue for failed invocations
   dead_letter_config {
     target_arn = var.dlq_arn
   }
+  
+  # Reserved concurrency (optional - limit max concurrent executions)
+  # reserved_concurrent_executions = var.environment == "prod" ? 100 : 10
 
   tags = merge(var.tags, {
     Name    = "${var.name_prefix}-processor"
@@ -314,43 +386,207 @@ resource "aws_cloudwatch_log_group" "processor" {
   tags = var.tags
 }
 
-# Lambda placeholder
+# Lambda placeholder - replaced by actual code via CI/CD
 data "archive_file" "lambda_placeholder" {
   type        = "zip"
   output_path = "${path.module}/placeholder.zip"
 
   source {
     content  = <<-EOF
+      """
+      Placeholder Lambda handler.
+      
+      This placeholder is deployed by Terraform during initial setup.
+      The actual processor code is deployed via CI/CD pipeline.
+      
+      Deploy the real code using:
+        cd fsamp-processor
+        sam build && sam deploy --guided
+      
+      Or via CI/CD:
+        aws lambda update-function-code --function-name <function-name> --zip-file fileb://deployment.zip
+      """
       import json
       import logging
+      from datetime import datetime
 
       logger = logging.getLogger()
       logger.setLevel(logging.INFO)
 
       def lambda_handler(event, context):
-          """Placeholder handler - will be replaced by CI/CD deployment."""
-          logger.info(f"Received event: {json.dumps(event)}")
+          """Placeholder handler - deploy actual fsamp-processor code via CI/CD."""
+          logger.info(f"Placeholder invoked at {datetime.utcnow().isoformat()}")
+          logger.info(f"Event: {json.dumps(event)}")
+          
+          records = event.get("Records", [])
+          logger.warning(f"Placeholder received {len(records)} messages - deploy real code!")
+          
+          # Return empty batch item failures (acknowledge all messages)
+          # This prevents infinite retry loops with placeholder
           return {
-              'statusCode': 200,
-              'body': json.dumps({'message': 'Placeholder - deploy actual code via CI/CD'})
+              "batchItemFailures": []
           }
     EOF
-    filename = "handler.py"
+    filename = "processor/lambda_handler.py"
   }
 }
 
-# SQS Trigger for Lambda
+# SQS Trigger for Lambda (Event Source Mapping)
 resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   event_source_arn                   = var.sqs_queue_arn
   function_name                      = aws_lambda_function.processor.arn
   batch_size                         = 10
   maximum_batching_window_in_seconds = 5
+  
+  # Enable partial batch response for better error handling
+  function_response_types = ["ReportBatchItemFailures"]
 
+  # Scaling configuration
   scaling_config {
-    maximum_concurrency = 10
+    maximum_concurrency = var.environment == "prod" ? 50 : 10
+  }
+  
+  # Filter events (optional - only process specific event types)
+  # filter_criteria {
+  #   filter {
+  #     pattern = jsonencode({
+  #       body = {
+  #         event_type = ["FILE_UPLOADED", "FILE_SCANNED"]
+  #       }
+  #     })
+  #   }
+  # }
+}
+
+# =============================================================================
+# Lambda Function - Outbox Publisher (Transactional Outbox Pattern)
+# =============================================================================
+# Triggered by DynamoDB Streams when new events are written to the outbox table.
+# Publishes events to SNS and marks them as published.
+# =============================================================================
+
+resource "aws_lambda_function" "outbox_publisher" {
+  function_name = "${var.name_prefix}-outbox-publisher"
+  role          = var.lambda_role_arn
+  handler       = "processor.outbox_publisher.lambda_handler"
+  runtime       = "python3.12"
+  timeout       = 60
+  memory_size   = 256
+  
+  # ARM64 architecture
+  architectures = ["arm64"]
+
+  # Placeholder - will be deployed via CI/CD
+  filename         = data.archive_file.outbox_publisher_placeholder.output_path
+  source_code_hash = data.archive_file.outbox_publisher_placeholder.output_base64sha256
+
+  environment {
+    variables = local.outbox_publisher_env_vars
   }
 
+  # KMS encryption for environment variables
+  kms_key_arn = var.kms_key_arn
+
+  # X-Ray distributed tracing
+  tracing_config {
+    mode = "Active"
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-outbox-publisher"
+    Service = "outbox-publisher"
+    Pattern = "transactional-outbox"
+  })
+
+  depends_on = [
+    aws_cloudwatch_log_group.outbox_publisher
+  ]
+}
+
+# CloudWatch Log Group for Outbox Publisher
+resource "aws_cloudwatch_log_group" "outbox_publisher" {
+  name              = "/aws/lambda/${var.name_prefix}-outbox-publisher"
+  retention_in_days = var.environment == "prod" ? 90 : 30
+  kms_key_id        = var.kms_key_arn
+
+  tags = var.tags
+}
+
+# Placeholder for Outbox Publisher
+data "archive_file" "outbox_publisher_placeholder" {
+  type        = "zip"
+  output_path = "${path.module}/outbox_placeholder.zip"
+
+  source {
+    content  = <<-EOF
+      """
+      Placeholder Outbox Publisher Lambda handler.
+      
+      This placeholder is deployed by Terraform during initial setup.
+      The actual code is deployed via CI/CD pipeline.
+      """
+      import json
+      import logging
+      from datetime import datetime
+
+      logger = logging.getLogger()
+      logger.setLevel(logging.INFO)
+
+      def lambda_handler(event, context):
+          """Placeholder handler - deploy actual outbox-publisher code via CI/CD."""
+          logger.info(f"Outbox Publisher placeholder invoked at {datetime.utcnow().isoformat()}")
+          
+          records = event.get("Records", [])
+          logger.warning(f"Placeholder received {len(records)} DynamoDB Streams records - deploy real code!")
+          
+          # Return empty batch item failures
+          return {
+              "batchItemFailures": []
+          }
+    EOF
+    filename = "processor/outbox_publisher.py"
+  }
+}
+
+# DynamoDB Streams Event Source Mapping for Outbox Publisher
+resource "aws_lambda_event_source_mapping" "outbox_stream" {
+  count = var.outbox_stream_arn != "" ? 1 : 0
+  
+  event_source_arn  = var.outbox_stream_arn
+  function_name     = aws_lambda_function.outbox_publisher.arn
+  batch_size        = 100
+  starting_position = "LATEST"
+  
+  # Enable partial batch response for better error handling
   function_response_types = ["ReportBatchItemFailures"]
+  
+  # Maximum age of records to process (24 hours)
+  maximum_record_age_in_seconds = 86400
+  
+  # Maximum retry attempts for failed records
+  maximum_retry_attempts = 3
+  
+  # Bisect batch on function error (helps isolate bad records)
+  bisect_batch_on_function_error = true
+  
+  # Parallelization factor (process multiple batches concurrently)
+  parallelization_factor = 2
+  
+  # Filter to only process INSERT events (new outbox items)
+  filter_criteria {
+    filter {
+      pattern = jsonencode({
+        eventName = ["INSERT"]
+      })
+    }
+  }
+  
+  # Destination for failed records (optional - send to DLQ)
+  # destination_config {
+  #   on_failure {
+  #     destination_arn = var.dlq_arn
+  #   }
+  # }
 }
 
 # =============================================================================
@@ -431,4 +667,14 @@ output "processor_lambda_arn" {
 output "processor_lambda_name" {
   description = "Name of the processor Lambda function"
   value       = aws_lambda_function.processor.function_name
+}
+
+output "outbox_publisher_lambda_arn" {
+  description = "ARN of the outbox publisher Lambda function"
+  value       = aws_lambda_function.outbox_publisher.arn
+}
+
+output "outbox_publisher_lambda_name" {
+  description = "Name of the outbox publisher Lambda function"
+  value       = aws_lambda_function.outbox_publisher.function_name
 }
