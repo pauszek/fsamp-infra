@@ -8,17 +8,24 @@
 #   ./run-e2e.sh [OPTIONS]
 #
 # Options:
-#   --local       Run with locally built images
+#   --build       Build local images before testing
+#   --local       Run with locally built images (implies --build)
 #   --ci          Run in CI mode (no TTY, fail fast)
 #   --cleanup     Cleanup after tests (default: true)
 #   --no-cleanup  Keep containers running after tests
-#   --load-pod    Load Cloud Pod before tests
 #   --help        Show this help message
+#
+# Environment:
+#   LOCALSTACK_AUTH_TOKEN - Required for LocalStack Pro
+#   GATEWAY_IMAGE         - Override gateway image
+#   PROCESSOR_IMAGE       - Override processor image
 # =============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INFRA_DIR="$(dirname "$SCRIPT_DIR")"
+WORKSPACE_DIR="$(dirname "$INFRA_DIR")"
 cd "$SCRIPT_DIR"
 
 # Colors for output
@@ -31,13 +38,22 @@ NC='\033[0m' # No Color
 # Default options
 MODE="default"
 CLEANUP="true"
-LOAD_POD=""
+BUILD_IMAGES="false"
+
+# AWS Region - standardized
+export AWS_DEFAULT_REGION="us-west-2"
+export AWS_REGION="us-west-2"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --build)
+            BUILD_IMAGES="true"
+            shift
+            ;;
         --local)
             MODE="local"
+            BUILD_IMAGES="true"
             shift
             ;;
         --ci)
@@ -52,12 +68,8 @@ while [[ $# -gt 0 ]]; do
             CLEANUP="false"
             shift
             ;;
-        --load-pod)
-            LOAD_POD="$2"
-            shift 2
-            ;;
         --help)
-            head -25 "$0" | tail -20
+            head -30 "$0" | tail -25
             exit 0
             ;;
         *)
@@ -103,17 +115,57 @@ cleanup() {
 # Trap for cleanup on exit
 trap cleanup EXIT
 
+build_local_images() {
+    log "Building local images..."
+    
+    # Build Gateway
+    GATEWAY_REPO="${WORKSPACE_DIR}/fsamp-gateway"
+    if [[ -d "$GATEWAY_REPO" ]]; then
+        log "Building Gateway..."
+        pushd "$GATEWAY_REPO" > /dev/null
+        if [[ -f "build.sh" ]]; then
+            ./build.sh
+        else
+            docker build -t fsamp-gateway:latest .
+        fi
+        popd > /dev/null
+        log_success "Gateway built: fsamp-gateway:latest"
+    else
+        log_warning "Gateway repo not found at $GATEWAY_REPO"
+    fi
+    
+    # Build Processor
+    PROCESSOR_REPO="${WORKSPACE_DIR}/fsamp-processor"
+    if [[ -d "$PROCESSOR_REPO" ]]; then
+        log "Building Processor..."
+        pushd "$PROCESSOR_REPO" > /dev/null
+        if [[ -f "build.sh" ]]; then
+            ./build.sh
+        else
+            docker build -t fsamp-processor:latest .
+        fi
+        popd > /dev/null
+        log_success "Processor built: fsamp-processor:latest"
+    else
+        log_warning "Processor repo not found at $PROCESSOR_REPO"
+    fi
+}
+
 # Main execution
 main() {
     log "Starting E2E tests (mode: $MODE)"
+    
+    # Build images if requested
+    if [[ "$BUILD_IMAGES" == "true" ]]; then
+        build_local_images
+    fi
     
     # Set mode-specific options
     case $MODE in
         local)
             log "Using locally built images..."
-            export GATEWAY_IMAGE="fsamp-gateway:local"
-            export PROCESSOR_IMAGE="fsamp-processor:local"
-            export E2E_IMAGE="fsamp-e2e:local"
+            export GATEWAY_IMAGE="fsamp-gateway:latest"
+            export PROCESSOR_IMAGE="fsamp-processor:latest"
             ;;
         ci)
             log "CI mode: fail fast, no TTY..."
@@ -147,10 +199,22 @@ main() {
         exit 1
     fi
     
-    # Load Cloud Pod if specified
-    if [[ -n "$LOAD_POD" ]]; then
-        log "Loading Cloud Pod: $LOAD_POD..."
-        ../scripts/cloud-pods.sh load "$LOAD_POD"
+    # Wait for config file (means init-aws.sh completed)
+    log "Waiting for LocalStack initialization..."
+    retries=30
+    while [[ $retries -gt 0 ]]; do
+        if docker-compose exec -T localstack test -f /tmp/localstack-config/fsamp-config.env 2>/dev/null; then
+            log_success "LocalStack initialized!"
+            break
+        fi
+        retries=$((retries - 1))
+        sleep 2
+    done
+    
+    if [[ $retries -eq 0 ]]; then
+        log_error "LocalStack initialization failed"
+        docker-compose logs localstack
+        exit 1
     fi
     
     # Start application services

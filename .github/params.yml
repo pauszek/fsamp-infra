@@ -1,7 +1,5 @@
 files:
   version: release.version
-qodana:
-  enabled: false
 bump:
   enabled: true
   base-branch: main
