@@ -148,7 +148,7 @@ resource "aws_sqs_queue" "analysis_results" {
 }
 
 # =============================================================================
-# SQS Queue Policies
+# SQS Queue Policies - Enforce TLS (FedRAMP SC-8)
 # =============================================================================
 
 resource "aws_sqs_queue_policy" "file_processing" {
@@ -168,6 +168,128 @@ resource "aws_sqs_queue_policy" "file_processing" {
         Condition = {
           ArnEquals = {
             "aws:SourceArn" = aws_sns_topic.file_events.arn
+          }
+        }
+      },
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "sqs:*"
+        Resource  = aws_sqs_queue.file_processing.arn
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_sqs_queue_policy" "dlq" {
+  queue_url = aws_sqs_queue.dlq.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "sqs:*"
+        Resource  = aws_sqs_queue.dlq.arn
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_sqs_queue_policy" "analysis_results" {
+  queue_url = aws_sqs_queue.analysis_results.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "sqs:*"
+        Resource  = aws_sqs_queue.analysis_results.arn
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+}
+
+# =============================================================================
+# SNS Topic Policies - Enforce TLS (FedRAMP SC-8)
+# =============================================================================
+
+resource "aws_sns_topic_policy" "file_events" {
+  arn = aws_sns_topic.file_events.arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowAccountPublish"
+        Effect = "Allow"
+        Principal = {
+          AWS = data.aws_caller_identity.current.account_id
+        }
+        Action   = "sns:Publish"
+        Resource = aws_sns_topic.file_events.arn
+      },
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "sns:Publish"
+        Resource  = aws_sns_topic.file_events.arn
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_sns_topic_policy" "processing_events" {
+  arn = aws_sns_topic.processing_events.arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowAccountPublish"
+        Effect = "Allow"
+        Principal = {
+          AWS = data.aws_caller_identity.current.account_id
+        }
+        Action   = "sns:Publish"
+        Resource = aws_sns_topic.processing_events.arn
+      },
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "sns:Publish"
+        Resource  = aws_sns_topic.processing_events.arn
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
           }
         }
       }

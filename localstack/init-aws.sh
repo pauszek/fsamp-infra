@@ -12,6 +12,9 @@
 #   - SQS dead-letter queue
 #   - DynamoDB table for metadata
 #   - KMS key for encryption
+#   - IAM roles (gateway, processor) with least-privilege policies
+#   - Cognito user pool and test users
+#   - (optional) CloudTrail, GuardDuty, AWS Config audit services
 # =============================================================================
 
 set -euo pipefail
@@ -161,6 +164,36 @@ echo "Creating DynamoDB table..."
 awslocal dynamodb create-table \
     --table-name "fsamp-local-file-metadata" \
     --attribute-definitions \
+        AttributeName=fileId,AttributeType=S \
+        AttributeName=uploadTimestamp,AttributeType=S \
+        AttributeName=status,AttributeType=S \
+    --key-schema \
+        AttributeName=fileId,KeyType=HASH \
+        AttributeName=uploadTimestamp,KeyType=RANGE \
+    --global-secondary-indexes '[
+        {
+            "IndexName": "status-index",
+            "KeySchema": [
+                {"AttributeName": "status", "KeyType": "HASH"},
+                {"AttributeName": "uploadTimestamp", "KeyType": "RANGE"}
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        }
+    ]' \
+    --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+    --sse-specification Enabled=true,SSEType=KMS,KMSMasterKeyId="$KMS_KEY_ID" \
+    2>/dev/null || echo "  (table may already exist)"
+
+echo "  ✓ DynamoDB table created: fsamp-local-file-metadata"
+
+# -----------------------------------------------------------------------------
+# DynamoDB - Outbox Table (Transactional Outbox Pattern)
+# -----------------------------------------------------------------------------
+echo "Creating DynamoDB outbox table..."
+awslocal dynamodb create-table \
+    --table-name "fsamp-local-outbox" \
+    --attribute-definitions \
         AttributeName=PK,AttributeType=S \
         AttributeName=SK,AttributeType=S \
         AttributeName=GSI1PK,AttributeType=S \
@@ -181,9 +214,40 @@ awslocal dynamodb create-table \
     ]' \
     --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
     --sse-specification Enabled=true,SSEType=KMS,KMSMasterKeyId="$KMS_KEY_ID" \
+    --stream-specification StreamEnabled=true,StreamViewType=NEW_IMAGE \
     2>/dev/null || echo "  (table may already exist)"
 
-echo "  ✓ DynamoDB table created: fsamp-local-file-metadata"
+# Enable TTL on outbox table for automatic cleanup
+awslocal dynamodb update-time-to-live \
+    --table-name "fsamp-local-outbox" \
+    --time-to-live-specification Enabled=true,AttributeName=ttl \
+    2>/dev/null || true
+
+echo "  ✓ DynamoDB outbox table created: fsamp-local-outbox (with Streams)"
+
+# -----------------------------------------------------------------------------
+# DynamoDB - Idempotency Keys Table
+# -----------------------------------------------------------------------------
+echo "Creating DynamoDB idempotency keys table..."
+awslocal dynamodb create-table \
+    --table-name "fsamp-local-idempotency-keys" \
+    --attribute-definitions \
+        AttributeName=idempotencyKey,AttributeType=S \
+        AttributeName=userId,AttributeType=S \
+    --key-schema \
+        AttributeName=idempotencyKey,KeyType=HASH \
+        AttributeName=userId,KeyType=RANGE \
+    --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+    --sse-specification Enabled=true,SSEType=KMS,KMSMasterKeyId="$KMS_KEY_ID" \
+    2>/dev/null || echo "  (table may already exist)"
+
+# Enable TTL on idempotency keys table (keys expire after 24 hours)
+awslocal dynamodb update-time-to-live \
+    --table-name "fsamp-local-idempotency-keys" \
+    --time-to-live-specification Enabled=true,AttributeName=ttl \
+    2>/dev/null || true
+
+echo "  ✓ DynamoDB idempotency keys table created: fsamp-local-idempotency-keys"
 
 # -----------------------------------------------------------------------------
 # Cognito - User Pool for Authentication
@@ -288,6 +352,205 @@ awslocal cognito-idp admin-add-user-to-group \
 echo "  ✓ Admin user created: e2e-admin-user"
 
 # -----------------------------------------------------------------------------
+# IAM - Least-Privilege Roles (FedRAMP AC-6)
+# -----------------------------------------------------------------------------
+echo "Creating IAM roles and policies..."
+
+# Gateway role — S3 read/write, SNS publish, DynamoDB, KMS encrypt
+awslocal iam create-role \
+    --role-name "fsamp-gateway-role" \
+    --assume-role-policy-document '{
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "ecs-tasks.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+        }]
+    }' 2>/dev/null || true
+
+awslocal iam put-role-policy \
+    --role-name "fsamp-gateway-role" \
+    --policy-name "fsamp-gateway-policy" \
+    --policy-document '{
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "S3Access",
+                "Effect": "Allow",
+                "Action": ["s3:PutObject", "s3:GetObject", "s3:HeadObject", "s3:ListBucket"],
+                "Resource": [
+                    "arn:aws:s3:::fsamp-local-files",
+                    "arn:aws:s3:::fsamp-local-files/*"
+                ]
+            },
+            {
+                "Sid": "SNSPublish",
+                "Effect": "Allow",
+                "Action": ["sns:Publish"],
+                "Resource": "arn:aws:sns:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-file-events"
+            },
+            {
+                "Sid": "DynamoDBAccess",
+                "Effect": "Allow",
+                "Action": ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Query", "dynamodb:UpdateItem", "dynamodb:DeleteItem"],
+                "Resource": [
+                    "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-file-metadata",
+                    "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-file-metadata/*",
+                    "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-idempotency-keys",
+                    "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-idempotency-keys/*"
+                ]
+            },
+            {
+                "Sid": "KMSEncrypt",
+                "Effect": "Allow",
+                "Action": ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"],
+                "Resource": "arn:aws:kms:'"$REGION"':'"$ACCOUNT_ID"':key/'"$KMS_KEY_ID"'"
+            }
+        ]
+    }'
+
+echo "  ✓ Gateway IAM role created: fsamp-gateway-role"
+
+# Processor role — SQS consume, S3 read, DynamoDB write, KMS decrypt
+awslocal iam create-role \
+    --role-name "fsamp-processor-role" \
+    --assume-role-policy-document '{
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "lambda.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+        }]
+    }' 2>/dev/null || true
+
+awslocal iam put-role-policy \
+    --role-name "fsamp-processor-role" \
+    --policy-name "fsamp-processor-policy" \
+    --policy-document '{
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "SQSConsume",
+                "Effect": "Allow",
+                "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"],
+                "Resource": "arn:aws:sqs:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-processing-queue"
+            },
+            {
+                "Sid": "S3ReadOnly",
+                "Effect": "Allow",
+                "Action": ["s3:GetObject", "s3:HeadObject"],
+                "Resource": "arn:aws:s3:::fsamp-local-files/*"
+            },
+            {
+                "Sid": "DynamoDBWrite",
+                "Effect": "Allow",
+                "Action": ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem", "dynamodb:Query", "dynamodb:DeleteItem"],
+                "Resource": [
+                    "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-file-metadata",
+                    "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-file-metadata/*",
+                    "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-outbox",
+                    "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-outbox/*"
+                ]
+            },
+            {
+                "Sid": "KMSDecrypt",
+                "Effect": "Allow",
+                "Action": ["kms:Decrypt", "kms:DescribeKey"],
+                "Resource": "arn:aws:kms:'"$REGION"':'"$ACCOUNT_ID"':key/'"$KMS_KEY_ID"'"
+            },
+            {
+                "Sid": "CloudWatchLogs",
+                "Effect": "Allow",
+                "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+                "Resource": "arn:aws:logs:'"$REGION"':'"$ACCOUNT_ID"':log-group:/aws/lambda/fsamp-*"
+            }
+        ]
+    }'
+
+echo "  ✓ Processor IAM role created: fsamp-processor-role"
+
+# -----------------------------------------------------------------------------
+# Audit Services (FedRAMP AU-2, AU-3, AU-6, SI-4)
+# Feature-flagged: set ENABLE_AUDIT_SERVICES=1 to activate
+# -----------------------------------------------------------------------------
+if [[ "${ENABLE_AUDIT_SERVICES:-0}" == "1" ]]; then
+    echo "Setting up audit services (CloudTrail, GuardDuty, Config)..."
+
+    # --- CloudTrail (AU-2, AU-3) ---
+    # Create CloudTrail log bucket
+    awslocal s3 mb "s3://fsamp-local-cloudtrail-logs" 2>/dev/null || true
+    awslocal s3api put-bucket-policy \
+        --bucket fsamp-local-cloudtrail-logs \
+        --policy '{
+            "Version": "2012-10-17",
+            "Statement": [{
+                "Sid": "CloudTrailWrite",
+                "Effect": "Allow",
+                "Principal": {"Service": "cloudtrail.amazonaws.com"},
+                "Action": "s3:PutObject",
+                "Resource": "arn:aws:s3:::fsamp-local-cloudtrail-logs/AWSLogs/'"$ACCOUNT_ID"'/*"
+            }, {
+                "Sid": "CloudTrailACLCheck",
+                "Effect": "Allow",
+                "Principal": {"Service": "cloudtrail.amazonaws.com"},
+                "Action": "s3:GetBucketAcl",
+                "Resource": "arn:aws:s3:::fsamp-local-cloudtrail-logs"
+            }]
+        }'
+
+    awslocal cloudtrail create-trail \
+        --name "fsamp-local-trail" \
+        --s3-bucket-name "fsamp-local-cloudtrail-logs" \
+        --is-multi-region-trail \
+        --enable-log-file-validation \
+        2>/dev/null || echo "  (trail may already exist)"
+
+    awslocal cloudtrail start-logging --name "fsamp-local-trail" 2>/dev/null || true
+
+    echo "  ✓ CloudTrail trail created: fsamp-local-trail"
+
+    # --- GuardDuty (SI-4) ---
+    DETECTOR_ID=$(awslocal guardduty create-detector \
+        --enable \
+        --finding-publishing-frequency FIFTEEN_MINUTES \
+        --query 'DetectorId' \
+        --output text 2>/dev/null || echo "existing")
+
+    echo "  ✓ GuardDuty detector created: $DETECTOR_ID"
+
+    # --- AWS Config (CM-2, CM-6) ---
+    awslocal s3 mb "s3://fsamp-local-config-logs" 2>/dev/null || true
+
+    # Config recorder
+    awslocal configservice put-configuration-recorder \
+        --configuration-recorder '{
+            "name": "fsamp-local-recorder",
+            "roleARN": "arn:aws:iam::'"$ACCOUNT_ID"':role/aws-service-role/config.amazonaws.com/AWSServiceRoleForConfig",
+            "recordingGroup": {
+                "allSupported": true,
+                "includeGlobalResourceTypes": true
+            }
+        }' 2>/dev/null || true
+
+    awslocal configservice put-delivery-channel \
+        --delivery-channel '{
+            "name": "fsamp-local-channel",
+            "s3BucketName": "fsamp-local-config-logs",
+            "configSnapshotDeliveryProperties": {
+                "deliveryFrequency": "One_Hour"
+            }
+        }' 2>/dev/null || true
+
+    awslocal configservice start-configuration-recorder \
+        --configuration-recorder-name "fsamp-local-recorder" 2>/dev/null || true
+
+    echo "  ✓ AWS Config recorder started: fsamp-local-recorder"
+    echo "  ✓ Audit services initialization complete"
+else
+    echo "Skipping audit services (set ENABLE_AUDIT_SERVICES=1 to enable)"
+fi
+
+# -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
 echo ""
@@ -301,7 +564,15 @@ echo "  SNS Topic:     $SNS_TOPIC_ARN"
 echo "  SQS Queue:     $QUEUE_URL"
 echo "  SQS DLQ:       $DLQ_URL"
 echo "  DynamoDB:      fsamp-local-file-metadata"
+echo "  DynamoDB:      fsamp-local-outbox (Streams enabled)"
+echo "  DynamoDB:      fsamp-local-idempotency-keys"
 echo "  KMS Key:       alias/fsamp-local-master-key"
+echo "  IAM Roles:     fsamp-gateway-role, fsamp-processor-role"
+if [[ "${ENABLE_AUDIT_SERVICES:-0}" == "1" ]]; then
+echo "  CloudTrail:    fsamp-local-trail"
+echo "  GuardDuty:     detector $DETECTOR_ID"
+echo "  AWS Config:    fsamp-local-recorder"
+fi
 echo ""
 echo "Cognito:"
 echo "  User Pool ID:  $USER_POOL_ID"
@@ -347,6 +618,8 @@ export SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-processing-
 
 # DynamoDB
 export DYNAMODB_TABLE_NAME=fsamp-local-file-metadata
+export DYNAMODB_OUTBOX_TABLE_NAME=fsamp-local-outbox
+export DYNAMODB_IDEMPOTENCY_TABLE_NAME=fsamp-local-idempotency-keys
 
 # KMS - Full ARN required for schema validation
 export KMS_KEY_ID=arn:aws:kms:$REGION:$ACCOUNT_ID:key/$KMS_KEY_ID

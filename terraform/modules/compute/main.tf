@@ -94,9 +94,9 @@ variable "aws_region" {
 }
 
 variable "gateway_image" {
-  description = "Docker image for gateway service"
+  description = "Docker image for gateway service (ECR URI)"
   type        = string
-  default     = "public.ecr.aws/docker/library/nginx:alpine"
+  # No default - must be provided per environment
 }
 
 variable "sqs_queue_url" {
@@ -121,6 +121,17 @@ variable "dynamodb_table_name" {
   description = "DynamoDB table name for processor metadata"
   type        = string
   default     = ""
+}
+
+variable "processor_image" {
+  description = "ECR image URI for processor Lambda (container image deployment)"
+  type        = string
+}
+
+variable "outbox_publisher_image" {
+  description = "ECR image URI for outbox publisher Lambda (container image deployment)"
+  type        = string
+  default     = "" # Falls back to processor_image when empty
 }
 
 variable "gateway_cpu" {
@@ -335,17 +346,20 @@ locals {
 resource "aws_lambda_function" "processor" {
   function_name = "${var.name_prefix}-processor"
   role          = var.lambda_role_arn
-  handler       = "processor.lambda_handler.lambda_handler"
-  runtime       = "python3.12"
   timeout       = var.processor_timeout
   memory_size   = var.processor_memory
+
+  # Container image deployment — FIPS 140-3 OpenSSL provider baked in
+  package_type = "Image"
+  image_uri    = var.processor_image
 
   # Architecture - ARM64 is cheaper and faster for Python
   architectures = ["arm64"]
 
-  # Placeholder - will be deployed via CI/CD
-  filename         = data.archive_file.lambda_placeholder.output_path
-  source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
+  # Override CMD from Dockerfile if needed (handler path)
+  image_config {
+    command = ["processor.lambda_handler.lambda_handler"]
+  }
 
   environment {
     variables = local.processor_env_vars
@@ -371,67 +385,11 @@ resource "aws_lambda_function" "processor" {
     Name    = "${var.name_prefix}-processor"
     Service = "processor"
   })
-
-  depends_on = [
-    aws_cloudwatch_log_group.processor
-  ]
 }
 
-# Lambda CloudWatch Log Group
-resource "aws_cloudwatch_log_group" "processor" {
-  name              = var.lambda_log_group_name
-  retention_in_days = var.environment == "prod" ? 90 : 30
-  kms_key_id        = var.kms_key_arn
-
-  tags = var.tags
-}
-
-# Lambda placeholder - replaced by actual code via CI/CD
-data "archive_file" "lambda_placeholder" {
-  type        = "zip"
-  output_path = "${path.module}/placeholder.zip"
-
-  source {
-    content  = <<-EOF
-      """
-      Placeholder Lambda handler.
-      
-      This placeholder is deployed by Terraform during initial setup.
-      The actual processor code is deployed via CI/CD pipeline.
-      
-      Deploy the real code using:
-        cd fsamp-processor
-        sam build && sam deploy --guided
-      
-      Or via CI/CD:
-        aws lambda update-function-code --function-name <function-name> --zip-file fileb://deployment.zip
-      """
-      import json
-      import logging
-      from datetime import datetime
-
-      logger = logging.getLogger()
-      logger.setLevel(logging.INFO)
-
-      def lambda_handler(event, context):
-          """Placeholder handler - deploy actual fsamp-processor code via CI/CD."""
-          logger.info(f"Placeholder invoked at {datetime.utcnow().isoformat()}")
-          logger.info(f"Event: {json.dumps(event)}")
-          
-          records = event.get("Records", [])
-          logger.warning(f"Placeholder received {len(records)} messages - deploy real code!")
-          
-          # Return empty batch item failures (acknowledge all messages)
-          # This prevents infinite retry loops with placeholder
-          return {
-              "batchItemFailures": []
-          }
-    EOF
-    filename = "processor/lambda_handler.py"
-  }
-}
-
+# =============================================================================
 # SQS Trigger for Lambda (Event Source Mapping)
+# =============================================================================
 resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   event_source_arn                   = var.sqs_queue_arn
   function_name                      = aws_lambda_function.processor.arn
@@ -468,17 +426,20 @@ resource "aws_lambda_event_source_mapping" "sqs_trigger" {
 resource "aws_lambda_function" "outbox_publisher" {
   function_name = "${var.name_prefix}-outbox-publisher"
   role          = var.lambda_role_arn
-  handler       = "processor.outbox_publisher.lambda_handler"
-  runtime       = "python3.12"
   timeout       = 60
   memory_size   = 256
+
+  # Container image deployment — same FIPS image, different handler
+  package_type = "Image"
+  image_uri    = coalesce(var.outbox_publisher_image, var.processor_image)
 
   # ARM64 architecture
   architectures = ["arm64"]
 
-  # Placeholder - will be deployed via CI/CD
-  filename         = data.archive_file.outbox_publisher_placeholder.output_path
-  source_code_hash = data.archive_file.outbox_publisher_placeholder.output_base64sha256
+  # Override CMD to point at outbox publisher handler
+  image_config {
+    command = ["processor.outbox_publisher.lambda_handler"]
+  }
 
   environment {
     variables = local.outbox_publisher_env_vars
@@ -512,43 +473,9 @@ resource "aws_cloudwatch_log_group" "outbox_publisher" {
   tags = var.tags
 }
 
-# Placeholder for Outbox Publisher
-data "archive_file" "outbox_publisher_placeholder" {
-  type        = "zip"
-  output_path = "${path.module}/outbox_placeholder.zip"
-
-  source {
-    content  = <<-EOF
-      """
-      Placeholder Outbox Publisher Lambda handler.
-      
-      This placeholder is deployed by Terraform during initial setup.
-      The actual code is deployed via CI/CD pipeline.
-      """
-      import json
-      import logging
-      from datetime import datetime
-
-      logger = logging.getLogger()
-      logger.setLevel(logging.INFO)
-
-      def lambda_handler(event, context):
-          """Placeholder handler - deploy actual outbox-publisher code via CI/CD."""
-          logger.info(f"Outbox Publisher placeholder invoked at {datetime.utcnow().isoformat()}")
-          
-          records = event.get("Records", [])
-          logger.warning(f"Placeholder received {len(records)} DynamoDB Streams records - deploy real code!")
-          
-          # Return empty batch item failures
-          return {
-              "batchItemFailures": []
-          }
-    EOF
-    filename = "processor/outbox_publisher.py"
-  }
-}
-
+# =============================================================================
 # DynamoDB Streams Event Source Mapping for Outbox Publisher
+# =============================================================================
 resource "aws_lambda_event_source_mapping" "outbox_stream" {
   count = var.outbox_stream_arn != "" ? 1 : 0
 

@@ -50,6 +50,18 @@ variable "password_min_length" {
   default     = 12
 }
 
+variable "access_token_validity_minutes" {
+  description = "Access / ID token lifetime in minutes. FedRAMP AC-12 recommends ≤30 min for prod."
+  type        = number
+  default     = 60
+}
+
+variable "refresh_token_validity_days" {
+  description = "Refresh token lifetime in days. Shorter values reduce session hijack window."
+  type        = number
+  default     = 30
+}
+
 # =============================================================================
 # Cognito User Pool
 # =============================================================================
@@ -178,10 +190,10 @@ resource "aws_cognito_user_pool_client" "web" {
 
   supported_identity_providers = ["COGNITO"]
 
-  # Token validity
-  access_token_validity  = 60 # minutes
-  id_token_validity      = 60 # minutes
-  refresh_token_validity = 30 # days
+  # Token validity (FedRAMP AC-12 — session timeouts)
+  access_token_validity  = var.access_token_validity_minutes
+  id_token_validity      = var.access_token_validity_minutes
+  refresh_token_validity = var.refresh_token_validity_days
 
   token_validity_units {
     access_token  = "minutes"
@@ -232,8 +244,8 @@ resource "aws_cognito_user_pool_client" "service" {
 
   supported_identity_providers = ["COGNITO"]
 
-  # Token validity
-  access_token_validity = 60 # minutes
+  # Token validity (FedRAMP AC-12 — session timeouts)
+  access_token_validity = var.access_token_validity_minutes
 
   token_validity_units {
     access_token = "minutes"

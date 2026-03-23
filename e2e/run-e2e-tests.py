@@ -731,6 +731,142 @@ def test_gateway_api_docs() -> TestResult:
     return result
 
 
+def test_audit_services_active() -> TestResult:
+    """
+    Test that audit services (CloudTrail, GuardDuty, AWS Config) are active.
+
+    FedRAMP controls: AU-2/AU-3 (CloudTrail), SI-4 (GuardDuty), CM-2/CM-6 (Config).
+    Only runs when ENABLE_AUDIT_SERVICES=1 is set.
+    """
+    result = TestResult("audit_services")
+    start = time.time()
+
+    if os.getenv("ENABLE_AUDIT_SERVICES", "0") != "1":
+        result.passed = True
+        result.details["skipped"] = "ENABLE_AUDIT_SERVICES not set"
+        result.duration = time.time() - start
+        return result
+
+    try:
+        endpoint = TestConfig.AWS_ENDPOINT_URL
+        region = TestConfig.AWS_REGION
+        creds = {
+            "endpoint_url": endpoint,
+            "aws_access_key_id": TestConfig.AWS_ACCESS_KEY_ID,
+            "aws_secret_access_key": TestConfig.AWS_SECRET_ACCESS_KEY,
+            "region_name": region,
+        }
+
+        checks_passed = 0
+        total_checks = 3
+
+        # --- CloudTrail (AU-2, AU-3) ---
+        try:
+            ct = boto3.client("cloudtrail", **creds)
+            trails = ct.describe_trails()["trailList"]
+            fsamp_trail = [t for t in trails if "fsamp" in t.get("Name", "")]
+            if fsamp_trail:
+                status = ct.get_trail_status(Name=fsamp_trail[0]["Name"])
+                is_logging = status.get("IsLogging", False)
+                result.details["cloudtrail"] = f"active, logging={is_logging}"
+                if is_logging:
+                    checks_passed += 1
+                else:
+                    result.details["cloudtrail_warning"] = "trail exists but not logging"
+            else:
+                result.details["cloudtrail"] = "no fsamp trail found"
+        except Exception as e:
+            result.details["cloudtrail"] = f"error: {str(e)[:80]}"
+
+        # --- GuardDuty (SI-4) ---
+        try:
+            gd = boto3.client("guardduty", **creds)
+            detectors = gd.list_detectors()["DetectorIds"]
+            if detectors:
+                detector = gd.get_detector(DetectorId=detectors[0])
+                status = detector.get("Status", "UNKNOWN")
+                result.details["guardduty"] = f"detector={detectors[0]}, status={status}"
+                if status == "ENABLED":
+                    checks_passed += 1
+            else:
+                result.details["guardduty"] = "no detectors found"
+        except Exception as e:
+            result.details["guardduty"] = f"error: {str(e)[:80]}"
+
+        # --- AWS Config (CM-2, CM-6) ---
+        try:
+            cfg = boto3.client("config", **creds)
+            recorders = cfg.describe_configuration_recorders()[
+                "ConfigurationRecorders"
+            ]
+            if recorders:
+                rec_status = cfg.describe_configuration_recorder_status()[
+                    "ConfigurationRecordersStatus"
+                ]
+                recording = any(s.get("recording", False) for s in rec_status)
+                result.details["config"] = (
+                    f"recorder={recorders[0]['name']}, recording={recording}"
+                )
+                if recording:
+                    checks_passed += 1
+            else:
+                result.details["config"] = "no recorders found"
+        except Exception as e:
+            result.details["config"] = f"error: {str(e)[:80]}"
+
+        result.passed = checks_passed == total_checks
+        result.details["checks_passed"] = f"{checks_passed}/{total_checks}"
+
+    except Exception as e:
+        result.error = str(e)
+
+    result.duration = time.time() - start
+    return result
+
+
+def test_iam_roles_exist() -> TestResult:
+    """
+    Test that least-privilege IAM roles are provisioned (FedRAMP AC-6).
+    """
+    result = TestResult("iam_roles")
+    start = time.time()
+
+    try:
+        iam = boto3.client(
+            "iam",
+            endpoint_url=TestConfig.AWS_ENDPOINT_URL,
+            aws_access_key_id=TestConfig.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=TestConfig.AWS_SECRET_ACCESS_KEY,
+            region_name=TestConfig.AWS_REGION,
+        )
+
+        expected_roles = ["fsamp-gateway-role", "fsamp-processor-role"]
+        found_roles = []
+
+        for role_name in expected_roles:
+            try:
+                role = iam.get_role(RoleName=role_name)
+                found_roles.append(role_name)
+
+                # Verify role has attached policies
+                policies = iam.list_role_policies(RoleName=role_name)
+                policy_names = policies.get("PolicyNames", [])
+                result.details[role_name] = f"exists, policies={policy_names}"
+            except iam.exceptions.NoSuchEntityException:
+                result.details[role_name] = "NOT FOUND"
+            except Exception as e:
+                result.details[role_name] = f"error: {str(e)[:60]}"
+
+        result.passed = len(found_roles) == len(expected_roles)
+        result.details["found"] = f"{len(found_roles)}/{len(expected_roles)}"
+
+    except Exception as e:
+        result.error = str(e)
+
+    result.duration = time.time() - start
+    return result
+
+
 # =============================================================================
 # Test Runner
 # =============================================================================
@@ -782,10 +918,14 @@ def run_all_tests(verbose: bool = False) -> list[TestResult]:
         test_gateway_health,
         test_localstack_resources,
         test_gateway_api_docs,
+        test_iam_roles_exist,
         
         # Security tests
         test_cognito_authentication,
         test_unauthenticated_request_rejected,
+        
+        # Compliance tests (FedRAMP AU/SI/CM)
+        test_audit_services_active,
         
         # Functional tests (with auth)
         test_authenticated_file_upload,

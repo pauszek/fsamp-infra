@@ -23,7 +23,7 @@ services:
   # Infrastructure Layer
   # ---------------------------------------------------------------------------
   localstack:
-    image: localstack/localstack-pro:latest-arm64
+    image: localstack/localstack-pro:4.14.0
     container_name: fsamp-e2e-localstack
     ports:
       - "4566:4566"
@@ -110,6 +110,8 @@ services:
       DYNAMODB_TABLE_NAME: fsamp-local-file-metadata
       # KMS_KEY_ID loaded dynamically from config
       USE_FIPS_ENDPOINT: "false"
+      # Disable FIPS OpenSSL for local mode (HTTP to LocalStack, no TLS needed)
+      OPENSSL_CONF: ""
     entrypoint: ["/bin/sh", "-c", "test -f /config/fsamp-config.env && . /config/fsamp-config.env; exec python -m processor.main"]
     volumes:
       - fsamp-config:/config:ro

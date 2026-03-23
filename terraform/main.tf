@@ -89,6 +89,10 @@ module "auth" {
 
   callback_urls = var.environment == "prod" ? ["https://app.fsamp.example.com/callback"] : ["http://localhost:3000/callback"]
   logout_urls   = var.environment == "prod" ? ["https://app.fsamp.example.com"] : ["http://localhost:3000"]
+
+  # FedRAMP AC-12: shorter token lifetime in production
+  access_token_validity_minutes = var.environment == "prod" ? 30 : 60
+  refresh_token_validity_days   = var.environment == "prod" ? 7 : 30
 }
 
 # API Gateway with WAF - only for non-local environments
@@ -139,7 +143,31 @@ module "compute" {
   subnet_ids             = module.networking[0].private_subnet_ids
   security_group_id      = module.networking[0].ecs_security_group_id
 
-  depends_on = [module.security, module.networking, module.observability, module.messaging]
+  # Container images from ECR
+  gateway_image   = "${module.ecr[0].repository_urls["gateway"]}:${var.gateway_image_tag}"
+  processor_image = "${module.ecr[0].repository_urls["processor"]}:${var.processor_image_tag}"
+
+  # Outbox Pattern: DynamoDB Streams for transactional event publishing
+  outbox_stream_arn = module.storage.outbox_stream_arn
+
+  depends_on = [module.security, module.networking, module.observability, module.messaging, module.ecr]
+}
+
+# Audit services (CloudTrail, GuardDuty, AWS Config) - FedRAMP compliance
+# Feature-flagged per environment for cost control
+module "audit" {
+  source = "./modules/audit"
+  count  = local.is_local ? 0 : 1
+
+  environment       = var.environment
+  name_prefix       = local.name_prefix
+  tags              = local.common_tags
+  kms_key_arn       = module.security.kms_key_arn
+  enable_cloudtrail = var.enable_cloudtrail
+  enable_guardduty  = var.enable_guardduty
+  enable_aws_config = var.enable_aws_config
+
+  depends_on = [module.security]
 }
 
 # =============================================================================
