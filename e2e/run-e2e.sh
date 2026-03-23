@@ -142,7 +142,7 @@ build_local_images() {
         if [[ -f "build.sh" ]]; then
             ./build.sh
         else
-            docker build -t fsamp-processor:latest .
+            docker build --target production -t fsamp-processor:latest .
         fi
         popd > /dev/null
         log_success "Processor built: fsamp-processor:latest"

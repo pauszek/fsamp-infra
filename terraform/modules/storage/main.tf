@@ -143,6 +143,121 @@ resource "aws_s3_bucket_lifecycle_configuration" "quarantine" {
 }
 
 # =============================================================================
+# S3 Bucket Policies - Enforce TLS (FedRAMP SC-8, SC-23)
+# =============================================================================
+# Deny any requests not using HTTPS (aws:SecureTransport = false).
+# This ensures all S3 access uses TLS encrypted transport.
+# =============================================================================
+
+resource "aws_s3_bucket_policy" "enforce_tls" {
+  for_each = aws_s3_bucket.buckets
+
+  bucket = each.value.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          each.value.arn,
+          "${each.value.arn}/*"
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      },
+      {
+        Sid       = "DenyOutdatedTLS"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          each.value.arn,
+          "${each.value.arn}/*"
+        ]
+        Condition = {
+          NumericLessThan = {
+            "s3:TlsVersion" = 1.2
+          }
+        }
+      }
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.buckets]
+}
+
+# =============================================================================
+# S3 Server Access Logging (FedRAMP AC-6(9), AU-3)
+# =============================================================================
+# Log all access to data buckets for audit trail.
+# =============================================================================
+
+resource "aws_s3_bucket" "access_logs" {
+  bucket        = "${var.name_prefix}-access-logs"
+  force_destroy = var.environment != "prod"
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-access-logs"
+    Purpose = "S3 server access logs"
+  })
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "access_logs" {
+  bucket = aws_s3_bucket.access_logs.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = var.kms_key_arn
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "access_logs" {
+  bucket = aws_s3_bucket.access_logs.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "access_logs" {
+  bucket = aws_s3_bucket.access_logs.id
+
+  rule {
+    id     = "access-logs-lifecycle"
+    status = "Enabled"
+    filter {}
+
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+
+    expiration {
+      days = var.environment == "prod" ? 365 : 90
+    }
+  }
+}
+
+resource "aws_s3_bucket_logging" "buckets" {
+  for_each = aws_s3_bucket.buckets
+
+  bucket        = each.value.id
+  target_bucket = aws_s3_bucket.access_logs.id
+  target_prefix = "${each.key}/"
+}
+
+# =============================================================================
 # DynamoDB Tables
 # =============================================================================
 

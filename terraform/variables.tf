@@ -97,6 +97,70 @@ variable "enable_container_insights" {
 }
 
 # -----------------------------------------------------------------------------
+# Container Image Tags
+# -----------------------------------------------------------------------------
+
+variable "gateway_image_tag" {
+  description = <<-EOT
+    Docker image tag for the gateway ECS container image.
+    Set by CI/CD pipeline; defaults to 'latest' for initial Terraform apply.
+    Images are pushed to ECR by the build pipeline before deploy.
+  EOT
+  type        = string
+  default     = "latest"
+}
+
+variable "processor_image_tag" {
+  description = <<-EOT
+    Docker image tag for the processor Lambda container image.
+    Set by CI/CD pipeline; defaults to 'latest' for initial Terraform apply.
+    Images are pushed to ECR by the build pipeline before deploy.
+  EOT
+  type        = string
+  default     = "latest"
+}
+
+# -----------------------------------------------------------------------------
+# Audit & Compliance Feature Flags (FedRAMP)
+# -----------------------------------------------------------------------------
+
+variable "enable_cloudtrail" {
+  description = <<-EOT
+    Enable CloudTrail for API audit logging (FedRAMP AU control family).
+    Records all API calls with log file integrity validation.
+    Cost: ~$2/month for management events + S3 storage.
+    Enabled by default for FedRAMP AU-2 compliance; disabled automatically
+    for local environment via module count gate.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "enable_guardduty" {
+  description = <<-EOT
+    Enable GuardDuty for threat detection (FedRAMP SI control family).
+    Monitors CloudTrail, VPC Flow Logs, and DNS for malicious activity.
+    Cost: ~$4/month for low-volume workloads.
+    Enabled by default for FedRAMP SI-4 compliance; disabled automatically
+    for local environment via module count gate.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "enable_aws_config" {
+  description = <<-EOT
+    Enable AWS Config for compliance monitoring (FedRAMP CM control family).
+    Tracks resource configuration changes and evaluates compliance rules.
+    Cost: ~$2/month per rule evaluation.
+    Enabled by default for FedRAMP CM-2/CM-6 compliance; disabled automatically
+    for local environment via module count gate.
+  EOT
+  type        = bool
+  default     = true
+}
+
+# -----------------------------------------------------------------------------
 # LocalStack Configuration (only used when environment = "local")
 # -----------------------------------------------------------------------------
 

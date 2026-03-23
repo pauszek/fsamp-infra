@@ -193,7 +193,7 @@ Key architecture decisions are documented in [ADRs](docs/adr/):
 | Repository | Description | Tech Stack |
 |------------|-------------|------------|
 | [fsamp-gateway](https://github.com/your-org/fsamp-gateway) | API Gateway Service | Spring Boot, Java 21, ACCP |
-| [fsamp-processor](https://github.com/your-org/fsamp-processor) | File Processing Service | Python 3.12, Lambda |
+| [fsamp-processor](https://github.com/your-org/fsamp-processor) | File Processing Service | Python 3.14, Lambda |
 
 ## 💰 Cost Optimization
 

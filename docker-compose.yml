@@ -11,7 +11,7 @@
 
 services:
   localstack:
-    image: localstack/localstack-pro:4.0
+    image: localstack/localstack-pro:4.14.0
     container_name: fsamp-localstack
     ports:
       - "${LOCALSTACK_PORT:-4566}:4566"
@@ -22,13 +22,12 @@ services:
       - AWS_DEFAULT_REGION=${AWS_REGION:-us-west-2}
 
       # Services needed for FSAMP
-      - SERVICES=s3,sqs,sns,dynamodb,kms,lambda,iam,sts,cloudwatch,logs,events,secretsmanager,ssm,apigateway,cognito-idp,ecs,ecr
+      - SERVICES=s3,sqs,sns,dynamodb,kms,lambda,iam,sts,cloudwatch,logs,events,secretsmanager,ssm,apigateway,cognito-idp,ecs,ecr,cloudtrail,config,guardduty
       - EAGER_SERVICE_LOADING=1
 
       # IAM enforcement (realistic testing)
       - ENFORCE_IAM=1
-      - IAM_SOFT_MODE=1
-
+      - IAM_SOFT_MODE=0
       # Lambda
       - LAMBDA_EXECUTOR=docker
       - DOCKER_HOST=unix:///var/run/docker.sock
@@ -39,6 +38,7 @@ services:
     volumes:
       - localstack-data:/var/lib/localstack
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./localstack:/etc/localstack/init/ready.d
     networks:
       - fsamp-network
     healthcheck:

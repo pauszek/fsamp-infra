@@ -1,0 +1,237 @@
+# =============================================================================
+# CD Pipeline - Deploy to AWS Environment
+# =============================================================================
+# Triggered manually via workflow_dispatch. Deploys infrastructure changes
+# and/or service updates to the selected environment.
+#
+# Pipeline: plan → approve → apply → verify
+#
+# FedRAMP Controls:
+#   CM-3:  Change management via GitHub Environments approval
+#   CM-5:  Access restrictions via OIDC + least-privilege IAM
+#   AU-6:  Deployment audit trail via GitHub Actions logs
+#   SA-10: Configuration management via Terraform state
+# =============================================================================
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+      processor_image_tag:
+        description: 'Processor Lambda image tag (e.g., 0.0.5). Leave empty to skip.'
+        required: false
+        type: string
+        default: ''
+
+      terraform_action:
+        description: 'Terraform action'
+        required: true
+        type: choice
+        options:
+          - plan-only
+          - apply
+        default: plan-only
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_DIR: terraform
+  AWS_REGION: us-west-2
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. PLAN - Terraform Plan
+  # ---------------------------------------------------------------------------
+  plan:
+    name: 📋 Terraform Plan (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.plan.outputs.has_changes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.7"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init -backend-config=backends/${{ github.event.inputs.environment }}.hcl
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          PLAN_ARGS="-var-file=envs/${{ github.event.inputs.environment }}.tfvars -input=false -detailed-exitcode"
+
+          # Override processor image tag if provided
+          if [[ -n "${{ github.event.inputs.processor_image_tag }}" ]]; then
+            PLAN_ARGS="$PLAN_ARGS -var=processor_image_tag=${{ github.event.inputs.processor_image_tag }}"
+          fi
+
+          set +e
+          terraform plan $PLAN_ARGS -out=tfplan
+          EXIT_CODE=$?
+          set -e
+
+          if [[ $EXIT_CODE -eq 0 ]]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No infrastructure changes detected."
+          elif [[ $EXIT_CODE -eq 2 ]]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Infrastructure changes detected. Review the plan."
+          else
+            echo "::error::Terraform plan failed."
+            exit 1
+          fi
+
+      - name: Upload plan artifact
+        if: steps.plan.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ github.event.inputs.environment }}
+          path: ${{ env.TF_DIR }}/tfplan
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # 2. APPROVE - Manual Approval via GitHub Environments
+  # ---------------------------------------------------------------------------
+  approve:
+    name: ✅ Approval Gate
+    needs: plan
+    if: |
+      github.event.inputs.terraform_action == 'apply' &&
+      needs.plan.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Approved
+        run: echo "Deployment to ${{ github.event.inputs.environment }} approved by ${{ github.actor }}"
+
+  # ---------------------------------------------------------------------------
+  # 3. APPLY - Terraform Apply
+  # ---------------------------------------------------------------------------
+  apply:
+    name: 🚀 Terraform Apply (${{ github.event.inputs.environment }})
+    needs: [plan, approve]
+    if: |
+      github.event.inputs.terraform_action == 'apply' &&
+      needs.plan.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.7"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init -backend-config=backends/${{ github.event.inputs.environment }}.hcl
+
+      - name: Download plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ github.event.inputs.environment }}
+          path: ${{ env.TF_DIR }}
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply -auto-approve -input=false tfplan
+
+  # ---------------------------------------------------------------------------
+  # 4. VERIFY - Post-deploy Smoke Tests
+  # ---------------------------------------------------------------------------
+  verify:
+    name: 🧪 Smoke Tests
+    needs: [plan, apply]
+    if: |
+      always() &&
+      (needs.apply.result == 'success' || needs.plan.outputs.has_changes == 'false')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify ECS service health
+        if: needs.apply.result == 'success'
+        run: |
+          echo "Checking ECS service stability..."
+          SERVICE_NAME="fsamp-${{ github.event.inputs.environment }}-gateway"
+          CLUSTER="fsamp-${{ github.event.inputs.environment }}"
+
+          # Wait for service to stabilize (max 5 min)
+          aws ecs wait services-stable \
+            --cluster "$CLUSTER" \
+            --services "$SERVICE_NAME" \
+            --region "${{ env.AWS_REGION }}" || {
+              echo "::error::ECS service did not stabilize within timeout"
+              exit 1
+            }
+
+          echo "::notice::ECS service $SERVICE_NAME is stable."
+
+      - name: Verify Lambda function
+        if: needs.apply.result == 'success'
+        run: |
+          FUNCTION_NAME="fsamp-${{ github.event.inputs.environment }}-processor"
+          STATE=$(aws lambda get-function \
+            --function-name "$FUNCTION_NAME" \
+            --query 'Configuration.State' \
+            --output text \
+            --region "${{ env.AWS_REGION }}")
+
+          if [[ "$STATE" != "Active" ]]; then
+            echo "::error::Lambda $FUNCTION_NAME is in state: $STATE"
+            exit 1
+          fi
+          echo "::notice::Lambda $FUNCTION_NAME is Active."
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "## Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | \`${{ github.event.inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Terraform | \`${{ github.event.inputs.terraform_action }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Processor Tag | \`${{ github.event.inputs.processor_image_tag || 'unchanged' }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered By | ${{ github.actor }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Run | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> "$GITHUB_STEP_SUMMARY"
