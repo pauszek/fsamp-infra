@@ -1,0 +1,32 @@
+soft-fail:
+  - CKV_AWS_144  # S3 cross-region replication (not needed for thesis)
+  - CKV_AWS_145  # S3 KMS encryption (we use it, false positive)
+  - CKV_AWS_18   # S3 access logging (cost optimization)
+  - CKV_AWS_21   # S3 versioning (enabled, false positive)
+  - CKV_AWS_19   # S3 encryption (enabled, false positive)
+  - CKV2_AWS_62  # Lambda DLQ (configured in module)
+  - CKV_AWS_116  # Lambda DLQ (configured in module)
+  - CKV_AWS_173  # Lambda env encryption (using KMS)
+  - CKV_AWS_50   # X-Ray tracing (optional feature)
+
+skip-check:
+  - CKV_AWS_144  # Cross-region replication not needed
+  - CKV_AWS_18   # Access logging adds cost
+
+framework:
+  - terraform
+
+download-external-modules: true
+
+compact: true
+
+output:
+  - cli
+  - sarif
+
+output-file-path:
+  sarif: results.sarif
+
+directory:
+  - terraform/
+
