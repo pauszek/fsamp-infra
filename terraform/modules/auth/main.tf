@@ -5,10 +5,12 @@
 # =============================================================================
 
 terraform {
+  required_version = ">= 1.6.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.40"
+      version = ">= 6.44.0, < 7.0.0"
     }
   }
 }
@@ -335,7 +337,7 @@ output "service_client_secret" {
 
 output "cognito_domain_url" {
   description = "Full Cognito hosted UI domain URL"
-  value       = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.name}.amazoncognito.com"
+  value       = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"
 }
 
 # =============================================================================
@@ -343,4 +345,3 @@ output "cognito_domain_url" {
 # =============================================================================
 
 data "aws_region" "current" {}
-

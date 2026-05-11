@@ -23,13 +23,12 @@ locals {
   # Environment flags for conditional logic
   is_production = var.environment == "prod"
   is_local      = var.environment == "local"
-  is_aws        = !local.is_local
 
   # Feature flags with environment defaults
-  enable_waf_computed = coalesce(var.enable_waf, local.is_production)
+  enable_waf_computed    = coalesce(var.enable_waf, local.is_production)
+  enable_config_computed = coalesce(var.enable_config, var.enable_aws_config)
 
   # Cost optimization settings per environment
-  log_retention_days = local.is_production ? 90 : 30
+  log_retention_days = 365
   key_deletion_days  = local.is_production ? 30 : 7
 }
-

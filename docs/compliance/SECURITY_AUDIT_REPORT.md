@@ -1,6 +1,6 @@
 # Security Audit Report
 
-## FSAMP — FedRAMP-compliant Secure AWS Microservices Platform
+## FSAMP — FedRAMP-aligned Secure AWS Microservices Platform
 
 | Field | Value |
 |-------|-------|
@@ -19,6 +19,9 @@ data protection, network security, Docker hardening, CI/CD security, Terraform I
 and dependency management.
 
 **Overall Assessment: STRONG**
+
+Alignment note: This report evaluates FedRAMP Moderate alignment and FIPS 140-3 controls.
+It does not constitute FedRAMP authorization or an ATO.
 
 | Severity | Count | Details |
 |----------|-------|---------|
@@ -72,16 +75,16 @@ and dependency management.
 
 | Finding | Evidence |
 |---------|----------|
-| OpenSSL FIPS provider activated | `crypto_provider.py` — `backend._enable_fips()`, Dockerfile — `openssl_conf=fips` |
+| OpenSSL FIPS provider activated | `processor/infrastructure/fips.py` — `enforce_fips()` checks OpenSSL FIPS mode; `Dockerfile` / `Dockerfile.lambda` — FIPS provider config |
 | KMS envelope encryption (AES-256-GCM) | `kms_crypto.py` — `GenerateDataKey(KeySpec='AES_256')`, `Cipher(AES, GCM, 96-bit nonce)` |
-| SHA-256/384/512 only | `crypto_provider.py` — validates approved hash algorithms |
+| SHA-256/384/512 only | `kms_crypto.py` — `compute_hash()` restricts to SHA-256/384/512 |
 
 ### 2.3 AWS FIPS Endpoints
 
 | Finding | Evidence |
 |---------|----------|
 | Gateway: all 7 AWS SDK clients use FIPS | `AwsConfig.java` — `fipsEnabled(true)` on S3, DynamoDB, SNS, SQS, KMS, Cognito, STS |
-| Processor: boto3 FIPS mode | `AWS_USE_FIPS_ENDPOINT=true` environment variable |
+| Processor: boto3 FIPS mode | `aws_clients.py` — `Config(use_fips_endpoint=True)`; `main.py` and `lambda_handler.py` pass `use_fips=settings.should_use_fips` |
 | Terraform: FIPS provider | `provider.tf` — `use_fips_endpoint = var.use_fips_endpoint && !local.is_local` |
 
 ### 2.4 Authentication & Authorization (AC)
@@ -159,7 +162,7 @@ and dependency management.
 | IAM least privilege | `security/main.tf` — scoped to specific actions + resource ARN patterns |
 | S3 public access blocked | `storage/main.tf` — all 4 `block_public_*` = true on all buckets |
 | AWS Config compliance rules | `audit/main.tf` — 5 rules (S3 encryption, CloudTrail, IAM root, S3 public, DynamoDB KMS) |
-| CloudTrail/GuardDuty/Config enabled by default | `variables.tf` — defaults set to `true` for FedRAMP compliance |
+| CloudTrail/GuardDuty/Config enabled by default | `variables.tf` — defaults set to `true` for FedRAMP alignment |
 
 ### 2.12 Dependency Security
 
@@ -178,7 +181,7 @@ and dependency management.
 | **Location** | `terraform/variables.tf`, `terraform/modules/audit/main.tf` |
 | **Issue** | `enable_cloudtrail`, `enable_guardduty`, `enable_aws_config` all defaulted to `false` |
 | **FedRAMP Impact** | AU-2 requires active audit logging; services were opt-in rather than opt-out |
-| **Remediation** | Changed all three defaults to `true`. Module is still gated by `local.is_local ? 0 : 1` so LocalStack environments are unaffected. Updated descriptions to reference FedRAMP compliance. |
+| **Remediation** | Changed all three defaults to `true`. Module is still gated by `local.is_local ? 0 : 1` so LocalStack environments are unaffected. Updated descriptions to reference FedRAMP alignment. |
 | **Status** | ✅ **FIXED** |
 
 ### 3.2 Container Image Signing (FedRAMP SI-7) — FIXED

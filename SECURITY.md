@@ -2,7 +2,7 @@
 
 ## Compliance Framework
 
-The FSAMP platform is designed to meet **FIPS 140-3** and **FedRAMP Moderate** baseline requirements. All cryptographic operations use NIST-validated modules, and infrastructure follows NIST SP 800-53 Rev. 5 control families.
+The FSAMP platform is designed to meet **FIPS 140-3** requirements and align with the **FedRAMP Moderate** baseline. Alignment does not imply FedRAMP authorization or an ATO. All cryptographic operations use NIST-validated modules, and infrastructure follows NIST SP 800-53 Rev. 5 control families.
 
 | Standard | Status | Scope |
 |----------|--------|-------|
@@ -119,5 +119,5 @@ If the repository has GitHub Advanced Security enabled, you can use the **Securi
 - [NIST SP 800-53 Rev. 5](https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final)
 - [FIPS 140-3](https://csrc.nist.gov/publications/detail/fips/140/3/final)
 - [FedRAMP Security Controls](https://www.fedramp.gov/)
-- [ADR-004: FIPS 140-3 Encryption & FedRAMP Compliance](docs/adr/004-fips-140-3-encryption.md)
+- [ADR-004: FIPS 140-3 Encryption & FedRAMP Alignment](docs/adr/004-fips-140-3-encryption.md)
 - [SLO/SLI Definitions](docs/SLO_SLI.md)

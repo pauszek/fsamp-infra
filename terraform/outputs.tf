@@ -119,9 +119,19 @@ output "gateway_service_name" {
   value       = local.is_local ? null : module.compute[0].gateway_service_name
 }
 
+output "processor_ecs_service_name" {
+  description = "Processor ECS service name (null for local environment)"
+  value       = local.is_local ? null : module.compute[0].processor_service_name
+}
+
 output "processor_lambda_name" {
   description = "Processor Lambda function name (null for local environment)"
   value       = local.is_local ? null : module.compute[0].processor_lambda_name
+}
+
+output "processor_ecs_task_definition_arn" {
+  description = "Processor ECS task definition ARN (null for local environment)"
+  value       = local.is_local ? null : module.compute[0].processor_task_definition_arn
 }
 
 output "processor_lambda_arn" {

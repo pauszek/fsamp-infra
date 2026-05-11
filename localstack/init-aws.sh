@@ -107,7 +107,7 @@ echo "Creating SQS queues..."
 
 # Dead-letter queue first
 DLQ_URL=$(awslocal sqs create-queue \
-    --queue-name "fsamp-local-processing-dlq" \
+    --queue-name "fsamp-local-file-processing-dlq" \
     --query 'QueueUrl' \
     --output text)
 
@@ -119,7 +119,7 @@ DLQ_ARN=$(awslocal sqs get-queue-attributes \
 
 # Main processing queue with DLQ redrive policy
 QUEUE_URL=$(awslocal sqs create-queue \
-    --queue-name "fsamp-local-processing-queue" \
+    --queue-name "fsamp-local-file-processing" \
     --attributes '{
         "VisibilityTimeout": "300",
         "MessageRetentionPeriod": "1209600",
@@ -164,18 +164,19 @@ echo "Creating DynamoDB table..."
 awslocal dynamodb create-table \
     --table-name "fsamp-local-file-metadata" \
     --attribute-definitions \
-        AttributeName=fileId,AttributeType=S \
-        AttributeName=uploadTimestamp,AttributeType=S \
-        AttributeName=status,AttributeType=S \
+        AttributeName=PK,AttributeType=S \
+        AttributeName=SK,AttributeType=S \
+        AttributeName=GSI1PK,AttributeType=S \
+        AttributeName=GSI1SK,AttributeType=S \
     --key-schema \
-        AttributeName=fileId,KeyType=HASH \
-        AttributeName=uploadTimestamp,KeyType=RANGE \
+        AttributeName=PK,KeyType=HASH \
+        AttributeName=SK,KeyType=RANGE \
     --global-secondary-indexes '[
         {
-            "IndexName": "status-index",
+            "IndexName": "GSI1",
             "KeySchema": [
-                {"AttributeName": "status", "KeyType": "HASH"},
-                {"AttributeName": "uploadTimestamp", "KeyType": "RANGE"}
+                {"AttributeName": "GSI1PK", "KeyType": "HASH"},
+                {"AttributeName": "GSI1SK", "KeyType": "RANGE"}
             ],
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
@@ -392,10 +393,12 @@ awslocal iam put-role-policy \
             {
                 "Sid": "DynamoDBAccess",
                 "Effect": "Allow",
-                "Action": ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Query", "dynamodb:UpdateItem", "dynamodb:DeleteItem"],
+                "Action": ["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:Query", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:TransactWriteItems"],
                 "Resource": [
                     "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-file-metadata",
                     "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-file-metadata/*",
+                    "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-outbox",
+                    "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-outbox/*",
                     "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-idempotency-keys",
                     "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-idempotency-keys/*"
                 ]
@@ -433,7 +436,7 @@ awslocal iam put-role-policy \
                 "Sid": "SQSConsume",
                 "Effect": "Allow",
                 "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"],
-                "Resource": "arn:aws:sqs:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-processing-queue"
+                "Resource": "arn:aws:sqs:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-file-processing"
             },
             {
                 "Sid": "S3ReadOnly",
@@ -444,13 +447,19 @@ awslocal iam put-role-policy \
             {
                 "Sid": "DynamoDBWrite",
                 "Effect": "Allow",
-                "Action": ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem", "dynamodb:Query", "dynamodb:DeleteItem"],
+                "Action": ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem", "dynamodb:Query", "dynamodb:DeleteItem", "dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:ListStreams"],
                 "Resource": [
                     "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-file-metadata",
                     "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-file-metadata/*",
                     "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-outbox",
                     "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-outbox/*"
                 ]
+            },
+            {
+                "Sid": "SNSPublish",
+                "Effect": "Allow",
+                "Action": ["sns:Publish"],
+                "Resource": "arn:aws:sns:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-file-events"
             },
             {
                 "Sid": "KMSDecrypt",
@@ -614,11 +623,11 @@ export S3_BUCKET_NAME=fsamp-local-files
 export SNS_TOPIC_ARN=$SNS_TOPIC_ARN
 
 # SQS
-export SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-processing-queue
+export SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-file-processing
 
 # DynamoDB
 export DYNAMODB_TABLE_NAME=fsamp-local-file-metadata
-export DYNAMODB_OUTBOX_TABLE_NAME=fsamp-local-outbox
+export OUTBOX_TABLE_NAME=fsamp-local-outbox
 export DYNAMODB_IDEMPOTENCY_TABLE_NAME=fsamp-local-idempotency-keys
 
 # KMS - Full ARN required for schema validation

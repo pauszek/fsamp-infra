@@ -5,10 +5,12 @@
 # =============================================================================
 
 terraform {
+  required_version = ">= 1.6.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.40"
+      version = ">= 6.44.0, < 7.0.0"
     }
   }
 }
@@ -30,6 +32,11 @@ variable "name_prefix" {
 variable "tags" {
   description = "Common tags"
   type        = map(string)
+}
+
+variable "kms_key_arn" {
+  description = "KMS key ARN for API Gateway and WAF log encryption"
+  type        = string
 }
 
 variable "cognito_user_pool_arn" {
@@ -56,20 +63,20 @@ variable "throttle_burst_limit" {
   default     = 200
 }
 
-variable "vpc_id" {
-  description = "VPC ID for VPC Link"
-  type        = string
-  default     = null
-}
-
 variable "private_subnet_ids" {
   description = "Private subnet IDs for VPC Link"
   type        = list(string)
   default     = []
 }
 
-variable "alb_listener_arn" {
-  description = "ARN of the ALB listener for the Gateway service"
+variable "vpc_link_security_group_ids" {
+  description = "Security groups attached to API Gateway VPC Link V2 ENIs"
+  type        = list(string)
+  default     = []
+}
+
+variable "alb_arn" {
+  description = "ARN of the internal ALB for the Gateway service"
   type        = string
   default     = null
 }
@@ -79,13 +86,6 @@ variable "alb_dns_name" {
   type        = string
   default     = null
 }
-
-# =============================================================================
-# Data Sources
-# =============================================================================
-
-data "aws_region" "current" {}
-data "aws_caller_identity" "current" {}
 
 # =============================================================================
 # API Gateway REST API
@@ -105,6 +105,10 @@ resource "aws_api_gateway_rest_api" "main" {
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-api"
   })
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # =============================================================================
@@ -153,16 +157,23 @@ resource "aws_api_gateway_authorizer" "cognito" {
   identity_source = "method.request.header.Authorization"
 }
 
+resource "aws_api_gateway_request_validator" "headers_and_params" {
+  name                        = "${var.name_prefix}-headers-and-params"
+  rest_api_id                 = aws_api_gateway_rest_api.main.id
+  validate_request_body       = false
+  validate_request_parameters = true
+}
+
 # =============================================================================
 # VPC Link (for private ALB integration)
 # =============================================================================
 
-resource "aws_api_gateway_vpc_link" "main" {
-  count = var.alb_listener_arn != null ? 1 : 0
+resource "aws_apigatewayv2_vpc_link" "main" {
+  count = var.alb_arn != null ? 1 : 0
 
-  name        = "${var.name_prefix}-vpc-link"
-  description = "VPC Link to private ALB"
-  target_arns = [var.alb_listener_arn]
+  name               = "${var.name_prefix}-vpc-link"
+  security_group_ids = var.vpc_link_security_group_ids
+  subnet_ids         = var.private_subnet_ids
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-vpc-link"
@@ -176,11 +187,12 @@ resource "aws_api_gateway_vpc_link" "main" {
 resource "aws_api_gateway_method" "upload_post" {
   count = var.alb_dns_name != null ? 1 : 0
 
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.upload.id
-  http_method   = "POST"
-  authorization = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
-  authorizer_id = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+  rest_api_id          = aws_api_gateway_rest_api.main.id
+  resource_id          = aws_api_gateway_resource.upload.id
+  http_method          = "POST"
+  authorization        = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
+  authorizer_id        = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+  request_validator_id = aws_api_gateway_request_validator.headers_and_params.id
 
   request_parameters = {
     "method.request.header.X-Idempotency-Key" = false
@@ -198,7 +210,8 @@ resource "aws_api_gateway_integration" "upload_post" {
   integration_http_method = "POST"
   uri                     = "http://${var.alb_dns_name}/api/v1/files/upload"
   connection_type         = "VPC_LINK"
-  connection_id           = aws_api_gateway_vpc_link.main[0].id
+  connection_id           = aws_apigatewayv2_vpc_link.main[0].id
+  integration_target      = var.alb_arn
   timeout_milliseconds    = 29000
 
   request_parameters = {
@@ -227,11 +240,12 @@ resource "aws_api_gateway_method_response" "upload_post_201" {
 resource "aws_api_gateway_method" "file_get" {
   count = var.alb_dns_name != null ? 1 : 0
 
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.file.id
-  http_method   = "GET"
-  authorization = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
-  authorizer_id = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+  rest_api_id          = aws_api_gateway_rest_api.main.id
+  resource_id          = aws_api_gateway_resource.file.id
+  http_method          = "GET"
+  authorization        = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
+  authorizer_id        = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+  request_validator_id = aws_api_gateway_request_validator.headers_and_params.id
 
   request_parameters = {
     "method.request.path.fileId" = true
@@ -248,7 +262,8 @@ resource "aws_api_gateway_integration" "file_get" {
   integration_http_method = "GET"
   uri                     = "http://${var.alb_dns_name}/api/v1/files/{fileId}"
   connection_type         = "VPC_LINK"
-  connection_id           = aws_api_gateway_vpc_link.main[0].id
+  connection_id           = aws_apigatewayv2_vpc_link.main[0].id
+  integration_target      = var.alb_arn
   timeout_milliseconds    = 29000
 
   request_parameters = {
@@ -263,11 +278,12 @@ resource "aws_api_gateway_integration" "file_get" {
 resource "aws_api_gateway_method" "file_delete" {
   count = var.alb_dns_name != null ? 1 : 0
 
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.file.id
-  http_method   = "DELETE"
-  authorization = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
-  authorizer_id = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+  rest_api_id          = aws_api_gateway_rest_api.main.id
+  resource_id          = aws_api_gateway_resource.file.id
+  http_method          = "DELETE"
+  authorization        = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
+  authorizer_id        = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+  request_validator_id = aws_api_gateway_request_validator.headers_and_params.id
 
   request_parameters = {
     "method.request.path.fileId" = true
@@ -284,7 +300,8 @@ resource "aws_api_gateway_integration" "file_delete" {
   integration_http_method = "DELETE"
   uri                     = "http://${var.alb_dns_name}/api/v1/files/{fileId}"
   connection_type         = "VPC_LINK"
-  connection_id           = aws_api_gateway_vpc_link.main[0].id
+  connection_id           = aws_apigatewayv2_vpc_link.main[0].id
+  integration_target      = var.alb_arn
   timeout_milliseconds    = 29000
 
   request_parameters = {
@@ -298,10 +315,11 @@ resource "aws_api_gateway_integration" "file_delete" {
 
 # GET /health - public health check
 resource "aws_api_gateway_method" "health_get" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.health.id
-  http_method   = "GET"
-  authorization = "NONE"
+  rest_api_id          = aws_api_gateway_rest_api.main.id
+  resource_id          = aws_api_gateway_resource.health.id
+  http_method          = "GET"
+  authorization        = "NONE"
+  request_validator_id = aws_api_gateway_request_validator.headers_and_params.id
 }
 
 resource "aws_api_gateway_integration" "health_get" {
@@ -357,6 +375,12 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_resource.health.id,
       aws_api_gateway_method.health_get.id,
       aws_api_gateway_integration.health_get.id,
+      aws_api_gateway_method.upload_post[*].id,
+      aws_api_gateway_integration.upload_post[*].id,
+      aws_api_gateway_method.file_get[*].id,
+      aws_api_gateway_integration.file_get[*].id,
+      aws_api_gateway_method.file_delete[*].id,
+      aws_api_gateway_integration.file_delete[*].id,
     ]))
   }
 
@@ -367,6 +391,12 @@ resource "aws_api_gateway_deployment" "main" {
   depends_on = [
     aws_api_gateway_method.health_get,
     aws_api_gateway_integration.health_get,
+    aws_api_gateway_method.upload_post,
+    aws_api_gateway_integration.upload_post,
+    aws_api_gateway_method.file_get,
+    aws_api_gateway_integration.file_get,
+    aws_api_gateway_method.file_delete,
+    aws_api_gateway_integration.file_delete,
   ]
 }
 
@@ -421,14 +451,16 @@ resource "aws_api_gateway_method_settings" "all" {
 
 resource "aws_cloudwatch_log_group" "api_access" {
   name              = "/aws/apigateway/${var.name_prefix}-access-logs"
-  retention_in_days = var.environment == "prod" ? 90 : 30
+  retention_in_days = 365
+  kms_key_id        = var.kms_key_arn
 
   tags = var.tags
 }
 
 resource "aws_cloudwatch_log_group" "api_execution" {
   name              = "API-Gateway-Execution-Logs_${aws_api_gateway_rest_api.main.id}/${var.environment}"
-  retention_in_days = var.environment == "prod" ? 90 : 30
+  retention_in_days = 365
+  kms_key_id        = var.kms_key_arn
 
   tags = var.tags
 }
@@ -559,6 +591,29 @@ resource "aws_wafv2_web_acl_association" "api" {
   web_acl_arn  = aws_wafv2_web_acl.api[0].arn
 }
 
+resource "aws_cloudwatch_log_group" "waf" {
+  count = var.enable_waf ? 1 : 0
+
+  name              = "aws-waf-logs-${var.name_prefix}-api"
+  retention_in_days = 365
+  kms_key_id        = var.kms_key_arn
+
+  tags = var.tags
+}
+
+resource "aws_wafv2_web_acl_logging_configuration" "api" {
+  count = var.enable_waf ? 1 : 0
+
+  resource_arn            = aws_wafv2_web_acl.api[0].arn
+  log_destination_configs = [aws_cloudwatch_log_group.waf[0].arn]
+
+  redacted_fields {
+    single_header {
+      name = "authorization"
+    }
+  }
+}
+
 # =============================================================================
 # Outputs
 # =============================================================================
@@ -590,6 +645,5 @@ output "api_execution_arn" {
 
 output "vpc_link_id" {
   description = "VPC Link ID for ALB integration"
-  value       = length(aws_api_gateway_vpc_link.main) > 0 ? aws_api_gateway_vpc_link.main[0].id : null
+  value       = length(aws_apigatewayv2_vpc_link.main) > 0 ? aws_apigatewayv2_vpc_link.main[0].id : null
 }
-

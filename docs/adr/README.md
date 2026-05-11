@@ -25,7 +25,7 @@ Use the following template for new ADRs:
 # ADR-XXX: Title
 
 ## Status
-Proposed | Accepted | Deprecated | Superseded
+Proposed | Accepted | Legacy | Superseded
 
 ## Context
 What is the issue that we're seeing that is motivating this decision or change?
@@ -39,4 +39,3 @@ What becomes easier or more difficult to do because of this change?
 ## References
 - Links to relevant documentation, issues, etc.
 ```
-

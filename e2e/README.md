@@ -112,7 +112,7 @@ Created by `../localstack/init-aws.sh`:
 - **Cognito**: User Pool + App Client + Groups + Test Users
 - **S3**: `fsamp-local-files` bucket (encrypted, versioned)
 - **SNS**: `fsamp-local-file-events` topic
-- **SQS**: `fsamp-local-processing-queue` + DLQ
+- **SQS**: `fsamp-local-file-processing` + DLQ
 - **DynamoDB**: `fsamp-local-file-metadata` table
 - **KMS**: `alias/fsamp-local-master-key`
 

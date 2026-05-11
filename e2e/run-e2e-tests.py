@@ -90,7 +90,8 @@ class TestConfig:
     # Resource names (must match init-aws.sh)
     S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "fsamp-local-files")
     DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME", "fsamp-local-file-metadata")
-    SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "fsamp-local-processing-queue")
+    OUTBOX_TABLE_NAME = os.getenv("OUTBOX_TABLE_NAME", "fsamp-local-outbox")
+    SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "fsamp-local-file-processing")
     
     # Cognito - discovered at runtime
     COGNITO_USER_POOL_ID: str = ""
@@ -517,15 +518,16 @@ def test_full_processing_flow() -> TestResult:
         token = auth.get_user_token()
         
         # Step 1: Upload file via Gateway
-        file_id = str(uuid.uuid4())
-        file_content = f"Full Flow Test - {file_id}\nTimestamp: {datetime.now().isoformat()}\nCorrelation: {file_id}"
-        filename = f"flow-test-{file_id}.txt"
-        checksum = hashlib.sha256(file_content.encode()).hexdigest()
+        correlation_id = uuid.uuid4().hex
+        idempotency_key = str(uuid.uuid4())
+        file_content = f"Full Flow Test - {correlation_id}\nTimestamp: {datetime.now().isoformat()}\nCorrelation: {correlation_id}"
+        filename = f"flow-test-{correlation_id}.txt"
         
         headers = {
             "Authorization": f"Bearer {token}",
-            "X-Correlation-ID": file_id,
+            "X-Correlation-ID": correlation_id,
             "X-Request-ID": str(uuid.uuid4()),
+            "X-Idempotency-Key": idempotency_key,
         }
         
         log(f"  → Uploading file: {filename}")
@@ -576,9 +578,12 @@ def test_full_processing_flow() -> TestResult:
         # Check if our file exists
         file_found_in_s3 = False
         for key in object_keys:
-            if file_id in key or (s3_key and s3_key == key):
+            if (uploaded_file_id and uploaded_file_id in key) or (s3_key and s3_key == key):
                 file_found_in_s3 = True
                 result.details["2_s3_file_key"] = key
+                head = s3.head_object(Bucket=TestConfig.S3_BUCKET_NAME, Key=key)
+                result.details["2_s3_sse"] = head.get("ServerSideEncryption", "unknown")
+                result.details["2_s3_kms_key"] = head.get("SSEKMSKeyId", "unknown")
                 break
         
         if file_found_in_s3:
@@ -587,9 +592,36 @@ def test_full_processing_flow() -> TestResult:
             # Try listing with prefix
             result.details["2_s3_sample_keys"] = object_keys[:5]
         
-        # Step 3: Wait for Processor to complete (with polling)
-        log(f"  → Waiting for Processor (max {max_wait_time}s)...")
+        # Step 3: Verify Gateway transactional outbox insert
         dynamodb = get_dynamodb_client()
+        outbox_found = False
+        if uploaded_file_id:
+            try:
+                outbox_response = dynamodb.query(
+                    TableName=TestConfig.OUTBOX_TABLE_NAME,
+                    KeyConditionExpression="PK = :pk",
+                    ExpressionAttributeValues={
+                        ":pk": {"S": "OUTBOX#FileUpload"}
+                    },
+                    ScanIndexForward=False,
+                    Limit=10,
+                )
+                for item in outbox_response.get("Items", []):
+                    aggregate_id = item.get("aggregateId", {}).get("S", "")
+                    payload = item.get("payload", {}).get("S", "")
+                    if aggregate_id == uploaded_file_id or uploaded_file_id in payload:
+                        outbox_found = True
+                        result.details["3_outbox_event"] = "found"
+                        result.details["3_outbox_status"] = item.get("status", {}).get("S", "unknown")
+                        result.details["3_outbox_event_type"] = item.get("eventType", {}).get("S", "unknown")
+                        break
+                if not outbox_found:
+                    result.details["3_outbox_event"] = "not found"
+            except Exception as outbox_err:
+                result.details["3_outbox_error"] = str(outbox_err)[:100]
+
+        # Step 4: Wait for Processor to complete (with polling)
+        log(f"  → Waiting for Processor (max {max_wait_time}s)...")
         
         processing_complete = False
         waited = 0
@@ -601,44 +633,30 @@ def test_full_processing_flow() -> TestResult:
             # Check DynamoDB for metadata
             try:
                 if uploaded_file_id:
-                    item_response = dynamodb.get_item(
+                    item_response = dynamodb.query(
                         TableName=TestConfig.DYNAMODB_TABLE_NAME,
-                        Key={"fileId": {"S": uploaded_file_id}}
+                        KeyConditionExpression="PK = :pk",
+                        ExpressionAttributeValues={
+                            ":pk": {"S": f"FILE#{uploaded_file_id}"}
+                        },
+                        ScanIndexForward=False,
+                        Limit=1,
                     )
                     
-                    if "Item" in item_response:
+                    if item_response.get("Items"):
                         processing_complete = True
-                        result.details["3_dynamodb_record"] = "found"
-                        result.details["3_processing_time"] = f"{waited}s"
+                        result.details["4_dynamodb_record"] = "found"
+                        result.details["4_processing_time"] = f"{waited}s"
                         
                         # Extract item details
-                        item = item_response["Item"]
-                        result.details["3_file_status"] = item.get("status", {}).get("S", "unknown")
-                        result.details["3_processed_at"] = item.get("processedAt", {}).get("S", "unknown")
+                        item = item_response["Items"][0]
+                        result.details["4_file_status"] = item.get("status", {}).get("S", "unknown")
+                        result.details["4_processed_at"] = item.get("processedAt", {}).get("S", "unknown")
                         log(f"  → DynamoDB record found after {waited}s")
                         break
                 
-                # Also try scanning for recent entries
-                scan_response = dynamodb.scan(
-                    TableName=TestConfig.DYNAMODB_TABLE_NAME,
-                    Limit=10
-                )
-                
-                items_count = scan_response.get("Count", 0)
-                if items_count > 0 and not processing_complete:
-                    result.details["3_dynamodb_items_count"] = items_count
-                    # Check if any item matches our correlation ID
-                    for item in scan_response.get("Items", []):
-                        correlation = item.get("correlationId", {}).get("S", "")
-                        if correlation == file_id:
-                            processing_complete = True
-                            result.details["3_dynamodb_record"] = "found via scan"
-                            result.details["3_processing_time"] = f"{waited}s"
-                            log(f"  → Found record via correlationId after {waited}s")
-                            break
-                
             except Exception as db_err:
-                result.details["3_dynamodb_error"] = str(db_err)[:100]
+                result.details["4_dynamodb_error"] = str(db_err)[:100]
             
             if processing_complete:
                 break
@@ -647,7 +665,7 @@ def test_full_processing_flow() -> TestResult:
             if waited % 10 == 0:
                 log(f"  → Still waiting... ({waited}s/{max_wait_time}s)")
         
-        # Step 4: Verify SQS queue is drained (processor consumed messages)
+        # Step 5: Verify SQS queue is drained (processor consumed messages)
         sqs = get_sqs_client()
         try:
             queue_url = f"{TestConfig.AWS_ENDPOINT_URL}/000000000000/{TestConfig.SQS_QUEUE_NAME}"
@@ -660,29 +678,36 @@ def test_full_processing_flow() -> TestResult:
             messages_available = int(attrs.get("ApproximateNumberOfMessages", "0"))
             messages_in_flight = int(attrs.get("ApproximateNumberOfMessagesNotVisible", "0"))
             
-            result.details["4_sqs_messages_available"] = messages_available
-            result.details["4_sqs_messages_in_flight"] = messages_in_flight
+            result.details["5_sqs_messages_available"] = messages_available
+            result.details["5_sqs_messages_in_flight"] = messages_in_flight
             
             # If queue is (nearly) empty, processor is consuming
             if messages_available == 0:
-                result.details["4_sqs_status"] = "queue drained (processor consuming)"
+                result.details["5_sqs_status"] = "queue drained (processor consuming)"
             else:
-                result.details["4_sqs_status"] = f"{messages_available} messages pending"
+                result.details["5_sqs_status"] = f"{messages_available} messages pending"
                 
         except Exception as sqs_err:
-            result.details["4_sqs_error"] = str(sqs_err)[:100]
+            result.details["5_sqs_error"] = str(sqs_err)[:100]
         
         # Final verdict
-        if processing_complete:
+        if file_found_in_s3 and outbox_found and processing_complete:
             result.passed = True
-            result.details["5_flow_complete"] = True
-            result.details["5_verdict"] = "Full flow verified: Gateway → S3 → SNS → SQS → Processor → DynamoDB"
+            result.details["6_flow_complete"] = True
+            result.details["6_verdict"] = "Full flow verified: Gateway → S3 → Outbox → SNS/SQS → Processor → DynamoDB"
             log("  → ✓ Full processing flow verified!")
         else:
-            result.passed = True  # Partial success - upload and S3 work
-            result.details["5_flow_complete"] = "partial"
-            result.details["5_verdict"] = "Upload and S3 verified, DynamoDB not confirmed (processor may be slow)"
-            log(f"  → ⚠ Partial flow - DynamoDB not confirmed after {max_wait_time}s")
+            missing = []
+            if not file_found_in_s3:
+                missing.append("S3 object")
+            if not outbox_found:
+                missing.append("Gateway outbox event")
+            if not processing_complete:
+                missing.append("Processor DynamoDB update")
+            result.error = "Full flow incomplete: " + ", ".join(missing)
+            result.details["6_flow_complete"] = False
+            result.details["6_verdict"] = result.error
+            log(f"  → ✗ {result.error}")
         
     except Exception as e:
         result.error = str(e)

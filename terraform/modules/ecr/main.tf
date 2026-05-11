@@ -5,10 +5,12 @@
 # =============================================================================
 
 terraform {
+  required_version = ">= 1.6.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.40"
+      version = ">= 6.44.0, < 7.0.0"
     }
   }
 }
@@ -80,9 +82,10 @@ resource "aws_ecr_repository" "repos" {
   }
 
   tags = merge(var.tags, {
-    Name       = each.value
-    Service    = each.key
-    Compliance = "FIPS-140-3"
+    Name        = each.value
+    Service     = each.key
+    Environment = var.environment
+    Compliance  = "FIPS-140-3"
   })
 }
 
@@ -207,4 +210,3 @@ output "repository_names" {
     for k, v in aws_ecr_repository.repos : k => v.name
   }
 }
-

@@ -5,10 +5,12 @@
 # =============================================================================
 
 terraform {
+  required_version = ">= 1.6.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.40"
+      version = ">= 6.44.0, < 7.0.0"
     }
   }
 }
@@ -67,13 +69,18 @@ variable "security_group_id" {
   type        = string
 }
 
-variable "log_group_name" {
-  description = "CloudWatch log group name for ECS"
+variable "lambda_security_group_id" {
+  description = "Security group ID for Lambda functions"
   type        = string
 }
 
-variable "lambda_log_group_name" {
-  description = "CloudWatch log group name for Lambda"
+variable "alb_security_group_id" {
+  description = "Security group ID for the internal Gateway ALB"
+  type        = string
+}
+
+variable "log_group_name" {
+  description = "CloudWatch log group name for ECS"
   type        = string
 }
 
@@ -91,6 +98,12 @@ variable "aws_region" {
   description = "AWS region"
   type        = string
   default     = "us-west-2"
+}
+
+variable "use_fips_endpoint" {
+  description = "Use FIPS 140-3 validated endpoints (us-* regions only)"
+  type        = bool
+  default     = true
 }
 
 variable "gateway_image" {
@@ -158,6 +171,36 @@ variable "processor_timeout" {
   default     = 300
 }
 
+variable "processor_ecs_cpu" {
+  description = "CPU units for processor ECS task"
+  type        = number
+  default     = 256
+}
+
+variable "processor_ecs_memory" {
+  description = "Memory (MB) for processor ECS task"
+  type        = number
+  default     = 512
+}
+
+variable "processor_desired_count" {
+  description = "Desired count for processor ECS service"
+  type        = number
+  default     = 1
+}
+
+variable "enable_processor_ecs" {
+  description = "Enable optional ECS/Fargate processor service. Core runtime uses Lambda processor."
+  type        = bool
+  default     = false
+}
+
+variable "enable_container_insights" {
+  description = "Enable CloudWatch Container Insights for ECS"
+  type        = bool
+  default     = true
+}
+
 variable "outbox_table_name" {
   description = "DynamoDB outbox table name"
   type        = string
@@ -179,7 +222,7 @@ resource "aws_ecs_cluster" "main" {
 
   setting {
     name  = "containerInsights"
-    value = "enabled"
+    value = var.enable_container_insights ? "enabled" : "disabled"
   }
 
   configuration {
@@ -209,6 +252,66 @@ resource "aws_ecs_cluster_capacity_providers" "main" {
     weight            = 100
     capacity_provider = "FARGATE"
   }
+}
+
+# =============================================================================
+# Internal ALB - Gateway Private Backend
+# =============================================================================
+
+resource "aws_lb" "gateway" {
+  name               = "${var.name_prefix}-gateway-alb"
+  internal           = true
+  load_balancer_type = "application"
+  security_groups    = [var.alb_security_group_id]
+  subnets            = var.subnet_ids
+
+  enable_deletion_protection = var.environment == "prod"
+  drop_invalid_header_fields = true
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-gateway-alb"
+    Service = "gateway"
+  })
+}
+
+resource "aws_lb_target_group" "gateway" {
+  name        = "${var.name_prefix}-gateway-tg"
+  port        = 8080
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    enabled             = true
+    path                = "/actuator/health"
+    protocol            = "HTTP"
+    matcher             = "200-399"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-gateway-tg"
+    Service = "gateway"
+  })
+}
+
+resource "aws_lb_listener" "gateway" {
+  load_balancer_arn = aws_lb.gateway.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.gateway.arn
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-gateway-listener"
+    Service = "gateway"
+  })
 }
 
 # =============================================================================
@@ -290,14 +393,18 @@ resource "aws_ecs_service" "gateway" {
     assign_public_ip = false
   }
 
+  load_balancer {
+    target_group_arn = aws_lb_target_group.gateway.arn
+    container_name   = "gateway"
+    container_port   = 8080
+  }
+
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
-
   deployment_circuit_breaker {
     enable   = true
     rollback = true
   }
-
   tags = merge(var.tags, {
     Name    = "${var.name_prefix}-gateway"
     Service = "gateway"
@@ -306,6 +413,8 @@ resource "aws_ecs_service" "gateway" {
   lifecycle {
     ignore_changes = [desired_count]
   }
+
+  depends_on = [aws_lb_listener.gateway]
 }
 
 # =============================================================================
@@ -321,6 +430,8 @@ locals {
     POWERTOOLS_SERVICE_NAME      = "fsamp-processor"
     POWERTOOLS_METRICS_NAMESPACE = "FSAMP/Processor"
     POWERTOOLS_LOG_LEVEL         = var.environment == "prod" ? "INFO" : "DEBUG"
+    USE_FIPS_ENDPOINT            = var.environment == "local" ? "false" : tostring(var.use_fips_endpoint)
+    FIPS_REQUIRED                = var.environment == "local" ? "false" : "true"
 
     # Resource configuration (set by CI/CD or locals)
     SQS_QUEUE_URL       = var.sqs_queue_url
@@ -340,10 +451,100 @@ locals {
     SNS_TOPIC_ARN                = var.sns_topic_arn
     OUTBOX_TABLE_NAME            = var.outbox_table_name
     MAX_RETRY_COUNT              = "3"
+    USE_FIPS_ENDPOINT            = var.environment == "local" ? "false" : tostring(var.use_fips_endpoint)
+    FIPS_REQUIRED                = var.environment == "local" ? "false" : "true"
+  }
+
+  processor_ecs_env_list = [
+    for k, v in local.processor_env_vars : {
+      name  = k
+      value = v
+    }
+  ]
+}
+
+# =============================================================================
+# ECS Task Definition - Processor (Production)
+# =============================================================================
+
+resource "aws_ecs_task_definition" "processor" {
+  count = var.enable_processor_ecs ? 1 : 0
+
+  family                   = "${var.name_prefix}-processor"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.processor_ecs_cpu
+  memory                   = var.processor_ecs_memory
+  execution_role_arn       = var.ecs_execution_role_arn
+  task_role_arn            = var.ecs_task_role_arn
+
+  container_definitions = jsonencode([
+    {
+      name  = "processor"
+      image = var.processor_image
+
+      environment = local.processor_ecs_env_list
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = var.log_group_name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "processor"
+        }
+      }
+    }
+  ])
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-processor"
+    Service = "processor"
+  })
+
+  depends_on = [
+    aws_cloudwatch_log_group.processor
+  ]
+}
+
+# =============================================================================
+# ECS Service - Processor
+# =============================================================================
+
+resource "aws_ecs_service" "processor" {
+  count = var.enable_processor_ecs ? 1 : 0
+
+  name            = "${var.name_prefix}-processor"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.processor[0].arn
+  desired_count   = var.processor_desired_count
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.subnet_ids
+    security_groups  = [var.security_group_id]
+    assign_public_ip = false
+  }
+
+  deployment_maximum_percent         = 200
+  deployment_minimum_healthy_percent = 100
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-processor"
+    Service = "processor"
+  })
+
+  lifecycle {
+    ignore_changes = [desired_count]
   }
 }
 
 resource "aws_lambda_function" "processor" {
+  # checkov:skip=CKV_AWS_272: Code signing is documented as a production hardening extension; thesis demo images are already gated by CI scanning/SBOM.
   function_name = "${var.name_prefix}-processor"
   role          = var.lambda_role_arn
   timeout       = var.processor_timeout
@@ -378,13 +579,25 @@ resource "aws_lambda_function" "processor" {
     target_arn = var.dlq_arn
   }
 
-  # Reserved concurrency (optional - limit max concurrent executions)
-  # reserved_concurrent_executions = var.environment == "prod" ? 100 : 10
+  reserved_concurrent_executions = var.environment == "prod" ? 100 : 10
+
+  vpc_config {
+    subnet_ids         = var.subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
 
   tags = merge(var.tags, {
     Name    = "${var.name_prefix}-processor"
     Service = "processor"
   })
+}
+
+resource "aws_cloudwatch_log_group" "processor" {
+  name              = "/aws/lambda/${var.name_prefix}-processor"
+  retention_in_days = 365
+  kms_key_id        = var.kms_key_arn
+
+  tags = var.tags
 }
 
 # =============================================================================
@@ -424,6 +637,7 @@ resource "aws_lambda_event_source_mapping" "sqs_trigger" {
 # =============================================================================
 
 resource "aws_lambda_function" "outbox_publisher" {
+  # checkov:skip=CKV_AWS_272: Code signing is documented as a production hardening extension; thesis demo images are already gated by CI scanning/SBOM.
   function_name = "${var.name_prefix}-outbox-publisher"
   role          = var.lambda_role_arn
   timeout       = 60
@@ -453,6 +667,13 @@ resource "aws_lambda_function" "outbox_publisher" {
     mode = "Active"
   }
 
+  reserved_concurrent_executions = var.environment == "prod" ? 20 : 5
+
+  vpc_config {
+    subnet_ids         = var.subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
   tags = merge(var.tags, {
     Name    = "${var.name_prefix}-outbox-publisher"
     Service = "outbox-publisher"
@@ -467,7 +688,7 @@ resource "aws_lambda_function" "outbox_publisher" {
 # CloudWatch Log Group for Outbox Publisher
 resource "aws_cloudwatch_log_group" "outbox_publisher" {
   name              = "/aws/lambda/${var.name_prefix}-outbox-publisher"
-  retention_in_days = var.environment == "prod" ? 90 : 30
+  retention_in_days = 365
   kms_key_id        = var.kms_key_arn
 
   tags = var.tags
@@ -584,6 +805,31 @@ output "gateway_task_definition_arn" {
 output "gateway_service_name" {
   description = "Name of the gateway ECS service"
   value       = aws_ecs_service.gateway.name
+}
+
+output "processor_task_definition_arn" {
+  description = "ARN of the processor ECS task definition"
+  value       = var.enable_processor_ecs ? aws_ecs_task_definition.processor[0].arn : null
+}
+
+output "processor_service_name" {
+  description = "Name of the processor ECS service"
+  value       = var.enable_processor_ecs ? aws_ecs_service.processor[0].name : null
+}
+
+output "gateway_alb_arn" {
+  description = "ARN of the internal Gateway ALB"
+  value       = aws_lb.gateway.arn
+}
+
+output "gateway_alb_dns_name" {
+  description = "DNS name of the internal Gateway ALB"
+  value       = aws_lb.gateway.dns_name
+}
+
+output "gateway_alb_listener_arn" {
+  description = "ARN of the internal Gateway ALB listener"
+  value       = aws_lb_listener.gateway.arn
 }
 
 output "processor_lambda_arn" {

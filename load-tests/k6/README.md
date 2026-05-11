@@ -240,5 +240,5 @@ k6 run --http-debug load-test.js
 ## Resources
 
 - [k6 Documentation](https://k6.io/docs/)
-- [k6 Examples](https://github.com/grafana/k6/tree/master/examples)
+- [k6 Examples](https://grafana.com/docs/k6/latest/examples/)
 - [SRE Book - Testing](https://sre.google/sre-book/testing-reliability/)

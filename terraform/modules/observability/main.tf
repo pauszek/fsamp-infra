@@ -6,10 +6,12 @@
 # =============================================================================
 
 terraform {
+  required_version = ">= 1.6.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.40"
+      version = ">= 6.44.0, < 7.0.0"
     }
   }
 }
@@ -33,22 +35,15 @@ variable "tags" {
   type        = map(string)
 }
 
+variable "kms_key_arn" {
+  description = "KMS key ARN for CloudWatch log encryption"
+  type        = string
+}
+
 variable "log_retention_days" {
   description = "CloudWatch log retention in days"
   type        = number
   default     = 30
-}
-
-variable "processor_lambda_name" {
-  description = "Name of the processor Lambda function"
-  type        = string
-  default     = ""
-}
-
-variable "outbox_publisher_lambda_name" {
-  description = "Name of the outbox publisher Lambda function"
-  type        = string
-  default     = ""
 }
 
 variable "alarm_sns_topic_arn" {
@@ -64,27 +59,33 @@ variable "alarm_sns_topic_arn" {
 resource "aws_cloudwatch_log_group" "ecs" {
   name              = "/ecs/${var.name_prefix}"
   retention_in_days = var.log_retention_days
+  kms_key_id        = var.kms_key_arn
 
   tags = merge(var.tags, {
-    Name = "/ecs/${var.name_prefix}"
+    Name        = "/ecs/${var.name_prefix}"
+    Environment = var.environment
   })
 }
 
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.name_prefix}"
   retention_in_days = var.log_retention_days
+  kms_key_id        = var.kms_key_arn
 
   tags = merge(var.tags, {
-    Name = "/aws/lambda/${var.name_prefix}"
+    Name        = "/aws/lambda/${var.name_prefix}"
+    Environment = var.environment
   })
 }
 
 resource "aws_cloudwatch_log_group" "api_gateway" {
   name              = "/aws/apigateway/${var.name_prefix}"
   retention_in_days = var.log_retention_days
+  kms_key_id        = var.kms_key_arn
 
   tags = merge(var.tags, {
-    Name = "/aws/apigateway/${var.name_prefix}"
+    Name        = "/aws/apigateway/${var.name_prefix}"
+    Environment = var.environment
   })
 }
 
@@ -116,7 +117,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "📊 Lambda Processor - Invocations"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/Lambda", "Invocations", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Sum", "color" : "#2ca02c" }],
             [".", "Errors", ".", ".", { "stat" : "Sum", "color" : "#d62728" }],
@@ -135,7 +136,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "⏱️ Lambda Processor - Duration"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/Lambda", "Duration", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Average", "color" : "#1f77b4" }],
             ["...", { "stat" : "p50", "color" : "#2ca02c" }],
@@ -154,7 +155,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "🔄 Lambda Processor - Concurrency"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/Lambda", "ConcurrentExecutions", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Maximum", "color" : "#9467bd" }]
           ]
@@ -173,7 +174,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "📤 Outbox Publisher - Invocations"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/Lambda", "Invocations", "FunctionName", "${var.name_prefix}-outbox-publisher", { "stat" : "Sum", "color" : "#2ca02c" }],
             [".", "Errors", ".", ".", { "stat" : "Sum", "color" : "#d62728" }]
@@ -190,7 +191,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "📬 SQS Queue - Messages"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/SQS", "NumberOfMessagesSent", "QueueName", "${var.name_prefix}-file-processing", { "stat" : "Sum", "color" : "#2ca02c" }],
             [".", "NumberOfMessagesReceived", ".", ".", { "stat" : "Sum", "color" : "#1f77b4" }],
@@ -208,7 +209,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "💀 Dead Letter Queue"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${var.name_prefix}-dlq", { "stat" : "Sum", "color" : "#d62728" }],
             [".", "NumberOfMessagesSent", ".", ".", { "stat" : "Sum", "color" : "#ff7f0e" }]
@@ -237,7 +238,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "💾 DynamoDB - Consumed Capacity"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${var.name_prefix}-file-metadata", { "stat" : "Sum", "color" : "#1f77b4" }],
             [".", "ConsumedWriteCapacityUnits", ".", ".", { "stat" : "Sum", "color" : "#2ca02c" }]
@@ -254,7 +255,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "📦 DynamoDB Outbox - Operations"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${var.name_prefix}-outbox", { "stat" : "Sum", "color" : "#1f77b4" }],
             [".", "ConsumedWriteCapacityUnits", ".", ".", { "stat" : "Sum", "color" : "#2ca02c" }],
@@ -272,7 +273,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "⚠️ DynamoDB - Throttled Requests"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/DynamoDB", "ThrottledRequests", "TableName", "${var.name_prefix}-file-metadata", { "stat" : "Sum", "color" : "#d62728" }],
             [".", "ThrottledRequests", "TableName", "${var.name_prefix}-outbox", { "stat" : "Sum", "color" : "#ff7f0e" }]
@@ -292,7 +293,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "📁 Files Processed"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["FSAMP/Processor", "FilesProcessed", { "stat" : "Sum", "color" : "#2ca02c" }],
             [".", "FilesProcessedSuccess", { "stat" : "Sum", "color" : "#1f77b4" }],
@@ -310,7 +311,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "⏱️ Processing Duration (Custom)"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["FSAMP/Processor", "ProcessingDuration", { "stat" : "Average", "color" : "#1f77b4" }],
             ["...", { "stat" : "p95", "color" : "#ff7f0e" }],
@@ -328,7 +329,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "📤 Outbox Events Published"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["FSAMP/OutboxPublisher", "EventsPublished", { "stat" : "Sum", "color" : "#2ca02c" }],
             [".", "EventsFailedToPublish", { "stat" : "Sum", "color" : "#d62728" }],
@@ -349,7 +350,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "🗂️ S3 Bucket Metrics"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/S3", "NumberOfObjects", "BucketName", "${var.name_prefix}-files", "StorageType", "AllStorageTypes", { "stat" : "Average", "period" : 86400 }],
             [".", "BucketSizeBytes", ".", ".", ".", ".", { "stat" : "Average", "period" : 86400 }]
@@ -365,7 +366,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "📢 SNS Topic - Messages"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/SNS", "NumberOfMessagesPublished", "TopicName", "${var.name_prefix}-events", { "stat" : "Sum", "color" : "#2ca02c" }],
             [".", "NumberOfNotificationsFailed", ".", ".", { "stat" : "Sum", "color" : "#d62728" }]
@@ -385,7 +386,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title  = "🚨 Recent Errors (All Services)"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           query  = <<-EOT
             SOURCE '/aws/lambda/${var.name_prefix}-processor' 
             | SOURCE '/aws/lambda/${var.name_prefix}-outbox-publisher'
@@ -407,7 +408,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 4
         properties = {
           title  = "Success Rate"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             [{
               expression = "100 - 100 * errors / MAX([errors + invocations, 1])"
@@ -431,7 +432,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 4
         properties = {
           title  = "Total Files Today"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/Lambda", "Invocations", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Sum", "color" : "#1f77b4" }]
           ]
@@ -447,7 +448,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 4
         properties = {
           title  = "Avg Duration"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/Lambda", "Duration", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Average", "color" : "#ff7f0e" }]
           ]
@@ -463,7 +464,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 4
         properties = {
           title  = "DLQ Messages"
-          region = data.aws_region.current.name
+          region = data.aws_region.current.region
           metrics = [
             ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${var.name_prefix}-dlq", { "stat" : "Sum", "color" : "#d62728" }]
           ]
@@ -735,7 +736,7 @@ output "dashboard_name" {
 
 output "dashboard_url" {
   description = "URL to CloudWatch dashboard"
-  value       = "https://${data.aws_region.current.name}.console.aws.amazon.com/cloudwatch/home?region=${data.aws_region.current.name}#dashboards:name=${aws_cloudwatch_dashboard.main.dashboard_name}"
+  value       = "https://${data.aws_region.current.region}.console.aws.amazon.com/cloudwatch/home?region=${data.aws_region.current.region}#dashboards:name=${aws_cloudwatch_dashboard.main.dashboard_name}"
 }
 
 output "alarm_arns" {

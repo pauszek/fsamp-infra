@@ -130,7 +130,7 @@ fsamp-infra/
 
 ## 🔐 Security Features
 
-### FIPS 140-3 Compliance
+### FIPS 140-3-Oriented Security
 
 - **KMS Encryption**: All data encrypted at rest using AWS KMS (FIPS 140-3 Level 3 validated)
 - **Encryption in Transit**: TLS 1.2+ for all communications
@@ -145,6 +145,19 @@ fsamp-infra/
 | **Application** | WAF rules, API throttling |
 | **Data** | KMS encryption, S3 bucket policies |
 | **Monitoring** | CloudWatch, CloudTrail, GuardDuty |
+
+## ✅ Compliance & Enterprise Readiness (FedRAMP-aligned)
+
+- **FedRAMP Moderate aligned** baseline (not FedRAMP authorized); controls mapped to NIST SP 800-53 Rev. 5.
+- **FIPS 140-3-oriented cryptography** across services: ACCP + BC-FIPS (Java), OpenSSL FIPS provider (Python), AWS KMS (HSM-backed).
+- **Auditability** with CloudTrail (multi-region + log integrity), VPC Flow Logs, S3 access logs, and structured application logs.
+- **Monitoring & detection** via CloudWatch metrics/alarms, GuardDuty findings, and AWS Config compliance rules.
+- **Network hardening** with private subnets, VPC endpoints, WAF, and least-privilege IAM.
+
+Operational references:
+- [SECURITY.md](SECURITY.md)
+- [docs/SLO_SLI.md](docs/SLO_SLI.md)
+- [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md)
 
 ## 📊 Environments
 
@@ -213,4 +226,3 @@ This project is developed as part of a Master's Thesis. All rights reserved.
 ## 🤝 Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
-

@@ -5,10 +5,12 @@
 # =============================================================================
 
 terraform {
+  required_version = ">= 1.6.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.40"
+      version = ">= 6.44.0, < 7.0.0"
     }
   }
 }
@@ -95,6 +97,17 @@ resource "aws_kms_key" "master" {
         Condition = {
           StringEquals = {
             "kms:CallerAccount" = data.aws_caller_identity.current.account_id
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+          StringLike = {
+            "kms:ViaService" = [
+              "s3.${data.aws_region.current.region}.amazonaws.com",
+              "sqs.${data.aws_region.current.region}.amazonaws.com",
+              "sns.${data.aws_region.current.region}.amazonaws.com",
+              "dynamodb.${data.aws_region.current.region}.amazonaws.com",
+              "lambda.${data.aws_region.current.region}.amazonaws.com",
+              "logs.${data.aws_region.current.region}.amazonaws.com"
+            ]
           }
         }
       }
@@ -102,9 +115,10 @@ resource "aws_kms_key" "master" {
   })
 
   tags = merge(var.tags, {
-    Name       = "${var.name_prefix}-master-key"
-    Compliance = "FIPS-140-3"
-    Purpose    = "Data encryption at rest"
+    Name        = "${var.name_prefix}-master-key"
+    Environment = var.environment
+    Compliance  = "FIPS-140-3"
+    Purpose     = "Data encryption at rest"
   })
 }
 
@@ -183,7 +197,7 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "sqs:DeleteMessage",
           "sqs:GetQueueAttributes"
         ]
-        Resource = "arn:aws:sqs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+        Resource = "arn:aws:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
       },
       {
         Sid    = "SNSAccess"
@@ -191,7 +205,7 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
         Action = [
           "sns:Publish"
         ]
-        Resource = "arn:aws:sns:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+        Resource = "arn:aws:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
       },
       {
         Sid    = "DynamoDBAccess"
@@ -202,9 +216,12 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "dynamodb:UpdateItem",
           "dynamodb:DeleteItem",
           "dynamodb:Query",
-          "dynamodb:Scan"
+          "dynamodb:TransactWriteItems"
         ]
-        Resource = "arn:aws:dynamodb:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*"
+        Resource = [
+          "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*",
+          "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/index/*"
+        ]
       },
       {
         Sid    = "CloudWatchLogs"
@@ -213,7 +230,7 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/${var.name_prefix}*:*"
+        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/${var.name_prefix}*:*"
       }
     ]
   })
@@ -291,9 +308,18 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Action = [
           "sqs:ReceiveMessage",
           "sqs:DeleteMessage",
-          "sqs:GetQueueAttributes"
+          "sqs:GetQueueAttributes",
+          "sqs:ChangeMessageVisibility"
         ]
-        Resource = "arn:aws:sqs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+        Resource = "arn:aws:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+      },
+      {
+        Sid    = "SNSPublish"
+        Effect = "Allow"
+        Action = [
+          "sns:Publish"
+        ]
+        Resource = "arn:aws:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
       },
       {
         Sid    = "DynamoDBAccess"
@@ -302,9 +328,19 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "dynamodb:GetItem",
           "dynamodb:PutItem",
           "dynamodb:UpdateItem",
-          "dynamodb:Query"
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:TransactWriteItems",
+          "dynamodb:DescribeStream",
+          "dynamodb:GetRecords",
+          "dynamodb:GetShardIterator",
+          "dynamodb:ListStreams"
         ]
-        Resource = "arn:aws:dynamodb:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*"
+        Resource = [
+          "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*",
+          "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/index/*",
+          "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/stream/*"
+        ]
       }
     ]
   })
@@ -359,7 +395,7 @@ resource "aws_iam_role_policy" "ecs_execution_kms" {
         Action = [
           "secretsmanager:GetSecretValue"
         ]
-        Resource = "arn:aws:secretsmanager:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}-*"
+        Resource = "arn:aws:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}-*"
       },
       {
         Sid    = "SSMParameters"
@@ -368,7 +404,7 @@ resource "aws_iam_role_policy" "ecs_execution_kms" {
           "ssm:GetParameters",
           "ssm:GetParameter"
         ]
-        Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${var.name_prefix}/*"
+        Resource = "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter/${var.name_prefix}/*"
       }
     ]
   })

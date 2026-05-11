@@ -11,10 +11,12 @@
 # =============================================================================
 
 terraform {
+  required_version = ">= 1.6.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.40"
+      version = ">= 6.44.0, < 7.0.0"
     }
   }
 }
@@ -55,6 +57,12 @@ variable "enable_guardduty" {
   default     = true
 }
 
+variable "enable_security_hub" {
+  description = "Enable AWS Security Hub for aggregated security findings"
+  type        = bool
+  default     = false
+}
+
 variable "enable_aws_config" {
   description = "Enable AWS Config for compliance monitoring (FedRAMP CM family)"
   type        = bool
@@ -79,6 +87,7 @@ data "aws_region" "current" {}
 # =============================================================================
 
 resource "aws_s3_bucket" "cloudtrail_logs" {
+  # checkov:skip=CKV2_AWS_61: Lifecycle is configured by aws_s3_bucket_lifecycle_configuration.cloudtrail_logs; Checkov misses the counted relation.
   count = var.enable_cloudtrail ? 1 : 0
 
   bucket        = "${var.name_prefix}-cloudtrail-logs"
@@ -144,7 +153,75 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail_logs" {
     expiration {
       days = var.environment == "prod" ? 2555 : 365 # 7 years prod, 1 year non-prod
     }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
   }
+}
+
+resource "aws_cloudwatch_log_group" "cloudtrail" {
+  count = var.enable_cloudtrail ? 1 : 0
+
+  name              = "/aws/cloudtrail/${var.name_prefix}"
+  retention_in_days = 365
+  kms_key_id        = var.kms_key_arn
+
+  tags = var.tags
+}
+
+resource "aws_iam_role" "cloudtrail_cloudwatch" {
+  count = var.enable_cloudtrail ? 1 : 0
+
+  name = "${var.name_prefix}-cloudtrail-cloudwatch-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudtrail.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy" "cloudtrail_cloudwatch" {
+  count = var.enable_cloudtrail ? 1 : 0
+
+  name = "${var.name_prefix}-cloudtrail-cloudwatch-policy"
+  role = aws_iam_role.cloudtrail_cloudwatch[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "${aws_cloudwatch_log_group.cloudtrail[0].arn}:*"
+      }
+    ]
+  })
+}
+
+resource "aws_sns_topic" "cloudtrail_alerts" {
+  count = var.enable_cloudtrail ? 1 : 0
+
+  name              = "${var.name_prefix}-cloudtrail-alerts"
+  kms_master_key_id = var.kms_key_arn
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-cloudtrail-alerts"
+    Purpose = "CloudTrail notification topic"
+  })
 }
 
 # S3 bucket policy allowing CloudTrail to write logs
@@ -198,6 +275,7 @@ resource "aws_s3_bucket_policy" "cloudtrail_logs" {
 }
 
 resource "aws_cloudtrail" "main" {
+  # checkov:skip=CKV2_AWS_10: CloudWatch Logs integration is configured via cloud_watch_logs_group_arn/cloud_watch_logs_role_arn; Checkov misses the counted expression.
   count = var.enable_cloudtrail ? 1 : 0
 
   name                          = "${var.name_prefix}-trail"
@@ -206,6 +284,9 @@ resource "aws_cloudtrail" "main" {
   include_global_service_events = true
   enable_log_file_validation    = true # AU-9: Integrity verification
   kms_key_id                    = var.kms_key_arn
+  cloud_watch_logs_group_arn    = "${aws_cloudwatch_log_group.cloudtrail[0].arn}:*"
+  cloud_watch_logs_role_arn     = aws_iam_role.cloudtrail_cloudwatch[0].arn
+  sns_topic_name                = aws_sns_topic.cloudtrail_alerts[0].name
 
   # Log management events (API calls)
   event_selector {
@@ -224,7 +305,10 @@ resource "aws_cloudtrail" "main" {
     Compliance = "NIST-AU-2"
   })
 
-  depends_on = [aws_s3_bucket_policy.cloudtrail_logs]
+  depends_on = [
+    aws_s3_bucket_policy.cloudtrail_logs,
+    aws_iam_role_policy.cloudtrail_cloudwatch
+  ]
 }
 
 # =============================================================================
@@ -242,30 +326,34 @@ resource "aws_guardduty_detector" "main" {
   # Send findings to CloudWatch Events for alerting
   finding_publishing_frequency = var.environment == "prod" ? "FIFTEEN_MINUTES" : "SIX_HOURS"
 
-  datasources {
-    s3_logs {
-      enable = true
-    }
-
-    kubernetes {
-      audit_logs {
-        enable = false # Not using EKS
-      }
-    }
-
-    malware_protection {
-      scan_ec2_instance_with_findings {
-        ebs_volumes {
-          enable = false # Not using EC2 instances
-        }
-      }
-    }
-  }
-
   tags = merge(var.tags, {
     Name       = "${var.name_prefix}-guardduty"
     Compliance = "NIST-SI-4"
   })
+}
+
+resource "aws_guardduty_detector_feature" "s3_data_events" {
+  count = var.enable_guardduty ? 1 : 0
+
+  detector_id = aws_guardduty_detector.main[0].id
+  name        = "S3_DATA_EVENTS"
+  status      = "ENABLED"
+}
+
+# =============================================================================
+# Security Hub - Security Findings Aggregation
+# =============================================================================
+
+resource "aws_securityhub_account" "main" {
+  count = var.enable_security_hub ? 1 : 0
+}
+
+resource "aws_securityhub_standards_subscription" "aws_foundational" {
+  count = var.enable_security_hub ? 1 : 0
+
+  standards_arn = "arn:aws:securityhub:${data.aws_region.current.region}::standards/aws-foundational-security-best-practices/v/1.0.0"
+
+  depends_on = [aws_securityhub_account.main]
 }
 
 # =============================================================================
@@ -308,6 +396,30 @@ resource "aws_s3_bucket_public_access_block" "config_logs" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "config_logs" {
+  count  = var.enable_aws_config ? 1 : 0
+  bucket = aws_s3_bucket.config_logs[0].id
+
+  rule {
+    id     = "config-logs-lifecycle"
+    status = "Enabled"
+    filter {}
+
+    transition {
+      days          = 90
+      storage_class = "STANDARD_IA"
+    }
+
+    expiration {
+      days = var.environment == "prod" ? 2555 : 365
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 }
 
 resource "aws_s3_bucket_policy" "config_logs" {
@@ -417,7 +529,8 @@ resource "aws_config_configuration_recorder" "main" {
   role_arn = aws_iam_role.config[0].arn
 
   recording_group {
-    all_supported = true
+    all_supported                 = true
+    include_global_resource_types = true
   }
 }
 
@@ -446,7 +559,7 @@ resource "aws_config_configuration_recorder_status" "main" {
 }
 
 # =============================================================================
-# AWS Config Rules - FIPS / FedRAMP Compliance
+# AWS Config Rules - FIPS / FedRAMP Alignment
 # =============================================================================
 
 # Rule: S3 buckets must have server-side encryption enabled
@@ -556,6 +669,11 @@ output "cloudtrail_s3_bucket" {
 output "guardduty_detector_id" {
   description = "GuardDuty detector ID"
   value       = var.enable_guardduty ? aws_guardduty_detector.main[0].id : null
+}
+
+output "security_hub_account_id" {
+  description = "Security Hub account ID"
+  value       = var.enable_security_hub ? aws_securityhub_account.main[0].id : null
 }
 
 output "config_recorder_id" {

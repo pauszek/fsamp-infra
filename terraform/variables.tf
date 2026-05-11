@@ -96,6 +96,18 @@ variable "enable_container_insights" {
   default     = true
 }
 
+variable "enable_processor_ecs" {
+  description = "Enable optional ECS/Fargate processor. Core runtime uses Lambda processor with SQS trigger."
+  type        = bool
+  default     = false
+}
+
+variable "enable_private_endpoints" {
+  description = "Enable paid interface VPC endpoints for private ECS/Lambda AWS API access when NAT is disabled"
+  type        = bool
+  default     = true
+}
+
 # -----------------------------------------------------------------------------
 # Container Image Tags
 # -----------------------------------------------------------------------------
@@ -148,6 +160,16 @@ variable "enable_guardduty" {
   default     = true
 }
 
+variable "enable_security_hub" {
+  description = <<-EOT
+    Enable AWS Security Hub for aggregated security findings.
+    Cost: charged per security check and finding ingestion.
+    Useful for prod/secure demonstrations, optional in dev.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "enable_aws_config" {
   description = <<-EOT
     Enable AWS Config for compliance monitoring (FedRAMP CM control family).
@@ -160,6 +182,12 @@ variable "enable_aws_config" {
   default     = true
 }
 
+variable "enable_config" {
+  description = "Alias for enable_aws_config. When null, enable_aws_config is used."
+  type        = bool
+  default     = null
+}
+
 # -----------------------------------------------------------------------------
 # LocalStack Configuration (only used when environment = "local")
 # -----------------------------------------------------------------------------
@@ -169,4 +197,3 @@ variable "localstack_endpoint" {
   type        = string
   default     = "http://localhost:4566"
 }
-

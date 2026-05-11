@@ -1,8 +1,11 @@
 # NIST SP 800-53 Rev. 5 — Control Implementation Matrix
 
-## FSAMP — FedRAMP-compliant Secure AWS Microservices Platform
+## FSAMP — FedRAMP-aligned Secure AWS Microservices Platform
 
 > FedRAMP Moderate Baseline — Selected Controls
+
+Note: This matrix reflects alignment to the FedRAMP Moderate baseline and does not
+represent FedRAMP authorization or an ATO.
 
 | Legend | Meaning |
 |--------|---------|

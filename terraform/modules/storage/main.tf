@@ -5,10 +5,12 @@
 # =============================================================================
 
 terraform {
+  required_version = ">= 1.6.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.40"
+      version = ">= 6.44.0, < 7.0.0"
     }
   }
 }
@@ -29,11 +31,6 @@ variable "name_prefix" {
 
 variable "kms_key_arn" {
   description = "ARN of the KMS key for encryption"
-  type        = string
-}
-
-variable "kms_key_id" {
-  description = "ID of the KMS key for encryption"
   type        = string
 }
 
@@ -124,6 +121,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "files" {
       noncurrent_days = 30
       storage_class   = "STANDARD_IA"
     }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
   }
 }
 
@@ -138,6 +139,33 @@ resource "aws_s3_bucket_lifecycle_configuration" "quarantine" {
 
     expiration {
       days = 30
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "processed" {
+  bucket = aws_s3_bucket.buckets["processed"].id
+
+  rule {
+    id     = "processed-lifecycle"
+    status = "Enabled"
+    filter {}
+
+    transition {
+      days          = 90
+      storage_class = "STANDARD_IA"
+    }
+
+    expiration {
+      days = var.environment == "prod" ? 2555 : 365
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
     }
   }
 }
@@ -246,6 +274,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "access_logs" {
     expiration {
       days = var.environment == "prod" ? 365 : 90
     }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
   }
 }
 
@@ -264,28 +296,33 @@ resource "aws_s3_bucket_logging" "buckets" {
 resource "aws_dynamodb_table" "file_metadata" {
   name         = "${var.name_prefix}-file-metadata"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "fileId"
-  range_key    = "uploadTimestamp"
+  hash_key     = "PK"
+  range_key    = "SK"
 
   attribute {
-    name = "fileId"
+    name = "PK"
     type = "S"
   }
 
   attribute {
-    name = "uploadTimestamp"
+    name = "SK"
     type = "S"
   }
 
   attribute {
-    name = "status"
+    name = "GSI1PK"
+    type = "S"
+  }
+
+  attribute {
+    name = "GSI1SK"
     type = "S"
   }
 
   global_secondary_index {
-    name            = "status-index"
-    hash_key        = "status"
-    range_key       = "uploadTimestamp"
+    name            = "GSI1"
+    hash_key        = "GSI1PK"
+    range_key       = "GSI1SK"
     projection_type = "ALL"
   }
 
@@ -452,6 +489,10 @@ resource "aws_dynamodb_table" "idempotency_keys" {
   ttl {
     attribute_name = "ttl"
     enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = true
   }
 
   tags = merge(var.tags, {
