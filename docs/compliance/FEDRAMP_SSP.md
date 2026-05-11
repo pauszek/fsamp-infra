@@ -1,10 +1,10 @@
 # FedRAMP System Security Plan (SSP)
 
-## FSAMP — FedRAMP-compliant Secure AWS Microservices Platform
+## FSAMP — FedRAMP-aligned Secure AWS Microservices Platform
 
 | Field | Value |
 |-------|-------|
-| **System Name** | FSAMP (FedRAMP-compliant Secure AWS Microservices Platform) |
+| **System Name** | FSAMP (FedRAMP-aligned Secure AWS Microservices Platform) |
 | **Version** | 1.0 |
 | **Date** | February 2026 |
 | **Author** | Paweł Pauszek |
@@ -25,8 +25,11 @@ Moderate baseline alignment.
 The platform is designed as a reference architecture for master's thesis research:
 **"Bezpieczna platforma mikroserwisowa w chmurze AWS z wykorzystaniem architektury
 sterowanej zdarzeniami i infrastruktury jako kod (IaC)"** — demonstrating how to build
-a compliant microservice platform using event-driven architecture and Infrastructure
+an aligned microservice platform using event-driven architecture and Infrastructure
 as Code.
+
+FedRAMP alignment note: This SSP documents alignment to the FedRAMP Moderate baseline
+for a reference implementation. It does not imply FedRAMP authorization or an ATO.
 
 ### 1.2 System Components
 
@@ -34,7 +37,7 @@ as Code.
 |-----------|-----------|---------|
 | **fsamp-gateway** | Java 21 (Corretto), Spring Boot 3.4.11 | REST API, file upload, validation, encryption, event publishing |
 | **fsamp-processor** | Python 3.14, AWS Lambda / ECS Fargate | Event-driven file processing, outbox pattern, analysis |
-| **fsamp-infra** | Terraform ≥ 1.7 (AWS Provider ~5.40) | 10 infrastructure modules, compliance automation |
+| **fsamp-infra** | Terraform ≥ 1.14 (AWS Provider ≥6.44) | 10 infrastructure modules, compliance automation |
 | **fsamp-code-ci** | GitHub Actions | 5 reusable workflows, 7 composite actions, 13-stage pipeline |
 | **fsamp-event-schema** | JSON Schema Draft-07 | Event contract definition, versioned Maven artifact |
 
@@ -44,10 +47,10 @@ as Code.
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         FSAMP Authorization Boundary                    │
 │                                                                         │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────────────────┐  │
-│  │ API Gateway   │    │ ECS Fargate  │    │ Lambda Functions         │  │
-│  │ (+ WAF + CDN) │    │ (Gateway)    │    │ (Processor + Outbox Pub) │  │
-│  └──────┬───────┘    └──────┬───────┘    └──────────┬───────────────┘  │
+│  ┌──────────────┐    ┌────────────────────────┐    ┌──────────────────────────┐  │
+│  │ API Gateway   │    │ ECS Fargate            │    │ Lambda Functions         │  │
+│  │ (+ WAF + CDN) │    │ (Gateway + Processor)  │    │ (Processor + Outbox Pub) │  │
+│  └──────┬───────┘    └──────┬───────────────┘    └──────────┬───────────────┘  │
 │         │                    │                       │                   │
 │  ┌──────┴────────────────────┴───────────────────────┴───────────────┐  │
 │  │                    Private VPC (3 AZ)                              │  │
@@ -67,6 +70,8 @@ as Code.
 │  │ Cognito (IdP/OAuth2/MFA) │                                           │
 │  └──────────────────────────┘                                           │
 └─────────────────────────────────────────────────────────────────────────┘
+
+Note: Processor runs in both ECS Fargate and Lambda as production-capable modes; deployment can be chosen per workload.
                     ▲                              ▲
                     │ Inherited AWS Controls        │ CI/CD (GitHub Actions)
                     ▼                              ▼
@@ -298,7 +303,7 @@ For full DR procedures, see [DISASTER_RECOVERY.md](../DISASTER_RECOVERY.md).
 - [FIPS 140-3](https://csrc.nist.gov/publications/detail/fips/140/3/final)
 - [FIPS 199](https://csrc.nist.gov/publications/detail/fips/199/final)
 - [FedRAMP Security Assessment Framework](https://www.fedramp.gov/)
-- [ADR-004: FIPS 140-3 Encryption & FedRAMP Compliance](../adr/004-fips-140-3-encryption.md)
+- [ADR-004: FIPS 140-3 Encryption & FedRAMP Alignment](../adr/004-fips-140-3-encryption.md)
 - [NIST 800-53 Control Matrix](NIST_800_53_CONTROLS.md)
 - [Security Audit Report](SECURITY_AUDIT_REPORT.md)
 - [TLS Architecture](../TLS_ARCHITECTURE.md)

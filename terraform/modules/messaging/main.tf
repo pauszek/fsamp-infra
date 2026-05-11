@@ -5,10 +5,12 @@
 # =============================================================================
 
 terraform {
+  required_version = ">= 1.6.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.40"
+      version = ">= 6.44.0, < 7.0.0"
     }
   }
 }
@@ -24,11 +26,6 @@ variable "environment" {
 
 variable "name_prefix" {
   description = "Prefix for resource names"
-  type        = string
-}
-
-variable "kms_key_arn" {
-  description = "ARN of the KMS key for encryption"
   type        = string
 }
 
@@ -59,7 +56,6 @@ variable "dlq_max_receive_count" {
 # =============================================================================
 
 data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
 
 # =============================================================================
 # SNS Topics
@@ -70,8 +66,9 @@ resource "aws_sns_topic" "file_events" {
   kms_master_key_id = var.kms_key_id
 
   tags = merge(var.tags, {
-    Name    = "${var.name_prefix}-file-events"
-    Purpose = "File upload and processing events"
+    Name        = "${var.name_prefix}-file-events"
+    Purpose     = "File upload and processing events"
+    Environment = var.environment
   })
 }
 

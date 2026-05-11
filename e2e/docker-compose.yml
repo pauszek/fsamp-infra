@@ -34,7 +34,7 @@ services:
       SERVICES: s3,sqs,sns,dynamodb,kms,cognito-idp,iam,sts,cloudwatch,logs
       PERSISTENCE: 0
       DEBUG: ${LOCALSTACK_DEBUG:-0}
-      ENFORCE_IAM: 0
+      ENFORCE_IAM: 1
       DOCKER_HOST: unix:///var/run/docker.sock
       # Force issuer to use localstack hostname (not localhost.localstack.cloud)
       LOCALSTACK_HOST: localstack:4566
@@ -78,7 +78,7 @@ services:
       # Config file path (for env vars including KMS_KEY_ID)
       CONFIG_FILE: /config/fsamp-config.env
       CONFIG_WAIT_TIMEOUT: 120
-    entrypoint: ["/bin/sh", "-c", "test -f /config/fsamp-config.env && . /config/fsamp-config.env; exec java -jar /app/app.jar"]
+    entrypoint: ["/entrypoint.sh"]
     volumes:
       - fsamp-config:/config:ro
     depends_on:
@@ -104,10 +104,11 @@ services:
       AWS_SECRET_ACCESS_KEY: test
       LOG_LEVEL: DEBUG
       # SQS - using internal LocalStack URL
-      SQS_QUEUE_URL: http://localstack:4566/000000000000/fsamp-local-processing-queue
+      SQS_QUEUE_URL: http://localstack:4566/000000000000/fsamp-local-file-processing
       SNS_TOPIC_ARN: arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
       S3_BUCKET_NAME: fsamp-local-files
       DYNAMODB_TABLE_NAME: fsamp-local-file-metadata
+      OUTBOX_TABLE_NAME: fsamp-local-outbox
       # KMS_KEY_ID loaded dynamically from config
       USE_FIPS_ENDPOINT: "false"
       # Disable FIPS OpenSSL for local mode (HTTP to LocalStack, no TLS needed)
@@ -144,7 +145,8 @@ services:
       # Resource names
       S3_BUCKET_NAME: fsamp-local-files
       DYNAMODB_TABLE_NAME: fsamp-local-file-metadata
-      SQS_QUEUE_NAME: fsamp-local-processing-queue
+      OUTBOX_TABLE_NAME: fsamp-local-outbox
+      SQS_QUEUE_NAME: fsamp-local-file-processing
       # Test users (created by init-aws.sh)
       TEST_USER: e2e-test-user
       TEST_PASSWORD: E2eTestPass123!

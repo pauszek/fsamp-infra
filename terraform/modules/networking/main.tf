@@ -5,10 +5,12 @@
 # =============================================================================
 
 terraform {
+  required_version = ">= 1.6.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.40"
+      version = ">= 6.44.0, < 7.0.0"
     }
   }
 }
@@ -30,6 +32,11 @@ variable "name_prefix" {
 variable "tags" {
   description = "Common tags"
   type        = map(string)
+}
+
+variable "kms_key_arn" {
+  description = "KMS key ARN for VPC Flow Logs encryption"
+  type        = string
 }
 
 variable "vpc_cidr" {
@@ -56,11 +63,21 @@ variable "single_nat_gateway" {
   default     = true
 }
 
+variable "enable_private_endpoints" {
+  description = "Enable paid interface VPC endpoints when NAT is disabled"
+  type        = bool
+  default     = true
+}
+
 # =============================================================================
 # Data Sources
 # =============================================================================
 
 data "aws_region" "current" {}
+
+locals {
+  enable_interface_endpoints = var.enable_private_endpoints && !var.enable_nat_gateway
+}
 
 # =============================================================================
 # VPC
@@ -73,6 +90,15 @@ resource "aws_vpc" "main" {
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-vpc"
+  })
+}
+
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.main.id
+
+  tags = merge(var.tags, {
+    Name        = "${var.name_prefix}-default-sg-restricted"
+    Environment = var.environment
   })
 }
 
@@ -99,7 +125,7 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = cidrsubnet(var.vpc_cidr, 8, count.index)
   availability_zone       = var.availability_zones[count.index]
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-public-${var.availability_zones[count.index]}"
@@ -236,27 +262,27 @@ resource "aws_security_group" "alb" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "HTTPS from internet"
+    description = "HTTPS from VPC Link/private clients"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.vpc_cidr]
   }
 
   ingress {
-    description = "HTTP from internet (redirect to HTTPS)"
+    description = "HTTP from VPC Link/private clients"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.vpc_cidr]
   }
 
   egress {
-    description = "Allow all outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    description = "Gateway traffic to ECS tasks"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
   }
 
   tags = merge(var.tags, {
@@ -350,7 +376,7 @@ resource "aws_security_group" "lambda" {
 
 resource "aws_vpc_endpoint" "s3" {
   vpc_id       = aws_vpc.main.id
-  service_name = "com.amazonaws.${data.aws_region.current.name}.s3"
+  service_name = "com.amazonaws.${data.aws_region.current.region}.s3"
 
   route_table_ids = concat(
     [aws_route_table.public.id],
@@ -364,7 +390,7 @@ resource "aws_vpc_endpoint" "s3" {
 
 resource "aws_vpc_endpoint" "dynamodb" {
   vpc_id       = aws_vpc.main.id
-  service_name = "com.amazonaws.${data.aws_region.current.name}.dynamodb"
+  service_name = "com.amazonaws.${data.aws_region.current.region}.dynamodb"
 
   route_table_ids = concat(
     [aws_route_table.public.id],
@@ -401,10 +427,10 @@ resource "aws_security_group" "vpc_endpoints" {
 
 # ECR API endpoint (required if not using NAT Gateway)
 resource "aws_vpc_endpoint" "ecr_api" {
-  count = var.enable_nat_gateway ? 0 : 1
+  count = local.enable_interface_endpoints ? 1 : 0
 
   vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.ecr.api"
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.ecr.api"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
@@ -417,10 +443,10 @@ resource "aws_vpc_endpoint" "ecr_api" {
 
 # ECR DKR endpoint (required for pulling images without NAT)
 resource "aws_vpc_endpoint" "ecr_dkr" {
-  count = var.enable_nat_gateway ? 0 : 1
+  count = local.enable_interface_endpoints ? 1 : 0
 
   vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.ecr.dkr"
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.ecr.dkr"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
@@ -433,10 +459,10 @@ resource "aws_vpc_endpoint" "ecr_dkr" {
 
 # CloudWatch Logs endpoint (for container logs without NAT)
 resource "aws_vpc_endpoint" "logs" {
-  count = var.enable_nat_gateway ? 0 : 1
+  count = local.enable_interface_endpoints ? 1 : 0
 
   vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.logs"
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.logs"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
@@ -449,10 +475,10 @@ resource "aws_vpc_endpoint" "logs" {
 
 # SQS endpoint
 resource "aws_vpc_endpoint" "sqs" {
-  count = var.enable_nat_gateway ? 0 : 1
+  count = local.enable_interface_endpoints ? 1 : 0
 
   vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.sqs"
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.sqs"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
@@ -465,10 +491,10 @@ resource "aws_vpc_endpoint" "sqs" {
 
 # SNS endpoint
 resource "aws_vpc_endpoint" "sns" {
-  count = var.enable_nat_gateway ? 0 : 1
+  count = local.enable_interface_endpoints ? 1 : 0
 
   vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.sns"
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.sns"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
@@ -481,10 +507,10 @@ resource "aws_vpc_endpoint" "sns" {
 
 # KMS endpoint
 resource "aws_vpc_endpoint" "kms" {
-  count = var.enable_nat_gateway ? 0 : 1
+  count = local.enable_interface_endpoints ? 1 : 0
 
   vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.kms"
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.kms"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
@@ -606,7 +632,8 @@ resource "aws_flow_log" "main" {
 
 resource "aws_cloudwatch_log_group" "flow_logs" {
   name              = "/vpc/${var.name_prefix}/flow-logs"
-  retention_in_days = var.environment == "prod" ? 90 : 30
+  retention_in_days = 365
+  kms_key_id        = var.kms_key_arn
 
   tags = var.tags
 }
@@ -646,7 +673,7 @@ resource "aws_iam_role_policy" "flow_logs" {
           "logs:DescribeLogGroups",
           "logs:DescribeLogStreams"
         ]
-        Resource = "*"
+        Resource = "${aws_cloudwatch_log_group.flow_logs.arn}:*"
       }
     ]
   })

@@ -1,6 +1,6 @@
 # FSAMP Platform Architecture
 
-> **F**edRAMP-compliant **S**ecure **A**WS **M**icroservices **P**latform
+> **F**edRAMP-aligned **S**ecure **A**WS **M**icroservices **P**latform
 
 A secure, enterprise-grade microservices platform for file processing on AWS using event-driven architecture and Infrastructure as Code.
 
@@ -20,7 +20,7 @@ A secure, enterprise-grade microservices platform for file processing on AWS usi
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    AWS Cloud (eu-central-1)                                 │
+│                                    AWS Cloud (us-west-2)                                    │
 │  ┌───────────────────────────────────────────────────────────────────────────────────────┐  │
 │  │                                    VPC (10.0.0.0/16)                                   │  │
 │  │  ┌─────────────────────────────────────────────────────────────────────────────────┐  │  │
@@ -88,12 +88,12 @@ A secure, enterprise-grade microservices platform for file processing on AWS usi
 │  │  │ (Events)         │  │   │                  │                                     │
 │  │  │ + DynamoDB Stream│  │   │                  ▼                                     │
 │  │  └──────────────────┘  │   │   ┌─────────────────────────────────────────────────┐  │
-│  │  ┌──────────────────┐  │   │   │                Lambda Functions                 │  │
+│  │  ┌──────────────────┐  │   │   │           Processor Compute (Lambda/ECS)       │  │
 │  │  │ fsamp-idempotency│  │   │   │                                                 │  │
 │  │  │ (TTL: 24h)       │  │   │   │  ┌─────────────────┐  ┌─────────────────────┐  │  │
 │  │  └──────────────────┘  │   │   │  │ outbox-publisher│  │  fsamp-processor    │  │  │
 │  └────────────────────────┘   │   │  │ (Stream trigger)│  │  (SQS trigger)      │  │  │
-│                               │   │  │                 │  │                     │  │  │
+│                               │   │  │  Lambda         │  │  Lambda or ECS      │  │  │
 │                               │   │  │  Python 3.14    │  │  Python 3.14        │  │  │
 │                               │   │  │  + Powertools   │  │  + Powertools       │  │  │
 │                               │   │  └────────┬────────┘  └──────────┬──────────┘  │  │
@@ -145,17 +145,17 @@ External Access:
 | **Purpose** | REST API for file upload/download |
 | **Security** | OAuth2 Resource Server (Cognito JWT) |
 | **Resilience** | Resilience4j (Circuit Breaker, Retry, Rate Limiter, Bulkhead) |
-| **Encryption** | FIPS 140-3 compliant (BouncyCastle bc-fips) |
+| **Encryption** | FIPS 140-3-oriented (BouncyCastle bc-fips, AWS KMS) |
 | **Patterns** | Hexagonal Architecture, CQRS-lite |
 
 ### Processor Service (fsamp-processor)
 
 | Aspect | Details |
 |--------|---------|
-| **Technology** | Python 3.14, AWS Lambda |
+| **Technology** | Python 3.14, AWS Lambda / ECS Fargate |
 | **Trigger** | SQS Queue (subscribed to SNS) |
 | **Purpose** | Async file processing (validation, transformation) |
-| **Observability** | AWS Lambda Powertools (structured logging, tracing, metrics) |
+| **Observability** | Powertools for Lambda; CloudWatch logs/metrics for ECS |
 | **Patterns** | Event Sourcing, Idempotent Consumer |
 
 ### Outbox Publisher Lambda
@@ -168,6 +168,14 @@ External Access:
 | **Guarantees** | At-least-once delivery |
 
 ---
+
+## Compliance & Enterprise Controls (FedRAMP-aligned)
+
+- **FedRAMP Moderate aligned** baseline (not FedRAMP authorized), mapped to NIST SP 800-53 Rev. 5.
+- **FIPS 140-3 cryptography** across the stack: ACCP + BC-FIPS (Java), OpenSSL FIPS provider (Python), AWS KMS (HSM-backed).
+- **Auditability** via CloudTrail (multi-region + log integrity), VPC Flow Logs, S3 access logs, and structured application logs.
+- **Monitoring & detection** with CloudWatch metrics/alarms, GuardDuty findings, and AWS Config compliance rules.
+- **Operational readiness** backed by runbooks and targets: [docs/SLO_SLI.md](docs/SLO_SLI.md), [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md), [SECURITY.md](SECURITY.md).
 
 ## Data Flow
 
