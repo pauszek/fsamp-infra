@@ -107,7 +107,7 @@ echo "Creating SQS queues..."
 
 # Dead-letter queue first
 DLQ_URL=$(awslocal sqs create-queue \
-    --queue-name "fsamp-local-file-processing-dlq" \
+    --queue-name "fsamp-local-processing-dlq" \
     --query 'QueueUrl' \
     --output text)
 
@@ -119,7 +119,7 @@ DLQ_ARN=$(awslocal sqs get-queue-attributes \
 
 # Main processing queue with DLQ redrive policy
 QUEUE_URL=$(awslocal sqs create-queue \
-    --queue-name "fsamp-local-file-processing" \
+    --queue-name "fsamp-local-processing-queue" \
     --attributes '{
         "VisibilityTimeout": "300",
         "MessageRetentionPeriod": "1209600",
@@ -186,6 +186,7 @@ awslocal dynamodb create-table \
     --sse-specification Enabled=true,SSEType=KMS,KMSMasterKeyId="$KMS_KEY_ID" \
     2>/dev/null || echo "  (table may already exist)"
 
+awslocal dynamodb wait table-exists --table-name "fsamp-local-file-metadata"
 echo "  ✓ DynamoDB table created: fsamp-local-file-metadata"
 
 # -----------------------------------------------------------------------------
@@ -218,6 +219,8 @@ awslocal dynamodb create-table \
     --stream-specification StreamEnabled=true,StreamViewType=NEW_IMAGE \
     2>/dev/null || echo "  (table may already exist)"
 
+awslocal dynamodb wait table-exists --table-name "fsamp-local-outbox"
+
 # Enable TTL on outbox table for automatic cleanup
 awslocal dynamodb update-time-to-live \
     --table-name "fsamp-local-outbox" \
@@ -241,6 +244,8 @@ awslocal dynamodb create-table \
     --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
     --sse-specification Enabled=true,SSEType=KMS,KMSMasterKeyId="$KMS_KEY_ID" \
     2>/dev/null || echo "  (table may already exist)"
+
+awslocal dynamodb wait table-exists --table-name "fsamp-local-idempotency-keys"
 
 # Enable TTL on idempotency keys table (keys expire after 24 hours)
 awslocal dynamodb update-time-to-live \
@@ -436,7 +441,7 @@ awslocal iam put-role-policy \
                 "Sid": "SQSConsume",
                 "Effect": "Allow",
                 "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"],
-                "Resource": "arn:aws:sqs:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-file-processing"
+                "Resource": "arn:aws:sqs:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-processing-queue"
             },
             {
                 "Sid": "S3ReadOnly",
@@ -623,10 +628,11 @@ export S3_BUCKET_NAME=fsamp-local-files
 export SNS_TOPIC_ARN=$SNS_TOPIC_ARN
 
 # SQS
-export SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-file-processing
+export SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-processing-queue
 
 # DynamoDB
 export DYNAMODB_TABLE_NAME=fsamp-local-file-metadata
+export DYNAMODB_OUTBOX_TABLE_NAME=fsamp-local-outbox
 export OUTBOX_TABLE_NAME=fsamp-local-outbox
 export DYNAMODB_IDEMPOTENCY_TABLE_NAME=fsamp-local-idempotency-keys
 

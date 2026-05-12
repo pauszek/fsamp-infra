@@ -104,7 +104,7 @@ services:
       AWS_SECRET_ACCESS_KEY: test
       LOG_LEVEL: DEBUG
       # SQS - using internal LocalStack URL
-      SQS_QUEUE_URL: http://localstack:4566/000000000000/fsamp-local-file-processing
+      SQS_QUEUE_URL: http://localstack:4566/000000000000/fsamp-local-processing-queue
       SNS_TOPIC_ARN: arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
       S3_BUCKET_NAME: fsamp-local-files
       DYNAMODB_TABLE_NAME: fsamp-local-file-metadata
@@ -146,7 +146,7 @@ services:
       S3_BUCKET_NAME: fsamp-local-files
       DYNAMODB_TABLE_NAME: fsamp-local-file-metadata
       OUTBOX_TABLE_NAME: fsamp-local-outbox
-      SQS_QUEUE_NAME: fsamp-local-file-processing
+      SQS_QUEUE_NAME: fsamp-local-processing-queue
       # Test users (created by init-aws.sh)
       TEST_USER: e2e-test-user
       TEST_PASSWORD: E2eTestPass123!

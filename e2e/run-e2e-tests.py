@@ -91,7 +91,12 @@ class TestConfig:
     S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "fsamp-local-files")
     DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME", "fsamp-local-file-metadata")
     OUTBOX_TABLE_NAME = os.getenv("OUTBOX_TABLE_NAME", "fsamp-local-outbox")
-    SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "fsamp-local-file-processing")
+    DYNAMODB_OUTBOX_TABLE_NAME = OUTBOX_TABLE_NAME
+    DYNAMODB_IDEMPOTENCY_TABLE_NAME = os.getenv(
+        "DYNAMODB_IDEMPOTENCY_TABLE_NAME",
+        "fsamp-local-idempotency-keys",
+    )
+    SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "fsamp-local-processing-queue")
     
     # Cognito - discovered at runtime
     COGNITO_USER_POOL_ID: str = ""
@@ -366,8 +371,14 @@ def test_localstack_resources() -> TestResult:
         table_names = tables.get("TableNames", [])
         result.details["dynamodb_tables"] = table_names
         
-        if TestConfig.DYNAMODB_TABLE_NAME not in table_names:
-            result.error = f"DynamoDB table {TestConfig.DYNAMODB_TABLE_NAME} not found"
+        required_tables = {
+            TestConfig.DYNAMODB_TABLE_NAME,
+            TestConfig.DYNAMODB_OUTBOX_TABLE_NAME,
+            TestConfig.DYNAMODB_IDEMPOTENCY_TABLE_NAME,
+        }
+        missing_tables = sorted(required_tables - set(table_names))
+        if missing_tables:
+            result.error = f"DynamoDB tables not found: {missing_tables}"
             result.duration = time.time() - start
             return result
         
