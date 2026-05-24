@@ -7,6 +7,10 @@ bump:
 release:
   full-release: true
   publish: false
+
+deploy:
+  auto-dev: false
+
 terraform:
   enabled: true
   working-directory: terraform

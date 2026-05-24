@@ -68,6 +68,42 @@ permissions:
   id-token: write
 
 jobs:
+  params:
+    name: Load Deployment Settings
+    runs-on: ubuntu-latest
+    outputs:
+      auto_deploy_dev: ${{ steps.params.outputs.auto_deploy_dev }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Load params
+        id: params
+        shell: bash
+        run: |
+          auto_deploy_dev="$(python3 - <<'PY'
+          from pathlib import Path
+
+          value = "false"
+          section = None
+
+          for raw in Path(".github/params.yml").read_text().splitlines():
+              line = raw.split("#", 1)[0].rstrip()
+              if not line.strip():
+                  continue
+              if not line.startswith((" ", "\t")) and line.endswith(":"):
+                  section = line[:-1].strip()
+                  continue
+              if section == "deploy":
+                  stripped = line.strip()
+                  if stripped.startswith("auto-dev:"):
+                      value = stripped.split(":", 1)[1].strip().strip("'\"").lower()
+                      break
+
+          print("true" if value == "true" else "false")
+          PY
+          )"
+          echo "auto_deploy_dev=${auto_deploy_dev}" >> "$GITHUB_OUTPUT"
+
   context:
     name: Resolve Context
     runs-on: ubuntu-latest
@@ -143,9 +179,11 @@ jobs:
 
   deploy-dev:
     name: Deploy Dev
-    needs: context
+    needs:
+      - context
+      - params
     if: >
-      (github.event_name == 'workflow_dispatch' || vars.AUTO_DEPLOY_DEV == 'true') &&
+      (github.event_name == 'workflow_dispatch' || needs.params.outputs.auto_deploy_dev == 'true') &&
       (needs.context.outputs.action == 'deploy-dev' || needs.context.outputs.action == 'promote')
     uses: ./.github/workflows/deploy-environment.yml
     permissions:
