@@ -6,7 +6,7 @@
 
 FSAMP enforces TLS 1.2+ for all external and inter-service communication. TLS terminates
 at the AWS API Gateway edge; internal VPC traffic flows over private subnets with
-security-group isolation. All AWS SDK calls use FIPS 140-3 validated TLS endpoints.
+security-group isolation. AWS SDK calls use AWS FIPS endpoints where supported.
 
 ## End-to-End TLS Flow
 
@@ -36,7 +36,7 @@ API Gateway enforces TLS 1.2 by default on all REST API endpoints.
 No custom domain or ACM certificate is configured — the platform uses the
 built-in `execute-api` domain with automatic certificate rotation.
 
-### 2. VPC Link — API Gateway → ALB (Private Subnet)
+### 2. VPC Link — API Gateway -> ALB (Private Subnet)
 
 Traffic between API Gateway and the ALB traverses an **AWS VPC Link** over
 private subnets. This is **not encrypted at the transport layer** (HTTP) but is:
@@ -49,7 +49,7 @@ private subnets. This is **not encrypted at the transport layer** (HTTP) but is:
 This is a standard AWS architecture pattern — AWS documentation confirms that
 VPC Link traffic never leaves the AWS network backbone.
 
-### 3. ALB → ECS Container (Private Subnet)
+### 3. ALB -> ECS Container (Private Subnet)
 
 | Property | Value |
 |----------|-------|
@@ -64,21 +64,21 @@ The container runs plain HTTP. This is intentional:
 
 ### 4. Service-to-AWS (FIPS 140-3 Endpoints)
 
-All AWS SDK calls from Gateway and Processor use **FIPS 140-3 validated endpoints**:
+All AWS SDK calls from Gateway and Processor use **AWS FIPS endpoints where supported**:
 
 | Service | FIPS Endpoint Pattern | Enabled |
 |---------|-----------------------|---------|
-| S3 | `s3-fips.us-west-2.amazonaws.com` | ✅ |
-| DynamoDB | `dynamodb-fips.us-west-2.amazonaws.com` | ✅ |
-| KMS | `kms-fips.us-west-2.amazonaws.com` | ✅ |
-| SQS | `sqs-fips.us-west-2.amazonaws.com` | ✅ |
-| SNS | `sns-fips.us-west-2.amazonaws.com` | ✅ |
-| Cognito | `cognito-idp-fips.us-west-2.amazonaws.com` | ✅ |
-| STS | `sts-fips.us-west-2.amazonaws.com` | ✅ |
+| S3 | `s3-fips.us-west-2.amazonaws.com` | |
+| DynamoDB | `dynamodb-fips.us-west-2.amazonaws.com` | |
+| KMS | `kms-fips.us-west-2.amazonaws.com` | |
+| SQS | `sqs-fips.us-west-2.amazonaws.com` | |
+| SNS | `sns-fips.us-west-2.amazonaws.com` | |
+| Cognito | `cognito-idp-fips.us-west-2.amazonaws.com` | |
+| STS | `sts-fips.us-west-2.amazonaws.com` | |
 
 Configuration:
-- **Gateway (Java):** `aws.fips-endpoints: true` in `application.yml` → Java AWS SDK v2 FIPS mode
-- **Processor (Python):** `AWS_USE_FIPS_ENDPOINT=true` env var → boto3 FIPS mode
+- **Gateway (Java):** `aws.fips-endpoints: true` in `application.yml` -> Java AWS SDK v2 FIPS mode
+- **Processor (Python):** `AWS_USE_FIPS_ENDPOINT=true` env var -> boto3 FIPS mode
 - **Terraform:** `use_fips_endpoint = true` in provider configuration
 
 ### 5. VPC Endpoints (Private Link)
@@ -139,13 +139,13 @@ Topic policy denies `sns:Publish` over non-TLS connections.
 | Control | Implementation |
 |---------|----------------|
 | **SC-8** | TLS 1.2 at API Gateway edge; FIPS endpoints for all AWS service calls |
-| **SC-8(1)** | FIPS 140-3 validated crypto providers (ACCP, BC-FIPS, OpenSSL FIPS) |
-| **SC-13** | AES-256-GCM, SHA-256/384/512 via FIPS-validated modules |
+| **SC-8(1)** | FIPS-capable crypto providers (ACCP, BC-FIPS, OpenSSL FIPS) |
+| **SC-13** | AES-256-GCM, SHA-256/384/512 via FIPS-oriented providers |
 | **SC-23** | Session tokens (JWT) transmitted only over HTTPS |
 
 ## Security Considerations
 
-1. **Intra-VPC HTTP traffic** — API GW → ALB → ECS uses HTTP within private subnets.
+1. **Intra-VPC HTTP traffic** — API GW -> ALB -> ECS uses HTTP within private subnets.
    This is accepted because the traffic never leaves the VPC, is security-group-isolated,
    and is monitored via VPC Flow Logs. AWS considers this an acceptable pattern for
    FedRAMP Moderate workloads.
