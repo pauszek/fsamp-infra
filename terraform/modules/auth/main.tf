@@ -1,11 +1,5 @@
-# =============================================================================
-# Auth Module - Cognito User Pool
-# =============================================================================
-# Authentication and authorization for FSAMP platform
-# =============================================================================
-
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   required_providers {
     aws = {
@@ -14,11 +8,6 @@ terraform {
     }
   }
 }
-
-# =============================================================================
-# Variables
-# =============================================================================
-
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -63,19 +52,12 @@ variable "refresh_token_validity_days" {
   type        = number
   default     = 30
 }
-
-# =============================================================================
-# Cognito User Pool
-# =============================================================================
-
 resource "aws_cognito_user_pool" "main" {
   name = "${var.name_prefix}-user-pool"
 
-  # Username configuration
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
 
-  # Password policy (FIPS-aligned strong passwords)
   password_policy {
     minimum_length                   = var.password_min_length
     require_lowercase                = true
@@ -85,14 +67,12 @@ resource "aws_cognito_user_pool" "main" {
     temporary_password_validity_days = 7
   }
 
-  # MFA Configuration
   mfa_configuration = var.environment == "prod" ? "ON" : "OPTIONAL"
 
   software_token_mfa_configuration {
     enabled = true
   }
 
-  # Account recovery
   account_recovery_setting {
     recovery_mechanism {
       name     = "verified_email"
@@ -100,7 +80,6 @@ resource "aws_cognito_user_pool" "main" {
     }
   }
 
-  # User attribute schema
   schema {
     name                     = "email"
     attribute_data_type      = "String"
@@ -127,58 +106,41 @@ resource "aws_cognito_user_pool" "main" {
     }
   }
 
-  # Email configuration
   email_configuration {
     email_sending_account = "COGNITO_DEFAULT"
   }
 
-  # Verification messages
   verification_message_template {
     default_email_option = "CONFIRM_WITH_CODE"
     email_subject        = "FSAMP - Verify your email"
     email_message        = "Your verification code is {####}"
   }
 
-  # Advanced security (if prod)
   user_pool_add_ons {
     advanced_security_mode = var.environment == "prod" ? "ENFORCED" : "OFF"
   }
 
-  # Device tracking
   device_configuration {
     challenge_required_on_new_device      = true
     device_only_remembered_on_user_prompt = true
   }
 
-  # Deletion protection
   deletion_protection = var.environment == "prod" ? "ACTIVE" : "INACTIVE"
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-user-pool"
   })
 }
-
-# =============================================================================
-# User Pool Domain
-# =============================================================================
-
 resource "aws_cognito_user_pool_domain" "main" {
   domain       = var.name_prefix
   user_pool_id = aws_cognito_user_pool.main.id
 }
-
-# =============================================================================
-# App Client - Web Application
-# =============================================================================
-
 resource "aws_cognito_user_pool_client" "web" {
   name         = "${var.name_prefix}-web-client"
   user_pool_id = aws_cognito_user_pool.main.id
 
-  # No client secret for web app (SPA)
   generate_secret = false
 
-  # OAuth configuration
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_scopes = [
@@ -192,7 +154,6 @@ resource "aws_cognito_user_pool_client" "web" {
 
   supported_identity_providers = ["COGNITO"]
 
-  # Token validity (FedRAMP AC-12 — session timeouts)
   access_token_validity  = var.access_token_validity_minutes
   id_token_validity      = var.access_token_validity_minutes
   refresh_token_validity = var.refresh_token_validity_days
@@ -203,16 +164,13 @@ resource "aws_cognito_user_pool_client" "web" {
     refresh_token = "days"
   }
 
-  # Prevent user existence errors
   prevent_user_existence_errors = "ENABLED"
 
-  # Auth flows
   explicit_auth_flows = [
     "ALLOW_USER_SRP_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH"
   ]
 
-  # Read/write attributes
   read_attributes = [
     "email",
     "email_verified",
@@ -224,19 +182,12 @@ resource "aws_cognito_user_pool_client" "web" {
     "name"
   ]
 }
-
-# =============================================================================
-# App Client - Backend Service (M2M)
-# =============================================================================
-
 resource "aws_cognito_user_pool_client" "service" {
   name         = "${var.name_prefix}-service-client"
   user_pool_id = aws_cognito_user_pool.main.id
 
-  # Client secret for service-to-service auth
   generate_secret = true
 
-  # OAuth configuration for client credentials
   allowed_oauth_flows                  = ["client_credentials"]
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_scopes = [
@@ -246,21 +197,14 @@ resource "aws_cognito_user_pool_client" "service" {
 
   supported_identity_providers = ["COGNITO"]
 
-  # Token validity (FedRAMP AC-12 — session timeouts)
   access_token_validity = var.access_token_validity_minutes
 
   token_validity_units {
     access_token = "minutes"
   }
 
-  # Prevent user existence errors
   prevent_user_existence_errors = "ENABLED"
 }
-
-# =============================================================================
-# Resource Server (API Scopes)
-# =============================================================================
-
 resource "aws_cognito_resource_server" "api" {
   identifier   = "https://${var.name_prefix}-api"
   name         = "${var.name_prefix}-api"
@@ -276,11 +220,6 @@ resource "aws_cognito_resource_server" "api" {
     scope_description = "Write files"
   }
 }
-
-# =============================================================================
-# User Groups
-# =============================================================================
-
 resource "aws_cognito_user_group" "admins" {
   name         = "admins"
   user_pool_id = aws_cognito_user_pool.main.id
@@ -294,11 +233,6 @@ resource "aws_cognito_user_group" "users" {
   description  = "Regular users"
   precedence   = 10
 }
-
-# =============================================================================
-# Outputs
-# =============================================================================
-
 output "user_pool_id" {
   description = "Cognito User Pool ID"
   value       = aws_cognito_user_pool.main.id
@@ -339,9 +273,4 @@ output "cognito_domain_url" {
   description = "Full Cognito hosted UI domain URL"
   value       = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"
 }
-
-# =============================================================================
-# Data Sources
-# =============================================================================
-
 data "aws_region" "current" {}

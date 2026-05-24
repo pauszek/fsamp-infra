@@ -1,14 +1,3 @@
-# =============================================================================
-# FSAMP Infrastructure - Root Module Variables
-# =============================================================================
-# Variables are defined here for clarity and documentation.
-# Default values are suitable for local development.
-# =============================================================================
-
-# -----------------------------------------------------------------------------
-# Core Configuration
-# -----------------------------------------------------------------------------
-
 variable "environment" {
   description = "Environment name (local, dev, staging, prod)"
   type        = string
@@ -47,11 +36,6 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
-
-# -----------------------------------------------------------------------------
-# Networking Configuration
-# -----------------------------------------------------------------------------
-
 variable "vpc_cidr" {
   description = "CIDR block for VPC. Must be /16 to /24"
   type        = string
@@ -73,13 +57,8 @@ variable "enable_nat_gateway" {
   type        = bool
   default     = false
 }
-
-# -----------------------------------------------------------------------------
-# Feature Flags
-# -----------------------------------------------------------------------------
-
 variable "use_fips_endpoint" {
-  description = "Use FIPS 140-3 validated endpoints. Only works in supported regions (us-*)"
+  description = "Use AWS FIPS endpoints where the selected region supports them (us-* regions)"
   type        = bool
   default     = true
 }
@@ -87,7 +66,7 @@ variable "use_fips_endpoint" {
 variable "enable_waf" {
   description = "Enable WAF for API Gateway. Automatically enabled in prod"
   type        = bool
-  default     = null # null = auto-determine based on environment
+  default     = null
 }
 
 variable "enable_container_insights" {
@@ -107,11 +86,6 @@ variable "enable_private_endpoints" {
   type        = bool
   default     = true
 }
-
-# -----------------------------------------------------------------------------
-# Container Image Tags
-# -----------------------------------------------------------------------------
-
 variable "gateway_image_tag" {
   description = <<-EOT
     Docker image tag for the gateway ECS container image.
@@ -131,17 +105,12 @@ variable "processor_image_tag" {
   type        = string
   default     = "latest"
 }
-
-# -----------------------------------------------------------------------------
-# Audit & Compliance Feature Flags (FedRAMP)
-# -----------------------------------------------------------------------------
-
 variable "enable_cloudtrail" {
   description = <<-EOT
     Enable CloudTrail for API audit logging (FedRAMP AU control family).
     Records all API calls with log file integrity validation.
     Cost: ~$2/month for management events + S3 storage.
-    Enabled by default for FedRAMP AU-2 compliance; disabled automatically
+    Enabled by default for FedRAMP AU-2 alignment; disabled automatically
     for local environment via module count gate.
   EOT
   type        = bool
@@ -153,7 +122,7 @@ variable "enable_guardduty" {
     Enable GuardDuty for threat detection (FedRAMP SI control family).
     Monitors CloudTrail, VPC Flow Logs, and DNS for malicious activity.
     Cost: ~$4/month for low-volume workloads.
-    Enabled by default for FedRAMP SI-4 compliance; disabled automatically
+    Enabled by default for FedRAMP SI-4 alignment; disabled automatically
     for local environment via module count gate.
   EOT
   type        = bool
@@ -175,7 +144,7 @@ variable "enable_aws_config" {
     Enable AWS Config for compliance monitoring (FedRAMP CM control family).
     Tracks resource configuration changes and evaluates compliance rules.
     Cost: ~$2/month per rule evaluation.
-    Enabled by default for FedRAMP CM-2/CM-6 compliance; disabled automatically
+    Enabled by default for FedRAMP CM-2/CM-6 alignment; disabled automatically
     for local environment via module count gate.
   EOT
   type        = bool
@@ -187,11 +156,6 @@ variable "enable_config" {
   type        = bool
   default     = null
 }
-
-# -----------------------------------------------------------------------------
-# LocalStack Configuration (only used when environment = "local")
-# -----------------------------------------------------------------------------
-
 variable "localstack_endpoint" {
   description = "LocalStack endpoint URL for local development"
   type        = string

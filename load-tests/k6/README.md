@@ -78,9 +78,9 @@ k6 run smoke-test.js
 ### 2. Load Test
 
 Standard load testing with realistic traffic:
-- Ramp up: 0 → 50 VUs over 2 minutes
+- Ramp up: 0 -> 50 VUs over 2 minutes
 - Sustained: 50 VUs for 5 minutes
-- Ramp down: 50 → 0 VUs over 2 minutes
+- Ramp down: 50 -> 0 VUs over 2 minutes
 
 ```bash
 k6 run load-test.js
@@ -89,7 +89,7 @@ k6 run load-test.js
 ### 3. Stress Test
 
 Push the system beyond normal capacity:
-- Progressive ramp: 0 → 100 → 200 → 300 VUs
+- Progressive ramp: 0 -> 100 -> 200 -> 300 VUs
 - Find breaking points
 - Monitor recovery
 
@@ -101,7 +101,7 @@ k6 run stress-test.js
 
 Sudden dramatic increases in traffic:
 - Baseline: 10 VUs
-- Spike: 10 → 200 VUs instantly
+- Spike: 10 -> 200 VUs instantly
 - Recovery monitoring
 
 ```bash
@@ -197,17 +197,17 @@ load-test:
 ### Sample Output
 
 ```
-     ✓ status is 200
-     ✓ response time < 500ms
-     ✓ upload successful
+     OK status is 200
+     OK response time < 500ms
+     OK upload successful
 
-     checks.........................: 100.00% ✓ 15000  ✗ 0
+     checks.........................: 100.00% OK 15000  FAIL 0
      data_received..................: 45 MB   450 kB/s
      data_sent......................: 1.2 GB  12 MB/s
      http_req_blocked...............: avg=1.2ms   p(95)=3.5ms
      http_req_connecting............: avg=0.8ms   p(95)=2.1ms
      http_req_duration..............: avg=234ms   p(95)=478ms   p(99)=1.2s
-     http_req_failed................: 0.12%   ✓ 18     ✗ 14982
+     http_req_failed................: 0.12%   OK 18     FAIL 14982
      http_req_receiving.............: avg=12ms    p(95)=45ms
      http_req_sending...............: avg=8ms     p(95)=22ms
      http_req_waiting...............: avg=214ms   p(95)=420ms

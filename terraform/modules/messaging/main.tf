@@ -1,11 +1,5 @@
-# =============================================================================
-# Messaging Module - SNS, SQS
-# =============================================================================
-# Event-driven architecture with encrypted messaging
-# =============================================================================
-
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   required_providers {
     aws = {
@@ -14,11 +8,6 @@ terraform {
     }
   }
 }
-
-# =============================================================================
-# Variables
-# =============================================================================
-
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -42,7 +31,7 @@ variable "tags" {
 variable "message_retention_seconds" {
   description = "SQS message retention period in seconds"
   type        = number
-  default     = 86400 # 1 day
+  default     = 86400
 }
 
 variable "dlq_max_receive_count" {
@@ -50,17 +39,7 @@ variable "dlq_max_receive_count" {
   type        = number
   default     = 3
 }
-
-# =============================================================================
-# Data Sources
-# =============================================================================
-
 data "aws_caller_identity" "current" {}
-
-# =============================================================================
-# SNS Topics
-# =============================================================================
-
 resource "aws_sns_topic" "file_events" {
   name              = "${var.name_prefix}-file-events"
   kms_master_key_id = var.kms_key_id
@@ -91,15 +70,9 @@ resource "aws_sns_topic" "dlq_alerts" {
     Purpose = "Dead letter queue alerts"
   })
 }
-
-# =============================================================================
-# SQS Queues
-# =============================================================================
-
-# Dead Letter Queue
 resource "aws_sqs_queue" "dlq" {
   name                      = "${var.name_prefix}-dlq"
-  message_retention_seconds = 1209600 # 14 days
+  message_retention_seconds = 1209600
   kms_master_key_id         = var.kms_key_id
 
   tags = merge(var.tags, {
@@ -108,10 +81,9 @@ resource "aws_sqs_queue" "dlq" {
   })
 }
 
-# Main processing queue
 resource "aws_sqs_queue" "file_processing" {
   name                       = "${var.name_prefix}-file-processing"
-  visibility_timeout_seconds = 300 # 5 minutes
+  visibility_timeout_seconds = 300
   message_retention_seconds  = var.message_retention_seconds
   kms_master_key_id          = var.kms_key_id
 
@@ -126,7 +98,6 @@ resource "aws_sqs_queue" "file_processing" {
   })
 }
 
-# Queue for analysis results
 resource "aws_sqs_queue" "analysis_results" {
   name                       = "${var.name_prefix}-analysis-results"
   visibility_timeout_seconds = 60
@@ -143,11 +114,6 @@ resource "aws_sqs_queue" "analysis_results" {
     Purpose = "Analysis results queue"
   })
 }
-
-# =============================================================================
-# SQS Queue Policies - Enforce TLS (FedRAMP SC-8)
-# =============================================================================
-
 resource "aws_sqs_queue_policy" "file_processing" {
   queue_url = aws_sqs_queue.file_processing.id
 
@@ -227,11 +193,6 @@ resource "aws_sqs_queue_policy" "analysis_results" {
     ]
   })
 }
-
-# =============================================================================
-# SNS Topic Policies - Enforce TLS (FedRAMP SC-8)
-# =============================================================================
-
 resource "aws_sns_topic_policy" "file_events" {
   arn = aws_sns_topic.file_events.arn
 
@@ -293,11 +254,6 @@ resource "aws_sns_topic_policy" "processing_events" {
     ]
   })
 }
-
-# =============================================================================
-# SNS Subscriptions
-# =============================================================================
-
 resource "aws_sns_topic_subscription" "file_events_to_processing" {
   topic_arn = aws_sns_topic.file_events.arn
   protocol  = "sqs"
@@ -305,11 +261,6 @@ resource "aws_sns_topic_subscription" "file_events_to_processing" {
 
   raw_message_delivery = true
 }
-
-# =============================================================================
-# CloudWatch Alarms for DLQ
-# =============================================================================
-
 resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
   alarm_name          = "${var.name_prefix}-dlq-messages"
   comparison_operator = "GreaterThanThreshold"
@@ -329,11 +280,6 @@ resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
 
   tags = var.tags
 }
-
-# =============================================================================
-# Outputs
-# =============================================================================
-
 output "topic_arns" {
   description = "Map of topic purposes to ARNs"
   value = {

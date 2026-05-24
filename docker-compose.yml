@@ -1,14 +1,3 @@
-# =============================================================================
-# FSAMP Infrastructure - LocalStack Configuration
-# =============================================================================
-# LocalStack Pro for local AWS development.
-# Resources are created by Terraform, not shell scripts!
-#
-# Usage:
-#   docker-compose up -d
-#   cd terraform/environments/local && terraform apply
-# =============================================================================
-
 services:
   localstack:
     image: localstack/localstack-pro:4.14.0
@@ -17,22 +6,17 @@ services:
       - "${LOCALSTACK_PORT:-4566}:4566"
       - "4510-4559:4510-4559"
     environment:
-      # Auth
       - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
       - AWS_DEFAULT_REGION=${AWS_REGION:-us-west-2}
 
-      # Services needed for FSAMP
       - SERVICES=s3,sqs,sns,dynamodb,kms,lambda,iam,sts,cloudwatch,logs,events,secretsmanager,ssm,apigateway,cognito-idp,ecs,ecr,cloudtrail,config,guardduty
       - EAGER_SERVICE_LOADING=1
 
-      # IAM enforcement (realistic testing)
       - ENFORCE_IAM=1
       - IAM_SOFT_MODE=0
-      # Lambda
       - LAMBDA_EXECUTOR=docker
       - DOCKER_HOST=unix:///var/run/docker.sock
       
-      # Persistence
       - PERSISTENCE=${PERSISTENCE:-1}
       - DEBUG=${DEBUG:-0}
     volumes:

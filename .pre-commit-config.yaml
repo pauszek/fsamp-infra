@@ -1,9 +1,5 @@
-# See https://pre-commit.com for more information
-# Install: pre-commit install
-# Run: pre-commit run --all-files
 
 repos:
-  # General hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
     hooks:
@@ -19,7 +15,6 @@ repos:
       - id: no-commit-to-branch
         args: ['--branch', 'main', '--branch', 'master']
 
-  # Terraform
   - repo: https://github.com/antonbabenko/pre-commit-terraform
     rev: v1.86.0
     hooks:
@@ -37,7 +32,6 @@ repos:
         args:
           - --args=--config-file __GIT_WORKING_DIR__/.checkov.yml
 
-  # Security scanning
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.4.0
     hooks:
@@ -50,28 +44,24 @@ repos:
             \.terraform/.*
           )$
 
-  # Markdown
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.39.0
     hooks:
       - id: markdownlint
         args: ['--fix', '--config', '.markdownlint.json']
 
-  # Shell scripts
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.9.0.6
     hooks:
       - id: shellcheck
         args: ['--severity=warning']
 
-  # YAML
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.33.0
     hooks:
       - id: yamllint
         args: ['-c', '.yamllint.yml']
 
-# CI configuration
 ci:
   autofix_commit_msg: |
     [pre-commit.ci] auto fixes from pre-commit hooks

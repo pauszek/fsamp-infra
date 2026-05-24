@@ -1,237 +1,262 @@
-# =============================================================================
-# CD Pipeline - Deploy to AWS Environment
-# =============================================================================
-# Triggered manually via workflow_dispatch. Deploys infrastructure changes
-# and/or service updates to the selected environment.
-#
-# Pipeline: plan → approve → apply → verify
-#
-# FedRAMP Controls:
-#   CM-3:  Change management via GitHub Environments approval
-#   CM-5:  Access restrictions via OIDC + least-privilege IAM
-#   AU-6:  Deployment audit trail via GitHub Actions logs
-#   SA-10: Configuration management via Terraform state
-# =============================================================================
-
 name: Deploy
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/deploy.yml
+      - .github/workflows/deploy-environment.yml
+      - scripts/**
+      - terraform/**
+  repository_dispatch:
+    types:
+      - deploy-dev
   workflow_dispatch:
     inputs:
-      environment:
-        description: 'Target environment'
+      action:
+        description: Deployment action
+        required: true
+        type: choice
+        options:
+          - promote
+          - deploy-dev
+          - rollback
+        default: promote
+      aws_region:
+        description: AWS region
+        required: true
+        type: string
+        default: us-west-2
+      bootstrap_state:
+        description: Create the S3 state bucket and DynamoDB lock table if missing
+        required: true
+        type: boolean
+        default: true
+      gateway_ref:
+        description: fsamp-gateway git ref
+        required: true
+        type: string
+        default: main
+      processor_ref:
+        description: fsamp-processor git ref
+        required: true
+        type: string
+        default: main
+      image_tag:
+        description: Optional image tag. Empty value generates a run-scoped tag.
+        required: false
+        type: string
+        default: ''
+      rollback_environment:
+        description: Environment to roll back
         required: true
         type: choice
         options:
           - dev
           - staging
           - prod
-
-      processor_image_tag:
-        description: 'Processor Lambda image tag (e.g., 0.0.5). Leave empty to skip.'
-        required: false
-        type: string
-        default: ''
-
-      terraform_action:
-        description: 'Terraform action'
+        default: dev
+      rollback_image_tag:
+        description: Image tag to roll back to. Use previous for the last successful tag.
         required: true
-        type: choice
-        options:
-          - plan-only
-          - apply
-        default: plan-only
-
-concurrency:
-  group: deploy-${{ github.event.inputs.environment }}
-  cancel-in-progress: false
+        type: string
+        default: previous
 
 permissions:
-  id-token: write
   contents: read
-
-env:
-  TF_DIR: terraform
-  AWS_REGION: us-west-2
+  id-token: write
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # 1. PLAN - Terraform Plan
-  # ---------------------------------------------------------------------------
-  plan:
-    name: 📋 Terraform Plan (${{ github.event.inputs.environment }})
+  params:
+    name: Load Deployment Settings
     runs-on: ubuntu-latest
     outputs:
-      has_changes: ${{ steps.plan.outputs.has_changes }}
+      auto_deploy_dev: ${{ steps.params.outputs.auto_deploy_dev }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "~> 1.14"
-          terraform_wrapper: false
-
-      - name: Terraform Init
-        working-directory: ${{ env.TF_DIR }}
-        run: terraform init -backend-config=backends/${{ github.event.inputs.environment }}.hcl
-
-      - name: Terraform Plan
-        id: plan
-        working-directory: ${{ env.TF_DIR }}
+      - name: Load params
+        id: params
+        shell: bash
         run: |
-          PLAN_ARGS="-var-file=envs/${{ github.event.inputs.environment }}.tfvars -input=false -detailed-exitcode"
+          auto_deploy_dev="$(python3 - <<'PY'
+          from pathlib import Path
 
-          # Override processor image tag if provided
-          if [[ -n "${{ github.event.inputs.processor_image_tag }}" ]]; then
-            PLAN_ARGS="$PLAN_ARGS -var=processor_image_tag=${{ github.event.inputs.processor_image_tag }}"
-          fi
+          value = "false"
+          section = None
 
-          set +e
-          terraform plan $PLAN_ARGS -out=tfplan
-          EXIT_CODE=$?
-          set -e
+          for raw in Path(".github/params.yml").read_text().splitlines():
+              line = raw.split("#", 1)[0].rstrip()
+              if not line.strip():
+                  continue
+              if not line.startswith((" ", "\t")) and line.endswith(":"):
+                  section = line[:-1].strip()
+                  continue
+              if section == "deploy":
+                  stripped = line.strip()
+                  if stripped.startswith("auto-dev:"):
+                      value = stripped.split(":", 1)[1].strip().strip("'\"").lower()
+                      break
 
-          if [[ $EXIT_CODE -eq 0 ]]; then
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No infrastructure changes detected."
-          elif [[ $EXIT_CODE -eq 2 ]]; then
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-            echo "::warning::Infrastructure changes detected. Review the plan."
+          print("true" if value == "true" else "false")
+          PY
+          )"
+          echo "auto_deploy_dev=${auto_deploy_dev}" >> "$GITHUB_OUTPUT"
+
+  context:
+    name: Resolve Context
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.context.outputs.action }}
+      aws_region: ${{ steps.context.outputs.aws_region }}
+      bootstrap_state: ${{ steps.context.outputs.bootstrap_state }}
+      gateway_ref: ${{ steps.context.outputs.gateway_ref }}
+      image_tag: ${{ steps.context.outputs.image_tag }}
+      processor_ref: ${{ steps.context.outputs.processor_ref }}
+      rollback_environment: ${{ steps.context.outputs.rollback_environment }}
+      rollback_image_tag: ${{ steps.context.outputs.rollback_image_tag }}
+    steps:
+      - name: Resolve context
+        id: context
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ACTION: ${{ inputs.action || '' }}
+          INPUT_AWS_REGION: ${{ inputs.aws_region || '' }}
+          INPUT_BOOTSTRAP_STATE: ${{ toJSON(inputs.bootstrap_state) }}
+          INPUT_GATEWAY_REF: ${{ inputs.gateway_ref || '' }}
+          INPUT_PROCESSOR_REF: ${{ inputs.processor_ref || '' }}
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag || '' }}
+          INPUT_ROLLBACK_ENVIRONMENT: ${{ inputs.rollback_environment || '' }}
+          INPUT_ROLLBACK_IMAGE_TAG: ${{ inputs.rollback_image_tag || '' }}
+          PAYLOAD_GATEWAY_REF: ${{ github.event.client_payload.gateway_ref || '' }}
+          PAYLOAD_PROCESSOR_REF: ${{ github.event.client_payload.processor_ref || '' }}
+          PAYLOAD_IMAGE_TAG: ${{ github.event.client_payload.image_tag || '' }}
+          PAYLOAD_AWS_REGION: ${{ github.event.client_payload.aws_region || '' }}
+        run: |
+          set -euo pipefail
+
+          short_sha="${GITHUB_SHA::7}"
+          action="${INPUT_ACTION:-deploy-dev}"
+          aws_region="${INPUT_AWS_REGION:-${PAYLOAD_AWS_REGION:-us-west-2}}"
+          case "${INPUT_BOOTSTRAP_STATE}" in
+            true|false)
+              bootstrap_state="${INPUT_BOOTSTRAP_STATE}"
+              ;;
+            *)
+              bootstrap_state="true"
+              ;;
+          esac
+          gateway_ref="${INPUT_GATEWAY_REF:-${PAYLOAD_GATEWAY_REF:-main}}"
+          processor_ref="${INPUT_PROCESSOR_REF:-${PAYLOAD_PROCESSOR_REF:-main}}"
+          rollback_environment="${INPUT_ROLLBACK_ENVIRONMENT:-dev}"
+          rollback_image_tag="${INPUT_ROLLBACK_IMAGE_TAG:-previous}"
+
+          if [[ "${EVENT_NAME}" == "push" || "${EVENT_NAME}" == "repository_dispatch" ]]; then
+            action="deploy-dev"
+            image_tag="${PAYLOAD_IMAGE_TAG:-dev-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}-${short_sha}}"
+          elif [[ "${action}" == "rollback" ]]; then
+            image_tag="${rollback_image_tag}"
+          elif [[ -n "${INPUT_IMAGE_TAG}" ]]; then
+            image_tag="${INPUT_IMAGE_TAG}"
+          elif [[ "${action}" == "deploy-dev" ]]; then
+            image_tag="dev-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}-${short_sha}"
           else
-            echo "::error::Terraform plan failed."
-            exit 1
+            image_tag="release-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}-${short_sha}"
           fi
 
-      - name: Upload plan artifact
-        if: steps.plan.outputs.has_changes == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-${{ github.event.inputs.environment }}
-          path: ${{ env.TF_DIR }}/tfplan
-          retention-days: 1
+          {
+            echo "action=${action}"
+            echo "aws_region=${aws_region}"
+            echo "bootstrap_state=${bootstrap_state}"
+            echo "gateway_ref=${gateway_ref}"
+            echo "image_tag=${image_tag}"
+            echo "processor_ref=${processor_ref}"
+            echo "rollback_environment=${rollback_environment}"
+            echo "rollback_image_tag=${rollback_image_tag}"
+          } >> "$GITHUB_OUTPUT"
 
-  # ---------------------------------------------------------------------------
-  # 2. APPROVE - Manual Approval via GitHub Environments
-  # ---------------------------------------------------------------------------
-  approve:
-    name: ✅ Approval Gate
-    needs: plan
-    if: |
-      github.event.inputs.terraform_action == 'apply' &&
-      needs.plan.outputs.has_changes == 'true'
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-    steps:
-      - name: Approved
-        run: echo "Deployment to ${{ github.event.inputs.environment }} approved by ${{ github.actor }}"
+  deploy-dev:
+    name: Deploy Dev
+    needs:
+      - context
+      - params
+    if: >
+      (github.event_name == 'workflow_dispatch' || needs.params.outputs.auto_deploy_dev == 'true') &&
+      (needs.context.outputs.action == 'deploy-dev' || needs.context.outputs.action == 'promote')
+    uses: ./.github/workflows/deploy-environment.yml
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+    with:
+      environment: dev
+      aws_region: ${{ needs.context.outputs.aws_region }}
+      terraform_action: apply
+      bootstrap_state: ${{ needs.context.outputs.bootstrap_state == 'true' }}
+      deploy_images: true
+      gateway_ref: ${{ needs.context.outputs.gateway_ref }}
+      processor_ref: ${{ needs.context.outputs.processor_ref }}
+      image_tag: ${{ needs.context.outputs.image_tag }}
 
-  # ---------------------------------------------------------------------------
-  # 3. APPLY - Terraform Apply
-  # ---------------------------------------------------------------------------
-  apply:
-    name: 🚀 Terraform Apply (${{ github.event.inputs.environment }})
-    needs: [plan, approve]
-    if: |
-      github.event.inputs.terraform_action == 'apply' &&
-      needs.plan.outputs.has_changes == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+  deploy-staging:
+    name: Deploy Staging
+    needs:
+      - context
+      - deploy-dev
+    if: needs.context.outputs.action == 'promote'
+    uses: ./.github/workflows/deploy-environment.yml
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+    with:
+      environment: staging
+      aws_region: ${{ needs.context.outputs.aws_region }}
+      terraform_action: apply
+      bootstrap_state: ${{ needs.context.outputs.bootstrap_state == 'true' }}
+      deploy_images: true
+      gateway_ref: ${{ needs.context.outputs.gateway_ref }}
+      processor_ref: ${{ needs.context.outputs.processor_ref }}
+      image_tag: ${{ needs.context.outputs.image_tag }}
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+  deploy-prod:
+    name: Deploy Prod
+    needs:
+      - context
+      - deploy-staging
+    if: needs.context.outputs.action == 'promote'
+    uses: ./.github/workflows/deploy-environment.yml
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+    with:
+      environment: prod
+      aws_region: ${{ needs.context.outputs.aws_region }}
+      terraform_action: apply
+      bootstrap_state: ${{ needs.context.outputs.bootstrap_state == 'true' }}
+      deploy_images: true
+      gateway_ref: ${{ needs.context.outputs.gateway_ref }}
+      processor_ref: ${{ needs.context.outputs.processor_ref }}
+      image_tag: ${{ needs.context.outputs.image_tag }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "~> 1.14"
-          terraform_wrapper: false
-
-      - name: Terraform Init
-        working-directory: ${{ env.TF_DIR }}
-        run: terraform init -backend-config=backends/${{ github.event.inputs.environment }}.hcl
-
-      - name: Download plan
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-${{ github.event.inputs.environment }}
-          path: ${{ env.TF_DIR }}
-
-      - name: Terraform Apply
-        working-directory: ${{ env.TF_DIR }}
-        run: terraform apply -auto-approve -input=false tfplan
-
-  # ---------------------------------------------------------------------------
-  # 4. VERIFY - Post-deploy Smoke Tests
-  # ---------------------------------------------------------------------------
-  verify:
-    name: 🧪 Smoke Tests
-    needs: [plan, apply]
-    if: |
-      always() &&
-      (needs.apply.result == 'success' || needs.plan.outputs.has_changes == 'false')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Verify ECS service health
-        if: needs.apply.result == 'success'
-        run: |
-          echo "Checking ECS service stability..."
-          SERVICE_NAME="fsamp-${{ github.event.inputs.environment }}-gateway"
-          CLUSTER="fsamp-${{ github.event.inputs.environment }}"
-
-          # Wait for service to stabilize (max 5 min)
-          aws ecs wait services-stable \
-            --cluster "$CLUSTER" \
-            --services "$SERVICE_NAME" \
-            --region "${{ env.AWS_REGION }}" || {
-              echo "::error::ECS service did not stabilize within timeout"
-              exit 1
-            }
-
-          echo "::notice::ECS service $SERVICE_NAME is stable."
-
-      - name: Verify Lambda function
-        if: needs.apply.result == 'success'
-        run: |
-          FUNCTION_NAME="fsamp-${{ github.event.inputs.environment }}-processor"
-          STATE=$(aws lambda get-function \
-            --function-name "$FUNCTION_NAME" \
-            --query 'Configuration.State' \
-            --output text \
-            --region "${{ env.AWS_REGION }}")
-
-          if [[ "$STATE" != "Active" ]]; then
-            echo "::error::Lambda $FUNCTION_NAME is in state: $STATE"
-            exit 1
-          fi
-          echo "::notice::Lambda $FUNCTION_NAME is Active."
-
-      - name: Deployment summary
-        if: always()
-        run: |
-          echo "## Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Environment | \`${{ github.event.inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Terraform | \`${{ github.event.inputs.terraform_action }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Processor Tag | \`${{ github.event.inputs.processor_image_tag || 'unchanged' }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Triggered By | ${{ github.actor }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Run | [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> "$GITHUB_STEP_SUMMARY"
+  rollback:
+    name: Rollback
+    needs: context
+    if: needs.context.outputs.action == 'rollback'
+    uses: ./.github/workflows/deploy-environment.yml
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+    with:
+      environment: ${{ needs.context.outputs.rollback_environment }}
+      aws_region: ${{ needs.context.outputs.aws_region }}
+      terraform_action: apply
+      bootstrap_state: false
+      deploy_images: false
+      gateway_ref: ${{ needs.context.outputs.gateway_ref }}
+      processor_ref: ${{ needs.context.outputs.processor_ref }}
+      image_tag: ${{ needs.context.outputs.image_tag }}

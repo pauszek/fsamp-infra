@@ -1,27 +1,4 @@
-# =============================================================================
-# FSAMP E2E Tests - Full Stack Composition
-# =============================================================================
-# Enterprise-grade E2E testing environment with:
-# - LocalStack Pro for AWS services emulation
-# - Cognito authentication (no security bypass)
-# - Service discovery via shared config volume
-# - Health checks and proper dependency management
-#
-# Usage:
-#   export LOCALSTACK_AUTH_TOKEN="your-token"
-#   docker-compose up -d                    # Start all services
-#   docker-compose --profile test up        # Run E2E tests
-#   docker-compose down -v                  # Cleanup
-#
-# Architecture:
-#   LocalStack (init-aws.sh) → writes config → Shared Volume
-#   Gateway/Processor/E2E    → reads config  → Shared Volume
-# =============================================================================
-
 services:
-  # ---------------------------------------------------------------------------
-  # Infrastructure Layer
-  # ---------------------------------------------------------------------------
   localstack:
     image: localstack/localstack-pro:4.14.0
     container_name: fsamp-e2e-localstack
@@ -36,7 +13,6 @@ services:
       DEBUG: ${LOCALSTACK_DEBUG:-0}
       ENFORCE_IAM: 1
       DOCKER_HOST: unix:///var/run/docker.sock
-      # Force issuer to use localstack hostname (not localhost.localstack.cloud)
       LOCALSTACK_HOST: localstack:4566
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -45,16 +21,11 @@ services:
     networks:
       - fsamp-e2e-network
     healthcheck:
-      # Healthcheck waits for init-aws.sh to complete (creates config file)
       test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health && test -f /tmp/localstack-config/fsamp-config.env"]
       interval: 10s
       timeout: 5s
       retries: 30
       start_period: 45s
-
-  # ---------------------------------------------------------------------------
-  # Application Layer
-  # ---------------------------------------------------------------------------
   gateway:
     image: ${GATEWAY_IMAGE:-ghcr.io/pauszek/fsamp-gateway:latest}
     container_name: fsamp-e2e-gateway
@@ -62,20 +33,15 @@ services:
       - "8080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: local
-      # AWS Configuration
       AWS_ENDPOINT_URL: http://localstack:4566
       AWS_REGION: us-west-2
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
-      # Service endpoints
       AWS_S3_ENDPOINT: http://localstack:4566
       AWS_SNS_ENDPOINT: http://localstack:4566
-      # S3 bucket - KMS_KEY_ID loaded dynamically from config
       S3_BUCKET_NAME: fsamp-local-files
       SNS_TOPIC_ARN: arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
-      # Cognito - will be discovered by entrypoint
       COGNITO_REGION: us-west-2
-      # Config file path (for env vars including KMS_KEY_ID)
       CONFIG_FILE: /config/fsamp-config.env
       CONFIG_WAIT_TIMEOUT: 120
     entrypoint: ["/entrypoint.sh"]
@@ -103,15 +69,12 @@ services:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       LOG_LEVEL: DEBUG
-      # SQS - using internal LocalStack URL
       SQS_QUEUE_URL: http://localstack:4566/000000000000/fsamp-local-processing-queue
       SNS_TOPIC_ARN: arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
       S3_BUCKET_NAME: fsamp-local-files
       DYNAMODB_TABLE_NAME: fsamp-local-file-metadata
       OUTBOX_TABLE_NAME: fsamp-local-outbox
-      # KMS_KEY_ID loaded dynamically from config
       USE_FIPS_ENDPOINT: "false"
-      # Disable FIPS OpenSSL for local mode (HTTP to LocalStack, no TLS needed)
       OPENSSL_CONF: ""
     entrypoint: ["/bin/sh", "-c", "test -f /config/fsamp-config.env && . /config/fsamp-config.env; exec python -m processor.main"]
     volumes:
@@ -127,10 +90,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
-
-  # ---------------------------------------------------------------------------
-  # Test Runner
-  # ---------------------------------------------------------------------------
   e2e-tests:
     build:
       context: .
@@ -142,18 +101,14 @@ services:
       AWS_REGION: us-west-2
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
-      # Resource names
       S3_BUCKET_NAME: fsamp-local-files
       DYNAMODB_TABLE_NAME: fsamp-local-file-metadata
       OUTBOX_TABLE_NAME: fsamp-local-outbox
       SQS_QUEUE_NAME: fsamp-local-processing-queue
-      # Test users (created by init-aws.sh)
       TEST_USER: e2e-test-user
       TEST_PASSWORD: E2eTestPass123!
       ADMIN_USER: e2e-admin-user
       ADMIN_PASSWORD: E2eAdminPass123!
-      # Cognito - will be discovered from LocalStack
-      # (not hardcoded - E2E tests use boto3 to discover)
     volumes:
       - fsamp-config:/config:ro
     depends_on:
@@ -165,18 +120,10 @@ services:
       - fsamp-e2e-network
     profiles:
       - test
-
-# =============================================================================
-# Shared Volumes
-# =============================================================================
 volumes:
   fsamp-config:
     name: fsamp-e2e-config
     driver: local
-
-# =============================================================================
-# Networks
-# =============================================================================
 networks:
   fsamp-e2e-network:
     driver: bridge

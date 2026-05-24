@@ -1,11 +1,5 @@
-# =============================================================================
-# ECR Module - Container Registry
-# =============================================================================
-# Private container registry for microservices with FIPS 140-3 encryption
-# =============================================================================
-
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   required_providers {
     aws = {
@@ -14,11 +8,6 @@ terraform {
     }
   }
 }
-
-# =============================================================================
-# Variables
-# =============================================================================
-
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -50,27 +39,17 @@ variable "scan_on_push" {
   type        = bool
   default     = true
 }
-
-# =============================================================================
-# Locals
-# =============================================================================
-
 locals {
   repositories = {
     gateway   = "${var.name_prefix}-gateway"
     processor = "${var.name_prefix}-processor"
   }
 }
-
-# =============================================================================
-# ECR Repositories
-# =============================================================================
-
 resource "aws_ecr_repository" "repos" {
   for_each = local.repositories
 
   name                 = each.value
-  image_tag_mutability = "IMMUTABLE" # Enterprise best practice - prevents tag overwriting
+  image_tag_mutability = "IMMUTABLE"
 
   encryption_configuration {
     encryption_type = "KMS"
@@ -85,14 +64,9 @@ resource "aws_ecr_repository" "repos" {
     Name        = each.value
     Service     = each.key
     Environment = var.environment
-    Compliance  = "FIPS-140-3"
+    Compliance  = "FIPS-140-3-Oriented"
   })
 }
-
-# =============================================================================
-# Lifecycle Policies (retain last N images)
-# =============================================================================
-
 resource "aws_ecr_lifecycle_policy" "repos" {
   for_each = aws_ecr_repository.repos
 
@@ -142,12 +116,8 @@ resource "aws_ecr_lifecycle_policy" "repos" {
     ]
   })
 }
-
-# =============================================================================
-# Repository Policies (cross-account access if needed)
-# =============================================================================
-
 data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
 
 resource "aws_ecr_repository_policy" "repos" {
   for_each = aws_ecr_repository.repos
@@ -161,7 +131,7 @@ resource "aws_ecr_repository_policy" "repos" {
         Sid    = "AllowPull"
         Effect = "Allow"
         Principal = {
-          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+          AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
         }
         Action = [
           "ecr:GetDownloadUrlForLayer",
@@ -173,7 +143,7 @@ resource "aws_ecr_repository_policy" "repos" {
         Sid    = "AllowPush"
         Effect = "Allow"
         Principal = {
-          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+          AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
         }
         Action = [
           "ecr:PutImage",
@@ -185,11 +155,6 @@ resource "aws_ecr_repository_policy" "repos" {
     ]
   })
 }
-
-# =============================================================================
-# Outputs
-# =============================================================================
-
 output "repository_urls" {
   description = "ECR repository URLs"
   value = {

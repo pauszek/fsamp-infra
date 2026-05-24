@@ -55,30 +55,21 @@ Enterprise-grade end-to-end tests for the complete FSAMP system with **full secu
 
 3. **Authentication Flow**:
    ```
-   E2E Test → Cognito admin_initiate_auth → JWT Token → Gateway (validates JWT)
+   E2E Test -> Cognito admin_initiate_auth -> JWT Token -> Gateway (validates JWT)
    ```
 
 ## Quick Start
 
 ```bash
-# 1. Set LocalStack Pro token
 export LOCALSTACK_AUTH_TOKEN="your-token"
-
-# 2. Start infrastructure
 docker-compose up -d localstack
 # Wait for init-aws.sh to complete
-
-# 3. Start services
 docker-compose up -d gateway processor
-
-# 4. Run tests
 docker-compose --profile test up e2e-tests
 
 # Or run tests locally
 pip install boto3 requests tenacity
 python run-e2e-tests.py --verbose
-
-# 5. Cleanup
 docker-compose down -v
 ```
 
@@ -92,7 +83,7 @@ docker-compose down -v
 | `cognito_authentication` | JWT token acquisition | Yes |
 | `unauthenticated_rejected` | 401 for missing auth | N/A |
 | `authenticated_file_upload` | Upload with JWT | Yes |
-| `full_processing_flow` | Complete upload → store → process | Yes |
+| `full_processing_flow` | Complete upload -> store -> process | Yes |
 
 ## Configuration
 

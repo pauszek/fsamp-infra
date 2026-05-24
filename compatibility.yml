@@ -1,40 +1,17 @@
-# =============================================================================
-# FSAMP Service Compatibility Matrix
-# =============================================================================
-# This file defines which versions of services are compatible with each other.
-# Used by E2E tests to determine which counterpart version to test against.
-#
-# Versioning Strategy:
-#   - Each service declares its minimum compatible version of other services
-#   - E2E tests use this to pick the right counterpart image
-#   - Updated when breaking changes are introduced
-#
-# Update Process:
-#   1. When introducing breaking changes, update this file
-#   2. Create PR with compatibility update
-#   3. Both services must update their minimum versions
-# =============================================================================
-
-# Current stable versions (auto-updated by release pipeline)
 current:
   gateway: "0.0.4"
   processor: "0.0.6"
   event-schema: "0.0.8"
 
-# Compatibility constraints
-# Each service declares minimum compatible versions of its dependencies
 compatibility:
   gateway:
-    # Gateway requires Processor >= this version
     processor: "0.0.4"
     event-schema: "0.0.7"
   
   processor:
-    # Processor requires Gateway >= this version (for schema compatibility)
     gateway: "0.0.3"
     event-schema: "0.0.7"
 
-# Breaking change history (for auditing)
 breaking-changes:
   - date: "2025-12-15"
     service: event-schema
@@ -51,12 +28,9 @@ breaking-changes:
     affected:
       - gateway: "0.0.2"
 
-# E2E Test Strategy
 e2e:
-  # Default: test new build against current stable counterpart
   strategy: "new-vs-stable"
   
-  # For nightly: test all combinations in matrix
   nightly-matrix:
     - gateway: "current"
       processor: "current"

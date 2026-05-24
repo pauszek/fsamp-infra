@@ -1,11 +1,5 @@
-# =============================================================================
-# Storage Module - S3, DynamoDB
-# =============================================================================
-# Encrypted storage with FIPS 140-3 compliance
-# =============================================================================
-
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   required_providers {
     aws = {
@@ -14,11 +8,6 @@ terraform {
     }
   }
 }
-
-# =============================================================================
-# Variables
-# =============================================================================
-
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -39,10 +28,7 @@ variable "tags" {
   type        = map(string)
 }
 
-# =============================================================================
-# S3 Buckets
-# =============================================================================
-
+data "aws_caller_identity" "current" {}
 locals {
   buckets = {
     files      = "${var.name_prefix}-files"
@@ -169,14 +155,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "processed" {
     }
   }
 }
-
-# =============================================================================
-# S3 Bucket Policies - Enforce TLS (FedRAMP SC-8, SC-23)
-# =============================================================================
-# Deny any requests not using HTTPS (aws:SecureTransport = false).
-# This ensures all S3 access uses TLS encrypted transport.
-# =============================================================================
-
 resource "aws_s3_bucket_policy" "enforce_tls" {
   for_each = aws_s3_bucket.buckets
 
@@ -196,7 +174,8 @@ resource "aws_s3_bucket_policy" "enforce_tls" {
         ]
         Condition = {
           Bool = {
-            "aws:SecureTransport" = "false"
+            "aws:SecureTransport"       = "false"
+            "aws:PrincipalIsAWSService" = "false"
           }
         }
       },
@@ -210,6 +189,9 @@ resource "aws_s3_bucket_policy" "enforce_tls" {
           "${each.value.arn}/*"
         ]
         Condition = {
+          Bool = {
+            "aws:PrincipalIsAWSService" = "false"
+          }
           NumericLessThan = {
             "s3:TlsVersion" = 1.2
           }
@@ -220,13 +202,6 @@ resource "aws_s3_bucket_policy" "enforce_tls" {
 
   depends_on = [aws_s3_bucket_public_access_block.buckets]
 }
-
-# =============================================================================
-# S3 Server Access Logging (FedRAMP AC-6(9), AU-3)
-# =============================================================================
-# Log all access to data buckets for audit trail.
-# =============================================================================
-
 resource "aws_s3_bucket" "access_logs" {
   bucket        = "${var.name_prefix}-access-logs"
   force_destroy = var.environment != "prod"
@@ -237,15 +212,21 @@ resource "aws_s3_bucket" "access_logs" {
   })
 }
 
+resource "aws_s3_bucket_versioning" "access_logs" {
+  bucket = aws_s3_bucket.access_logs.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "access_logs" {
   bucket = aws_s3_bucket.access_logs.id
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = var.kms_key_arn
+      sse_algorithm = "AES256"
     }
-    bucket_key_enabled = true
   }
 }
 
@@ -281,18 +262,82 @@ resource "aws_s3_bucket_lifecycle_configuration" "access_logs" {
   }
 }
 
+resource "aws_s3_bucket_policy" "access_logs" {
+  bucket = aws_s3_bucket.access_logs.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowS3ServerAccessLogDelivery"
+        Effect = "Allow"
+        Principal = {
+          Service = "logging.s3.amazonaws.com"
+        }
+        Action = "s3:PutObject"
+        Resource = [
+          for bucket_key in keys(local.buckets) : "${aws_s3_bucket.access_logs.arn}/${bucket_key}/*"
+        ]
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+          ArnLike = {
+            "aws:SourceArn" = [
+              for bucket in aws_s3_bucket.buckets : bucket.arn
+            ]
+          }
+        }
+      },
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.access_logs.arn,
+          "${aws_s3_bucket.access_logs.arn}/*"
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport"       = "false"
+            "aws:PrincipalIsAWSService" = "false"
+          }
+        }
+      },
+      {
+        Sid       = "DenyOutdatedTLS"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.access_logs.arn,
+          "${aws_s3_bucket.access_logs.arn}/*"
+        ]
+        Condition = {
+          Bool = {
+            "aws:PrincipalIsAWSService" = "false"
+          }
+          NumericLessThan = {
+            "s3:TlsVersion" = 1.2
+          }
+        }
+      }
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.access_logs]
+}
+
 resource "aws_s3_bucket_logging" "buckets" {
   for_each = aws_s3_bucket.buckets
 
   bucket        = each.value.id
   target_bucket = aws_s3_bucket.access_logs.id
   target_prefix = "${each.key}/"
+
+  depends_on = [aws_s3_bucket_policy.access_logs]
 }
-
-# =============================================================================
-# DynamoDB Tables
-# =============================================================================
-
 resource "aws_dynamodb_table" "file_metadata" {
   name         = "${var.name_prefix}-file-metadata"
   billing_mode = "PAY_PER_REQUEST"
@@ -320,9 +365,15 @@ resource "aws_dynamodb_table" "file_metadata" {
   }
 
   global_secondary_index {
-    name            = "GSI1"
-    hash_key        = "GSI1PK"
-    range_key       = "GSI1SK"
+    name = "GSI1"
+    key_schema {
+      attribute_name = "GSI1PK"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "GSI1SK"
+      key_type       = "RANGE"
+    }
     projection_type = "ALL"
   }
 
@@ -367,9 +418,15 @@ resource "aws_dynamodb_table" "events" {
   }
 
   global_secondary_index {
-    name            = "correlation-index"
-    hash_key        = "correlationId"
-    range_key       = "timestamp"
+    name = "correlation-index"
+    key_schema {
+      attribute_name = "correlationId"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "timestamp"
+      key_type       = "RANGE"
+    }
     projection_type = "ALL"
   }
 
@@ -386,21 +443,12 @@ resource "aws_dynamodb_table" "events" {
     Name = "${var.name_prefix}-events"
   })
 }
-
-# =============================================================================
-# Outbox Table (Transactional Outbox Pattern)
-# =============================================================================
-# Enables reliable event publishing with at-least-once delivery guarantee.
-# DynamoDB Streams triggers the Outbox Publisher Lambda to publish events.
-# =============================================================================
-
 resource "aws_dynamodb_table" "outbox" {
   name         = "${var.name_prefix}-outbox"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "PK"
   range_key    = "SK"
 
-  # Enable DynamoDB Streams for CDC (Change Data Capture)
   stream_enabled   = true
   stream_view_type = "NEW_IMAGE"
 
@@ -414,7 +462,6 @@ resource "aws_dynamodb_table" "outbox" {
     type = "S"
   }
 
-  # GSI for querying events by status (PENDING, PUBLISHED, FAILED)
   attribute {
     name = "GSI1PK"
     type = "S"
@@ -426,24 +473,27 @@ resource "aws_dynamodb_table" "outbox" {
   }
 
   global_secondary_index {
-    name            = "GSI1"
-    hash_key        = "GSI1PK"
-    range_key       = "GSI1SK"
+    name = "GSI1"
+    key_schema {
+      attribute_name = "GSI1PK"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "GSI1SK"
+      key_type       = "RANGE"
+    }
     projection_type = "ALL"
   }
 
-  # Server-side encryption with KMS
   server_side_encryption {
     enabled     = true
     kms_key_arn = var.kms_key_arn
   }
 
-  # Point-in-time recovery for audit trail
   point_in_time_recovery {
     enabled = true
   }
 
-  # TTL for automatic cleanup of old published events
   ttl {
     attribute_name = "ttl"
     enabled        = true
@@ -454,15 +504,6 @@ resource "aws_dynamodb_table" "outbox" {
     Purpose = "Transactional Outbox Pattern"
   })
 }
-
-# =============================================================================
-# Idempotency Keys Table
-# =============================================================================
-# Implements the Idempotency Key pattern for safe API retries.
-# Stores idempotency keys with responses for deduplication.
-# TTL automatically cleans up keys after 24 hours.
-# =============================================================================
-
 resource "aws_dynamodb_table" "idempotency_keys" {
   name         = "${var.name_prefix}-idempotency-keys"
   billing_mode = "PAY_PER_REQUEST"
@@ -479,13 +520,11 @@ resource "aws_dynamodb_table" "idempotency_keys" {
     type = "S"
   }
 
-  # Server-side encryption with KMS
   server_side_encryption {
     enabled     = true
     kms_key_arn = var.kms_key_arn
   }
 
-  # TTL for automatic cleanup (keys expire after 24 hours)
   ttl {
     attribute_name = "ttl"
     enabled        = true
@@ -500,11 +539,6 @@ resource "aws_dynamodb_table" "idempotency_keys" {
     Purpose = "Idempotency Key Pattern"
   })
 }
-
-# =============================================================================
-# Outputs
-# =============================================================================
-
 output "bucket_names" {
   description = "Map of bucket purposes to names"
   value = {

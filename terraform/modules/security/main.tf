@@ -1,11 +1,5 @@
-# =============================================================================
-# Security Module - KMS, IAM Policies
-# =============================================================================
-# FIPS 140-3 compliant encryption and IAM configuration
-# =============================================================================
-
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   required_providers {
     aws = {
@@ -14,11 +8,6 @@ terraform {
     }
   }
 }
-
-# =============================================================================
-# Variables
-# =============================================================================
-
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -45,18 +34,12 @@ variable "enable_key_rotation" {
   type        = bool
   default     = true
 }
-
-# =============================================================================
-# KMS Key for FIPS 140-3 Encryption
-# =============================================================================
-
 resource "aws_kms_key" "master" {
-  description             = "FSAMP Master Key - FIPS 140-3 compliant encryption"
+  description             = "FSAMP Master Key - FIPS 140-3-oriented encryption"
   deletion_window_in_days = var.key_deletion_window
   enable_key_rotation     = var.enable_key_rotation
   is_enabled              = true
 
-  # FIPS 140-3: Using AWS managed key material with AES-256-GCM
   key_usage                = "ENCRYPT_DECRYPT"
   customer_master_key_spec = "SYMMETRIC_DEFAULT"
 
@@ -68,7 +51,7 @@ resource "aws_kms_key" "master" {
         Sid    = "Enable IAM User Permissions"
         Effect = "Allow"
         Principal = {
-          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
+          AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
         }
         Action   = "kms:*"
         Resource = "*"
@@ -82,6 +65,8 @@ resource "aws_kms_key" "master" {
             "sqs.amazonaws.com",
             "sns.amazonaws.com",
             "dynamodb.amazonaws.com",
+            "ecr.amazonaws.com",
+            "config.amazonaws.com",
             "lambda.amazonaws.com",
             "logs.amazonaws.com"
           ]
@@ -97,7 +82,6 @@ resource "aws_kms_key" "master" {
         Condition = {
           StringEquals = {
             "kms:CallerAccount" = data.aws_caller_identity.current.account_id
-            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
           }
           StringLike = {
             "kms:ViaService" = [
@@ -105,9 +89,31 @@ resource "aws_kms_key" "master" {
               "sqs.${data.aws_region.current.region}.amazonaws.com",
               "sns.${data.aws_region.current.region}.amazonaws.com",
               "dynamodb.${data.aws_region.current.region}.amazonaws.com",
+              "ecr.${data.aws_region.current.region}.amazonaws.com",
+              "config.${data.aws_region.current.region}.amazonaws.com",
               "lambda.${data.aws_region.current.region}.amazonaws.com",
               "logs.${data.aws_region.current.region}.amazonaws.com"
             ]
+          }
+        }
+      },
+      {
+        Sid    = "AllowCloudTrailLogEncryption"
+        Effect = "Allow"
+        Principal = {
+          Service = "cloudtrail.amazonaws.com"
+        }
+        Action = [
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "aws:SourceArn" = "arn:${data.aws_partition.current.partition}:cloudtrail:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:trail/${var.name_prefix}-trail"
+          }
+          StringLike = {
+            "kms:EncryptionContext:aws:cloudtrail:arn" = "arn:${data.aws_partition.current.partition}:cloudtrail:*:${data.aws_caller_identity.current.account_id}:trail/*"
           }
         }
       }
@@ -117,7 +123,7 @@ resource "aws_kms_key" "master" {
   tags = merge(var.tags, {
     Name        = "${var.name_prefix}-master-key"
     Environment = var.environment
-    Compliance  = "FIPS-140-3"
+    Compliance  = "FIPS-140-3-Oriented"
     Purpose     = "Data encryption at rest"
   })
 }
@@ -126,18 +132,9 @@ resource "aws_kms_alias" "master" {
   name          = "alias/${var.name_prefix}-master-key"
   target_key_id = aws_kms_key.master.key_id
 }
-
-# =============================================================================
-# Data Sources
-# =============================================================================
-
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
-
-# =============================================================================
-# IAM Role for ECS Tasks
-# =============================================================================
-
+data "aws_partition" "current" {}
 resource "aws_iam_role" "ecs_task_role" {
   name = "${var.name_prefix}-ecs-task-role"
 
@@ -184,8 +181,8 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "s3:ListBucket"
         ]
         Resource = [
-          "arn:aws:s3:::${var.name_prefix}-*",
-          "arn:aws:s3:::${var.name_prefix}-*/*"
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-*",
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-*/*"
         ]
       },
       {
@@ -197,7 +194,7 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "sqs:DeleteMessage",
           "sqs:GetQueueAttributes"
         ]
-        Resource = "arn:aws:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+        Resource = "arn:${data.aws_partition.current.partition}:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
       },
       {
         Sid    = "SNSAccess"
@@ -205,7 +202,7 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
         Action = [
           "sns:Publish"
         ]
-        Resource = "arn:aws:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+        Resource = "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
       },
       {
         Sid    = "DynamoDBAccess"
@@ -219,8 +216,8 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "dynamodb:TransactWriteItems"
         ]
         Resource = [
-          "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*",
-          "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/index/*"
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/index/*"
         ]
       },
       {
@@ -230,16 +227,11 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/${var.name_prefix}*:*"
+        Resource = "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/${var.name_prefix}*:*"
       }
     ]
   })
 }
-
-# =============================================================================
-# IAM Role for Lambda
-# =============================================================================
-
 resource "aws_iam_role" "lambda_role" {
   name = "${var.name_prefix}-lambda-role"
 
@@ -261,17 +253,17 @@ resource "aws_iam_role" "lambda_role" {
 
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
   role       = aws_iam_role.lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_vpc" {
   role       = aws_iam_role.lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_xray" {
   role       = aws_iam_role.lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
 }
 
 resource "aws_iam_role_policy" "lambda_policy" {
@@ -299,7 +291,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "s3:PutObject"
         ]
         Resource = [
-          "arn:aws:s3:::${var.name_prefix}-*/*"
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-*/*"
         ]
       },
       {
@@ -311,7 +303,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "sqs:GetQueueAttributes",
           "sqs:ChangeMessageVisibility"
         ]
-        Resource = "arn:aws:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+        Resource = "arn:${data.aws_partition.current.partition}:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
       },
       {
         Sid    = "SNSPublish"
@@ -319,7 +311,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Action = [
           "sns:Publish"
         ]
-        Resource = "arn:aws:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+        Resource = "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
       },
       {
         Sid    = "DynamoDBAccess"
@@ -337,19 +329,14 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "dynamodb:ListStreams"
         ]
         Resource = [
-          "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*",
-          "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/index/*",
-          "arn:aws:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/stream/*"
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/index/*",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/stream/*"
         ]
       }
     ]
   })
 }
-
-# =============================================================================
-# IAM Role for ECS Task Execution (pulling images, logs)
-# =============================================================================
-
 resource "aws_iam_role" "ecs_execution_role" {
   name = "${var.name_prefix}-ecs-execution-role"
 
@@ -371,7 +358,7 @@ resource "aws_iam_role" "ecs_execution_role" {
 
 resource "aws_iam_role_policy_attachment" "ecs_execution_policy" {
   role       = aws_iam_role.ecs_execution_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
 resource "aws_iam_role_policy" "ecs_execution_kms" {
@@ -395,7 +382,7 @@ resource "aws_iam_role_policy" "ecs_execution_kms" {
         Action = [
           "secretsmanager:GetSecretValue"
         ]
-        Resource = "arn:aws:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}-*"
+        Resource = "arn:${data.aws_partition.current.partition}:secretsmanager:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:secret:${var.name_prefix}-*"
       },
       {
         Sid    = "SSMParameters"
@@ -404,16 +391,11 @@ resource "aws_iam_role_policy" "ecs_execution_kms" {
           "ssm:GetParameters",
           "ssm:GetParameter"
         ]
-        Resource = "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter/${var.name_prefix}/*"
+        Resource = "arn:${data.aws_partition.current.partition}:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter/${var.name_prefix}/*"
       }
     ]
   })
 }
-
-# =============================================================================
-# Outputs
-# =============================================================================
-
 output "kms_key_arn" {
   description = "ARN of the KMS master key"
   value       = aws_kms_key.master.arn

@@ -6,7 +6,7 @@
 |-------|-------|
 | **System Name** | FSAMP (FedRAMP-aligned Secure AWS Microservices Platform) |
 | **Version** | 1.0 |
-| **Date** | February 2026 |
+| **Date** | May 2026 |
 | **Author** | Paweł Pauszek |
 | **Classification** | Unclassified |
 | **FIPS 199 Category** | Moderate |
@@ -19,7 +19,7 @@
 
 FSAMP is a secure, event-driven microservices platform deployed on Amazon Web
 Services (AWS). It provides file upload, validation, encryption, and asynchronous
-processing capabilities with full FIPS 140-3 cryptographic compliance and FedRAMP
+processing capabilities with FIPS 140-3-oriented cryptographic controls and FedRAMP
 Moderate baseline alignment.
 
 The platform is designed as a reference architecture for master's thesis research:
@@ -35,10 +35,10 @@ for a reference implementation. It does not imply FedRAMP authorization or an AT
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| **fsamp-gateway** | Java 21 (Corretto), Spring Boot 3.4.11 | REST API, file upload, validation, encryption, event publishing |
+| **fsamp-gateway** | Java 21 (Corretto), Spring Boot 3.5 | REST API, file upload, validation, encryption, event publishing |
 | **fsamp-processor** | Python 3.14, AWS Lambda / ECS Fargate | Event-driven file processing, outbox pattern, analysis |
-| **fsamp-infra** | Terraform ≥ 1.14 (AWS Provider ≥6.44) | 10 infrastructure modules, compliance automation |
-| **fsamp-code-ci** | GitHub Actions | 5 reusable workflows, 7 composite actions, 13-stage pipeline |
+| **fsamp-infra** | Terraform ≥ 1.7 (AWS Provider ≥6.44) | Infrastructure modules, deployment, alignment evidence |
+| **fsamp-code-ci** | GitHub Actions | Reusable workflows and composite actions |
 | **fsamp-event-schema** | JSON Schema Draft-07 | Event contract definition, versioned Maven artifact |
 
 ### 1.3 System Boundary
@@ -177,7 +177,7 @@ provider availability and AES-GCM capability.
   ECR DKR, CloudWatch Logs, Secrets Manager) — traffic never crosses internet
 - **Security Groups**: Least-privilege, egress restricted to 443 (HTTPS) + 53 (DNS)
 - **NACLs**: Stateless firewall on all subnets
-- **VPC Flow Logs**: Enabled for all subnets → CloudWatch Logs
+- **VPC Flow Logs**: Enabled for all subnets -> CloudWatch Logs
 
 ---
 
@@ -189,19 +189,19 @@ control family:
 
 | Family | Description | Status | Key Controls |
 |--------|-------------|--------|--------------|
-| **AC** | Access Control | Implemented | AC-2, AC-3, AC-4, AC-6, AC-12, AC-17 |
-| **AU** | Audit and Accountability | Implemented | AU-2, AU-3, AU-4, AU-6, AU-9, AU-12 |
-| **CM** | Configuration Management | Implemented | CM-2, CM-3, CM-6, CM-7, CM-8 |
-| **CP** | Contingency Planning | Partially Implemented | CP-9, CP-10 (DR plan exists, multi-region pending) |
-| **IA** | Identification and Authentication | Implemented | IA-2, IA-5, IA-7 |
-| **IR** | Incident Response | Implemented | IR-4, IR-5, IR-6 |
-| **MP** | Media Protection | Implemented | MP-5 (encryption in transit) |
-| **PE** | Physical and Environmental | Inherited | AWS responsibility (FedRAMP-authorized data centers) |
-| **PL** | Planning | Implemented | PL-8 (security architecture documented) |
-| **RA** | Risk Assessment | Implemented | RA-5 (vulnerability scanning in CI) |
-| **SA** | System and Services Acquisition | Implemented | SA-11 (SAST/SCA in pipeline) |
-| **SC** | System and Communications Protection | Implemented | SC-7, SC-8, SC-12, SC-13, SC-28 |
-| **SI** | System and Information Integrity | Implemented | SI-2, SI-4, SI-7, SI-10, SI-11 |
+| **AC** | Access Control | Aligned | AC-2, AC-3, AC-4, AC-6, AC-12, AC-17 |
+| **AU** | Audit and Accountability | Aligned | AU-2, AU-3, AU-4, AU-6, AU-9, AU-12 |
+| **CM** | Configuration Management | Aligned | CM-2, CM-3, CM-6, CM-7, CM-8 |
+| **CP** | Contingency Planning | Partially Aligned | CP-9, CP-10 (DR plan exists, multi-region pending) |
+| **IA** | Identification and Authentication | Aligned | IA-2, IA-5, IA-7 |
+| **IR** | Incident Response | Aligned | IR-4, IR-5, IR-6 |
+| **MP** | Media Protection | Aligned | MP-5 (encryption in transit) |
+| **PE** | Physical and Environmental | Inherited | AWS responsibility under the shared responsibility model |
+| **PL** | Planning | Aligned | PL-8 (security architecture documented) |
+| **RA** | Risk Assessment | Aligned | RA-5 (vulnerability scanning in CI) |
+| **SA** | System and Services Acquisition | Aligned | SA-11 (SAST/SCA in pipeline) |
+| **SC** | System and Communications Protection | Aligned | SC-7, SC-8, SC-12, SC-13, SC-28 |
+| **SI** | System and Information Integrity | Aligned | SI-2, SI-4, SI-7, SI-10, SI-11 |
 
 ---
 
@@ -305,7 +305,7 @@ For full DR procedures, see [DISASTER_RECOVERY.md](../DISASTER_RECOVERY.md).
 - [FedRAMP Security Assessment Framework](https://www.fedramp.gov/)
 - [ADR-004: FIPS 140-3 Encryption & FedRAMP Alignment](../adr/004-fips-140-3-encryption.md)
 - [NIST 800-53 Control Matrix](NIST_800_53_CONTROLS.md)
-- [Security Audit Report](SECURITY_AUDIT_REPORT.md)
+- [Security Review Notes](SECURITY_AUDIT_REPORT.md)
 - [TLS Architecture](../TLS_ARCHITECTURE.md)
 - [Disaster Recovery Plan](../DISASTER_RECOVERY.md)
 - [SLO/SLI Definitions](../SLO_SLI.md)

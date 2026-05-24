@@ -1,8 +1,4 @@
 #!/bin/bash
-# =============================================================================
-# Gateway Entrypoint - Discovers Cognito IDs from LocalStack
-# =============================================================================
-
 set -e
 
 AWS_ENDPOINT="${AWS_ENDPOINT_URL:-http://localstack:4566}"
@@ -13,7 +9,6 @@ export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-test}"
 
 echo "🔍 Discovering Cognito configuration from LocalStack..."
 
-# Wait for LocalStack Cognito to be ready
 for i in {1..30}; do
     USER_POOL_ID=$(aws cognito-idp list-user-pools \
         --endpoint-url "$AWS_ENDPOINT" \
@@ -30,11 +25,10 @@ for i in {1..30}; do
 done
 
 if [ -z "$USER_POOL_ID" ] || [ "$USER_POOL_ID" == "None" ]; then
-    echo "❌ Failed to discover Cognito User Pool"
+    echo "Failed to discover Cognito User Pool"
     exit 1
 fi
 
-# Get Client ID
 CLIENT_ID=$(aws cognito-idp list-user-pool-clients \
     --endpoint-url "$AWS_ENDPOINT" \
     --region "$AWS_REGION" \
@@ -44,18 +38,17 @@ CLIENT_ID=$(aws cognito-idp list-user-pool-clients \
     --output text 2>/dev/null || echo "")
 
 if [ -z "$CLIENT_ID" ] || [ "$CLIENT_ID" == "None" ]; then
-    echo "❌ Failed to discover Cognito Client ID"
+    echo "Failed to discover Cognito Client ID"
     exit 1
 fi
 
-echo "✓ Cognito User Pool ID: $USER_POOL_ID"
-echo "✓ Cognito Client ID: $CLIENT_ID"
+echo "OK Cognito User Pool ID: $USER_POOL_ID"
+echo "OK Cognito Client ID: $CLIENT_ID"
 
-# Export for Spring Boot
 export COGNITO_USER_POOL_ID="$USER_POOL_ID"
 export COGNITO_CLIENT_ID="$CLIENT_ID"
 export COGNITO_JWKS_ENDPOINT="http://localstack:4566/$USER_POOL_ID/.well-known/jwks.json"
 export COGNITO_ISSUER_URI="http://localstack:4566/$USER_POOL_ID"
 
-echo "🚀 Starting Gateway..."
+echo "Starting Gateway..."
 exec java -jar /app/app.jar "$@"

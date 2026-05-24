@@ -2,22 +2,22 @@
 
 ## Compliance Framework
 
-The FSAMP platform is designed to meet **FIPS 140-3** requirements and align with the **FedRAMP Moderate** baseline. Alignment does not imply FedRAMP authorization or an ATO. All cryptographic operations use NIST-validated modules, and infrastructure follows NIST SP 800-53 Rev. 5 control families.
+The FSAMP platform is designed for a **FIPS 140-3-oriented** posture and alignment with the **FedRAMP Moderate** baseline. Alignment does not imply FedRAMP authorization or an ATO. Production paths are configured for FIPS-capable providers and FIPS endpoints where available; infrastructure follows NIST SP 800-53 Rev. 5 control families.
 
 | Standard | Status | Scope |
 |----------|--------|-------|
-| FIPS 140-3 | Implemented | ACCP (CMVP #4631), BC-FIPS (CMVP #4743), AWS KMS (Level 3), OpenSSL FIPS provider |
-| FedRAMP Moderate | Aligned | AC, AU, CM, IA, SC, SI control families implemented; see ADR-004 |
+| FIPS 140-3-oriented posture | Aligned | ACCP, BC-FIPS, AWS KMS, OpenSSL FIPS provider, and FIPS endpoints where supported |
+| FedRAMP Moderate | Aligned | AC, AU, CM, IA, SC, SI control families aligned; see ADR-004 |
 | NIST SP 800-53 Rev. 5 | Referenced | Technical controls mapped in Terraform modules |
 
 ## Supported Versions
 
 | Component | Version | Supported |
 |-----------|---------|-----------|
-| fsamp-gateway | >= 0.0.3 | ✅ |
-| fsamp-processor | >= 0.0.5 | ✅ |
-| fsamp-infra | >= 0.0.2 | ✅ |
-| fsamp-event-schema | >= 0.0.8 | ✅ |
+| fsamp-gateway | >= 0.0.3 | |
+| fsamp-processor | >= 0.0.5 | |
+| fsamp-infra | >= 0.0.2 | |
+| fsamp-event-schema | >= 0.0.8 | |
 
 Older versions are not maintained. Always deploy the latest release.
 
@@ -108,7 +108,7 @@ If the repository has GitHub Advanced Security enabled, you can use the **Securi
 
 ## Incident Response
 
-1. **Detection**: GuardDuty findings → SNS → CloudWatch alarm
+1. **Detection**: GuardDuty findings -> SNS -> CloudWatch alarm
 2. **Triage**: Review CloudTrail logs, VPC Flow Logs, application logs
 3. **Containment**: Security group lockdown, Cognito user disable, KMS key disable
 4. **Recovery**: Terraform redeploy, DynamoDB PITR restore, S3 version restore
