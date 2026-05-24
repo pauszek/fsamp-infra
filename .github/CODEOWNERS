@@ -1,0 +1,15 @@
+# FSAMP Infrastructure code owners.
+
+# Default owner for everything
+* @pauszek
+
+terraform/ @pauszek
+
+terraform/modules/auth/ @pauszek
+terraform/modules/networking/ @pauszek
+terraform/modules/audit/ @pauszek
+SECURITY.md @pauszek
+
+.github/ @pauszek
+
+e2e/ @pauszek
