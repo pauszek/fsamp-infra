@@ -1,7 +1,3 @@
-# =============================================================================
-# Local Environment (LocalStack)
-# =============================================================================
-# Usage: terraform plan -var-file=envs/local.tfvars
 
 environment         = "local"
 aws_region          = "us-west-2"

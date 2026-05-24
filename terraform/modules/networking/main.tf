@@ -1,11 +1,5 @@
-# =============================================================================
-# Networking Module - VPC, Subnets, Security Groups
-# =============================================================================
-# Network infrastructure for FSAMP services
-# =============================================================================
-
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   required_providers {
     aws = {
@@ -14,11 +8,6 @@ terraform {
     }
   }
 }
-
-# =============================================================================
-# Variables
-# =============================================================================
-
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -68,21 +57,11 @@ variable "enable_private_endpoints" {
   type        = bool
   default     = true
 }
-
-# =============================================================================
-# Data Sources
-# =============================================================================
-
 data "aws_region" "current" {}
 
 locals {
   enable_interface_endpoints = var.enable_private_endpoints && !var.enable_nat_gateway
 }
-
-# =============================================================================
-# VPC
-# =============================================================================
-
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
@@ -101,11 +80,6 @@ resource "aws_default_security_group" "default" {
     Environment = var.environment
   })
 }
-
-# =============================================================================
-# Internet Gateway
-# =============================================================================
-
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
@@ -113,12 +87,6 @@ resource "aws_internet_gateway" "main" {
     Name = "${var.name_prefix}-igw"
   })
 }
-
-# =============================================================================
-# Subnets
-# =============================================================================
-
-# Public subnets (for ALB, NAT Gateway)
 resource "aws_subnet" "public" {
   count = length(var.availability_zones)
 
@@ -134,7 +102,6 @@ resource "aws_subnet" "public" {
   })
 }
 
-# Private subnets (for ECS tasks, Lambda)
 resource "aws_subnet" "private" {
   count = length(var.availability_zones)
 
@@ -149,7 +116,6 @@ resource "aws_subnet" "private" {
   })
 }
 
-# Database subnets (for RDS if needed in future)
 resource "aws_subnet" "database" {
   count = length(var.availability_zones)
 
@@ -163,11 +129,6 @@ resource "aws_subnet" "database" {
     Tier = "database"
   })
 }
-
-# =============================================================================
-# NAT Gateway (optional - costs ~$32/month per gateway)
-# =============================================================================
-
 resource "aws_eip" "nat" {
   count  = var.enable_nat_gateway ? (var.single_nat_gateway ? 1 : length(var.availability_zones)) : 0
   domain = "vpc"
@@ -191,12 +152,6 @@ resource "aws_nat_gateway" "main" {
 
   depends_on = [aws_internet_gateway.main]
 }
-
-# =============================================================================
-# Route Tables
-# =============================================================================
-
-# Public route table
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -218,7 +173,6 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# Private route tables
 resource "aws_route_table" "private" {
   count  = var.enable_nat_gateway ? (var.single_nat_gateway ? 1 : length(var.availability_zones)) : 1
   vpc_id = aws_vpc.main.id
@@ -250,12 +204,6 @@ resource "aws_route_table_association" "database" {
   subnet_id      = aws_subnet.database[count.index].id
   route_table_id = var.single_nat_gateway ? aws_route_table.private[0].id : aws_route_table.private[min(count.index, length(aws_route_table.private) - 1)].id
 }
-
-# =============================================================================
-# Security Groups
-# =============================================================================
-
-# ALB Security Group
 resource "aws_security_group" "alb" {
   name        = "${var.name_prefix}-alb-sg"
   description = "Security group for Application Load Balancer"
@@ -290,7 +238,6 @@ resource "aws_security_group" "alb" {
   })
 }
 
-# ECS Tasks Security Group
 resource "aws_security_group" "ecs" {
   name        = "${var.name_prefix}-ecs-sg"
   description = "Security group for ECS tasks"
@@ -304,7 +251,6 @@ resource "aws_security_group" "ecs" {
     security_groups = [aws_security_group.alb.id]
   }
 
-  # FedRAMP SC-7: Restrict egress to HTTPS only (VPC Endpoints + AWS APIs)
   egress {
     description = "HTTPS to VPC Endpoints and AWS APIs"
     from_port   = 443
@@ -334,13 +280,11 @@ resource "aws_security_group" "ecs" {
   })
 }
 
-# Lambda Security Group
 resource "aws_security_group" "lambda" {
   name        = "${var.name_prefix}-lambda-sg"
   description = "Security group for Lambda functions"
   vpc_id      = aws_vpc.main.id
 
-  # FedRAMP SC-7: Restrict egress to HTTPS only (VPC Endpoints + AWS APIs)
   egress {
     description = "HTTPS to VPC Endpoints and AWS APIs"
     from_port   = 443
@@ -369,11 +313,6 @@ resource "aws_security_group" "lambda" {
     Name = "${var.name_prefix}-lambda-sg"
   })
 }
-
-# =============================================================================
-# VPC Endpoints (Gateway Endpoints - free)
-# =============================================================================
-
 resource "aws_vpc_endpoint" "s3" {
   vpc_id       = aws_vpc.main.id
   service_name = "com.amazonaws.${data.aws_region.current.region}.s3"
@@ -401,12 +340,6 @@ resource "aws_vpc_endpoint" "dynamodb" {
     Name = "${var.name_prefix}-dynamodb-endpoint"
   })
 }
-
-# =============================================================================
-# VPC Endpoints (Interface Endpoints - optional, cost per hour)
-# =============================================================================
-
-# Security group for VPC endpoints
 resource "aws_security_group" "vpc_endpoints" {
   name        = "${var.name_prefix}-vpc-endpoints-sg"
   description = "Security group for VPC Interface Endpoints"
@@ -425,7 +358,6 @@ resource "aws_security_group" "vpc_endpoints" {
   })
 }
 
-# ECR API endpoint (required if not using NAT Gateway)
 resource "aws_vpc_endpoint" "ecr_api" {
   count = local.enable_interface_endpoints ? 1 : 0
 
@@ -441,7 +373,6 @@ resource "aws_vpc_endpoint" "ecr_api" {
   })
 }
 
-# ECR DKR endpoint (required for pulling images without NAT)
 resource "aws_vpc_endpoint" "ecr_dkr" {
   count = local.enable_interface_endpoints ? 1 : 0
 
@@ -457,7 +388,6 @@ resource "aws_vpc_endpoint" "ecr_dkr" {
   })
 }
 
-# CloudWatch Logs endpoint (for container logs without NAT)
 resource "aws_vpc_endpoint" "logs" {
   count = local.enable_interface_endpoints ? 1 : 0
 
@@ -473,7 +403,6 @@ resource "aws_vpc_endpoint" "logs" {
   })
 }
 
-# SQS endpoint
 resource "aws_vpc_endpoint" "sqs" {
   count = local.enable_interface_endpoints ? 1 : 0
 
@@ -489,7 +418,6 @@ resource "aws_vpc_endpoint" "sqs" {
   })
 }
 
-# SNS endpoint
 resource "aws_vpc_endpoint" "sns" {
   count = local.enable_interface_endpoints ? 1 : 0
 
@@ -505,7 +433,6 @@ resource "aws_vpc_endpoint" "sns" {
   })
 }
 
-# KMS endpoint
 resource "aws_vpc_endpoint" "kms" {
   count = local.enable_interface_endpoints ? 1 : 0
 
@@ -520,16 +447,10 @@ resource "aws_vpc_endpoint" "kms" {
     Name = "${var.name_prefix}-kms-endpoint"
   })
 }
-
-# =============================================================================
-# Network ACLs (additional security layer)
-# =============================================================================
-
 resource "aws_network_acl" "public" {
   vpc_id     = aws_vpc.main.id
   subnet_ids = aws_subnet.public[*].id
 
-  # Allow inbound HTTPS
   ingress {
     protocol   = "tcp"
     rule_no    = 100
@@ -539,7 +460,6 @@ resource "aws_network_acl" "public" {
     to_port    = 443
   }
 
-  # Allow inbound HTTP (for redirect)
   ingress {
     protocol   = "tcp"
     rule_no    = 110
@@ -549,7 +469,6 @@ resource "aws_network_acl" "public" {
     to_port    = 80
   }
 
-  # Allow inbound ephemeral ports (for responses)
   ingress {
     protocol   = "tcp"
     rule_no    = 120
@@ -559,7 +478,6 @@ resource "aws_network_acl" "public" {
     to_port    = 65535
   }
 
-  # Allow all outbound
   egress {
     protocol   = "-1"
     rule_no    = 100
@@ -578,7 +496,6 @@ resource "aws_network_acl" "private" {
   vpc_id     = aws_vpc.main.id
   subnet_ids = aws_subnet.private[*].id
 
-  # Allow inbound from VPC
   ingress {
     protocol   = "-1"
     rule_no    = 100
@@ -588,7 +505,6 @@ resource "aws_network_acl" "private" {
     to_port    = 0
   }
 
-  # Allow inbound ephemeral ports (for responses from internet via NAT)
   ingress {
     protocol   = "tcp"
     rule_no    = 110
@@ -598,7 +514,6 @@ resource "aws_network_acl" "private" {
     to_port    = 65535
   }
 
-  # Allow all outbound
   egress {
     protocol   = "-1"
     rule_no    = 100
@@ -612,11 +527,6 @@ resource "aws_network_acl" "private" {
     Name = "${var.name_prefix}-private-nacl"
   })
 }
-
-# =============================================================================
-# Flow Logs (for security audit)
-# =============================================================================
-
 resource "aws_flow_log" "main" {
   vpc_id                   = aws_vpc.main.id
   traffic_type             = "ALL"
@@ -678,11 +588,6 @@ resource "aws_iam_role_policy" "flow_logs" {
     ]
   })
 }
-
-# =============================================================================
-# Outputs
-# =============================================================================
-
 output "vpc_id" {
   description = "VPC ID"
   value       = aws_vpc.main.id

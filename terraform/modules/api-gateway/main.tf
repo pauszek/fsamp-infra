@@ -1,11 +1,5 @@
-# =============================================================================
-# API Gateway Module - REST API with WAF
-# =============================================================================
-# Public API endpoint with security features for FSAMP Gateway service
-# =============================================================================
-
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   required_providers {
     aws = {
@@ -14,11 +8,6 @@ terraform {
     }
   }
 }
-
-# =============================================================================
-# Variables
-# =============================================================================
-
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -86,11 +75,6 @@ variable "alb_dns_name" {
   type        = string
   default     = null
 }
-
-# =============================================================================
-# API Gateway REST API
-# =============================================================================
-
 resource "aws_api_gateway_rest_api" "main" {
   name        = "${var.name_prefix}-api"
   description = "FSAMP REST API - ${var.environment}"
@@ -99,7 +83,6 @@ resource "aws_api_gateway_rest_api" "main" {
     types = ["REGIONAL"]
   }
 
-  # Enable API Gateway logging
   minimum_compression_size = 1024
 
   tags = merge(var.tags, {
@@ -110,43 +93,29 @@ resource "aws_api_gateway_rest_api" "main" {
     create_before_destroy = true
   }
 }
-
-# =============================================================================
-# API Resources
-# =============================================================================
-
-# /files resource
 resource "aws_api_gateway_resource" "files" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_rest_api.main.root_resource_id
   path_part   = "files"
 }
 
-# /files/{fileId} resource
 resource "aws_api_gateway_resource" "file" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_resource.files.id
   path_part   = "{fileId}"
 }
 
-# /files/upload resource
 resource "aws_api_gateway_resource" "upload" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_resource.files.id
   path_part   = "upload"
 }
 
-# /health resource
 resource "aws_api_gateway_resource" "health" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_rest_api.main.root_resource_id
   path_part   = "health"
 }
-
-# =============================================================================
-# Cognito Authorizer (if enabled)
-# =============================================================================
-
 resource "aws_api_gateway_authorizer" "cognito" {
   count = var.cognito_user_pool_arn != null ? 1 : 0
 
@@ -163,11 +132,6 @@ resource "aws_api_gateway_request_validator" "headers_and_params" {
   validate_request_body       = false
   validate_request_parameters = true
 }
-
-# =============================================================================
-# VPC Link (for private ALB integration)
-# =============================================================================
-
 resource "aws_apigatewayv2_vpc_link" "main" {
   count = var.alb_arn != null ? 1 : 0
 
@@ -179,11 +143,6 @@ resource "aws_apigatewayv2_vpc_link" "main" {
     Name = "${var.name_prefix}-vpc-link"
   })
 }
-
-# =============================================================================
-# File Upload Endpoint (POST /files/upload)
-# =============================================================================
-
 resource "aws_api_gateway_method" "upload_post" {
   count = var.alb_dns_name != null ? 1 : 0
 
@@ -232,11 +191,6 @@ resource "aws_api_gateway_method_response" "upload_post_201" {
     "method.response.header.X-Correlation-Id" = true
   }
 }
-
-# =============================================================================
-# Get File Endpoint (GET /files/{fileId})
-# =============================================================================
-
 resource "aws_api_gateway_method" "file_get" {
   count = var.alb_dns_name != null ? 1 : 0
 
@@ -270,11 +224,6 @@ resource "aws_api_gateway_integration" "file_get" {
     "integration.request.path.fileId" = "method.request.path.fileId"
   }
 }
-
-# =============================================================================
-# Delete File Endpoint (DELETE /files/{fileId})
-# =============================================================================
-
 resource "aws_api_gateway_method" "file_delete" {
   count = var.alb_dns_name != null ? 1 : 0
 
@@ -308,12 +257,6 @@ resource "aws_api_gateway_integration" "file_delete" {
     "integration.request.path.fileId" = "method.request.path.fileId"
   }
 }
-
-# =============================================================================
-# Mock Methods (placeholder - will be replaced with actual integrations)
-# =============================================================================
-
-# GET /health - public health check
 resource "aws_api_gateway_method" "health_get" {
   rest_api_id          = aws_api_gateway_rest_api.main.id
   resource_id          = aws_api_gateway_resource.health.id
@@ -359,11 +302,6 @@ resource "aws_api_gateway_integration_response" "health_get_200" {
     })
   }
 }
-
-# =============================================================================
-# API Deployment & Stage
-# =============================================================================
-
 resource "aws_api_gateway_deployment" "main" {
   rest_api_id = aws_api_gateway_rest_api.main.id
 
@@ -405,7 +343,6 @@ resource "aws_api_gateway_stage" "main" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   stage_name    = var.environment
 
-  # Enable CloudWatch logging
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api_access.arn
     format = jsonencode({
@@ -431,7 +368,6 @@ resource "aws_api_gateway_stage" "main" {
   })
 }
 
-# Method Settings (throttling)
 resource "aws_api_gateway_method_settings" "all" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   stage_name  = aws_api_gateway_stage.main.stage_name
@@ -444,11 +380,6 @@ resource "aws_api_gateway_method_settings" "all" {
     logging_level          = var.environment == "prod" ? "ERROR" : "INFO"
   }
 }
-
-# =============================================================================
-# CloudWatch Log Groups
-# =============================================================================
-
 resource "aws_cloudwatch_log_group" "api_access" {
   name              = "/aws/apigateway/${var.name_prefix}-access-logs"
   retention_in_days = 365
@@ -464,11 +395,6 @@ resource "aws_cloudwatch_log_group" "api_execution" {
 
   tags = var.tags
 }
-
-# =============================================================================
-# WAF (Web Application Firewall)
-# =============================================================================
-
 resource "aws_wafv2_web_acl" "api" {
   count = var.enable_waf ? 1 : 0
 
@@ -480,7 +406,6 @@ resource "aws_wafv2_web_acl" "api" {
     allow {}
   }
 
-  # AWS Managed Rules - Common Rule Set
   rule {
     name     = "AWSManagedRulesCommonRuleSet"
     priority = 1
@@ -503,7 +428,6 @@ resource "aws_wafv2_web_acl" "api" {
     }
   }
 
-  # AWS Managed Rules - Known Bad Inputs
   rule {
     name     = "AWSManagedRulesKnownBadInputsRuleSet"
     priority = 2
@@ -526,7 +450,6 @@ resource "aws_wafv2_web_acl" "api" {
     }
   }
 
-  # Rate Limiting Rule
   rule {
     name     = "RateLimitRule"
     priority = 3
@@ -549,7 +472,6 @@ resource "aws_wafv2_web_acl" "api" {
     }
   }
 
-  # SQL Injection Protection
   rule {
     name     = "AWSManagedRulesSQLiRuleSet"
     priority = 4
@@ -583,7 +505,6 @@ resource "aws_wafv2_web_acl" "api" {
   })
 }
 
-# Associate WAF with API Gateway
 resource "aws_wafv2_web_acl_association" "api" {
   count = var.enable_waf ? 1 : 0
 
@@ -613,11 +534,6 @@ resource "aws_wafv2_web_acl_logging_configuration" "api" {
     }
   }
 }
-
-# =============================================================================
-# Outputs
-# =============================================================================
-
 output "api_id" {
   description = "API Gateway REST API ID"
   value       = aws_api_gateway_rest_api.main.id

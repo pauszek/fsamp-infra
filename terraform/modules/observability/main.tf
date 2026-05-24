@@ -1,12 +1,5 @@
-# =============================================================================
-# Observability Module - CloudWatch, X-Ray
-# =============================================================================
-# Centralized logging, metrics, tracing, dashboards and alarms
-# Provides comprehensive observability for FSAMP platform
-# =============================================================================
-
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   required_providers {
     aws = {
@@ -15,11 +8,6 @@ terraform {
     }
   }
 }
-
-# =============================================================================
-# Variables
-# =============================================================================
-
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -51,11 +39,6 @@ variable "alarm_sns_topic_arn" {
   type        = string
   default     = ""
 }
-
-# =============================================================================
-# CloudWatch Log Groups
-# =============================================================================
-
 resource "aws_cloudwatch_log_group" "ecs" {
   name              = "/ecs/${var.name_prefix}"
   retention_in_days = var.log_retention_days
@@ -88,27 +71,11 @@ resource "aws_cloudwatch_log_group" "api_gateway" {
     Environment = var.environment
   })
 }
-
-# =============================================================================
-# CloudWatch Dashboard
-# =============================================================================
-# Comprehensive dashboard for FSAMP platform monitoring:
-# - Lambda metrics (Processor, Outbox Publisher)
-# - SQS queue metrics
-# - DynamoDB operations
-# - S3 storage metrics
-# - Custom application metrics
-# - Error logs
-# =============================================================================
-
 resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = "${var.name_prefix}-dashboard"
 
   dashboard_body = jsonencode({
     widgets = [
-      # ==============================================
-      # Row 1: Lambda Processor Metrics
-      # ==============================================
       {
         type   = "metric"
         x      = 0
@@ -116,7 +83,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 8
         height = 6
         properties = {
-          title  = "📊 Lambda Processor - Invocations"
+          title  = "Lambda Processor - Invocations"
           region = data.aws_region.current.region
           metrics = [
             ["AWS/Lambda", "Invocations", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Sum", "color" : "#2ca02c" }],
@@ -135,7 +102,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 8
         height = 6
         properties = {
-          title  = "⏱️ Lambda Processor - Duration"
+          title  = "Lambda Processor - Duration"
           region = data.aws_region.current.region
           metrics = [
             ["AWS/Lambda", "Duration", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Average", "color" : "#1f77b4" }],
@@ -154,7 +121,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 8
         height = 6
         properties = {
-          title  = "🔄 Lambda Processor - Concurrency"
+          title  = "Lambda Processor - Concurrency"
           region = data.aws_region.current.region
           metrics = [
             ["AWS/Lambda", "ConcurrentExecutions", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Maximum", "color" : "#9467bd" }]
@@ -163,9 +130,6 @@ resource "aws_cloudwatch_dashboard" "main" {
           view   = "timeSeries"
         }
       },
-      # ==============================================
-      # Row 2: Outbox Publisher & SQS Metrics
-      # ==============================================
       {
         type   = "metric"
         x      = 0
@@ -227,9 +191,6 @@ resource "aws_cloudwatch_dashboard" "main" {
           }
         }
       },
-      # ==============================================
-      # Row 3: DynamoDB Metrics
-      # ==============================================
       {
         type   = "metric"
         x      = 0
@@ -254,7 +215,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 8
         height = 6
         properties = {
-          title  = "📦 DynamoDB Outbox - Operations"
+          title  = "DynamoDB Outbox - Operations"
           region = data.aws_region.current.region
           metrics = [
             ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${var.name_prefix}-outbox", { "stat" : "Sum", "color" : "#1f77b4" }],
@@ -272,7 +233,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 8
         height = 6
         properties = {
-          title  = "⚠️ DynamoDB - Throttled Requests"
+          title  = "DynamoDB - Throttled Requests"
           region = data.aws_region.current.region
           metrics = [
             ["AWS/DynamoDB", "ThrottledRequests", "TableName", "${var.name_prefix}-file-metadata", { "stat" : "Sum", "color" : "#d62728" }],
@@ -282,9 +243,6 @@ resource "aws_cloudwatch_dashboard" "main" {
           view   = "timeSeries"
         }
       },
-      # ==============================================
-      # Row 4: Custom Application Metrics (Powertools)
-      # ==============================================
       {
         type   = "metric"
         x      = 0
@@ -292,7 +250,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 8
         height = 6
         properties = {
-          title  = "📁 Files Processed"
+          title  = "Files Processed"
           region = data.aws_region.current.region
           metrics = [
             ["FSAMP/Processor", "FilesProcessed", { "stat" : "Sum", "color" : "#2ca02c" }],
@@ -310,7 +268,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 8
         height = 6
         properties = {
-          title  = "⏱️ Processing Duration (Custom)"
+          title  = "Processing Duration (Custom)"
           region = data.aws_region.current.region
           metrics = [
             ["FSAMP/Processor", "ProcessingDuration", { "stat" : "Average", "color" : "#1f77b4" }],
@@ -339,9 +297,6 @@ resource "aws_cloudwatch_dashboard" "main" {
           view   = "timeSeries"
         }
       },
-      # ==============================================
-      # Row 5: S3 & SNS Metrics
-      # ==============================================
       {
         type   = "metric"
         x      = 0
@@ -349,7 +304,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 12
         height = 6
         properties = {
-          title  = "🗂️ S3 Bucket Metrics"
+          title  = "S3 Bucket Metrics"
           region = data.aws_region.current.region
           metrics = [
             ["AWS/S3", "NumberOfObjects", "BucketName", "${var.name_prefix}-files", "StorageType", "AllStorageTypes", { "stat" : "Average", "period" : 86400 }],
@@ -375,9 +330,6 @@ resource "aws_cloudwatch_dashboard" "main" {
           view   = "timeSeries"
         }
       },
-      # ==============================================
-      # Row 6: Error Logs
-      # ==============================================
       {
         type   = "log"
         x      = 0
@@ -385,7 +337,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 24
         height = 6
         properties = {
-          title  = "🚨 Recent Errors (All Services)"
+          title  = "Recent Errors (All Services)"
           region = data.aws_region.current.region
           query  = <<-EOT
             SOURCE '/aws/lambda/${var.name_prefix}-processor' 
@@ -397,9 +349,6 @@ resource "aws_cloudwatch_dashboard" "main" {
           EOT
         }
       },
-      # ==============================================
-      # Row 7: Key Performance Indicators
-      # ==============================================
       {
         type   = "metric"
         x      = 0
@@ -475,24 +424,7 @@ resource "aws_cloudwatch_dashboard" "main" {
     ]
   })
 }
-
-# =============================================================================
-# Data Sources
-# =============================================================================
-
 data "aws_region" "current" {}
-
-# =============================================================================
-# CloudWatch Alarms
-# =============================================================================
-# Critical alarms for FSAMP platform monitoring:
-# - Lambda errors
-# - DLQ messages (failed processing)
-# - DynamoDB throttling
-# - Processing latency
-# =============================================================================
-
-# Alarm: Lambda Processor Errors
 resource "aws_cloudwatch_metric_alarm" "processor_errors" {
   alarm_name          = "${var.name_prefix}-processor-errors"
   comparison_operator = "GreaterThanThreshold"
@@ -518,7 +450,6 @@ resource "aws_cloudwatch_metric_alarm" "processor_errors" {
   })
 }
 
-# Alarm: Outbox Publisher Errors
 resource "aws_cloudwatch_metric_alarm" "outbox_publisher_errors" {
   alarm_name          = "${var.name_prefix}-outbox-publisher-errors"
   comparison_operator = "GreaterThanThreshold"
@@ -544,7 +475,6 @@ resource "aws_cloudwatch_metric_alarm" "outbox_publisher_errors" {
   })
 }
 
-# Alarm: DLQ Messages (Failed Processing)
 resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
   alarm_name          = "${var.name_prefix}-dlq-messages"
   comparison_operator = "GreaterThanThreshold"
@@ -570,7 +500,6 @@ resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
   })
 }
 
-# Alarm: High Processing Latency
 resource "aws_cloudwatch_metric_alarm" "processor_latency" {
   alarm_name          = "${var.name_prefix}-processor-high-latency"
   comparison_operator = "GreaterThanThreshold"
@@ -579,7 +508,7 @@ resource "aws_cloudwatch_metric_alarm" "processor_latency" {
   namespace           = "AWS/Lambda"
   period              = 300
   extended_statistic  = "p95"
-  threshold           = 60000 # 60 seconds
+  threshold           = 60000
   alarm_description   = "Lambda Processor p95 latency is high"
   treat_missing_data  = "notBreaching"
 
@@ -595,7 +524,6 @@ resource "aws_cloudwatch_metric_alarm" "processor_latency" {
   })
 }
 
-# Alarm: Lambda Throttling
 resource "aws_cloudwatch_metric_alarm" "processor_throttles" {
   alarm_name          = "${var.name_prefix}-processor-throttles"
   comparison_operator = "GreaterThanThreshold"
@@ -620,7 +548,6 @@ resource "aws_cloudwatch_metric_alarm" "processor_throttles" {
   })
 }
 
-# Alarm: DynamoDB Throttling
 resource "aws_cloudwatch_metric_alarm" "dynamodb_throttles" {
   alarm_name          = "${var.name_prefix}-dynamodb-throttles"
   comparison_operator = "GreaterThanThreshold"
@@ -645,7 +572,6 @@ resource "aws_cloudwatch_metric_alarm" "dynamodb_throttles" {
   })
 }
 
-# Alarm: SQS Queue Backlog
 resource "aws_cloudwatch_metric_alarm" "sqs_backlog" {
   alarm_name          = "${var.name_prefix}-sqs-backlog"
   comparison_operator = "GreaterThanThreshold"
@@ -670,7 +596,6 @@ resource "aws_cloudwatch_metric_alarm" "sqs_backlog" {
   })
 }
 
-# Alarm: SQS Message Age (Processing Delay)
 resource "aws_cloudwatch_metric_alarm" "sqs_message_age" {
   alarm_name          = "${var.name_prefix}-sqs-message-age"
   comparison_operator = "GreaterThanThreshold"
@@ -679,7 +604,7 @@ resource "aws_cloudwatch_metric_alarm" "sqs_message_age" {
   namespace           = "AWS/SQS"
   period              = 300
   statistic           = "Maximum"
-  threshold           = 300 # 5 minutes
+  threshold           = 300
   alarm_description   = "Old messages in queue - processing may be stuck"
   treat_missing_data  = "notBreaching"
 
@@ -695,7 +620,6 @@ resource "aws_cloudwatch_metric_alarm" "sqs_message_age" {
   })
 }
 
-# Composite Alarm: Critical System Health
 resource "aws_cloudwatch_composite_alarm" "critical_health" {
   alarm_name = "${var.name_prefix}-critical-health"
 
@@ -715,11 +639,6 @@ resource "aws_cloudwatch_composite_alarm" "critical_health" {
     Severity = "critical"
   })
 }
-
-# =============================================================================
-# Outputs
-# =============================================================================
-
 output "log_group_names" {
   description = "Map of service to log group names"
   value = {

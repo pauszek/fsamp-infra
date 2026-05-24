@@ -1,11 +1,5 @@
-# =============================================================================
-# Compute Module - ECS Fargate, Lambda
-# =============================================================================
-# Serverless compute for FSAMP services
-# =============================================================================
-
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   required_providers {
     aws = {
@@ -14,11 +8,6 @@ terraform {
     }
   }
 }
-
-# =============================================================================
-# Variables
-# =============================================================================
-
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -101,7 +90,7 @@ variable "aws_region" {
 }
 
 variable "use_fips_endpoint" {
-  description = "Use FIPS 140-3 validated endpoints (us-* regions only)"
+  description = "Use AWS FIPS endpoints where supported (us-* regions only)"
   type        = bool
   default     = true
 }
@@ -109,7 +98,6 @@ variable "use_fips_endpoint" {
 variable "gateway_image" {
   description = "Docker image for gateway service (ECR URI)"
   type        = string
-  # No default - must be provided per environment
 }
 
 variable "sqs_queue_url" {
@@ -120,6 +108,12 @@ variable "sqs_queue_url" {
 
 variable "sns_topic_arn" {
   description = "SNS topic ARN for processor events"
+  type        = string
+  default     = ""
+}
+
+variable "file_events_topic_arn" {
+  description = "SNS topic ARN for gateway FILE_UPLOADED events"
   type        = string
   default     = ""
 }
@@ -144,7 +138,7 @@ variable "processor_image" {
 variable "outbox_publisher_image" {
   description = "ECR image URI for outbox publisher Lambda (container image deployment)"
   type        = string
-  default     = "" # Falls back to processor_image when empty
+  default     = ""
 }
 
 variable "gateway_cpu" {
@@ -207,16 +201,29 @@ variable "outbox_table_name" {
   default     = ""
 }
 
+variable "idempotency_table_name" {
+  description = "DynamoDB idempotency table name for gateway retries"
+  type        = string
+  default     = ""
+}
+
+variable "cognito_user_pool_id" {
+  description = "Cognito User Pool ID for gateway JWT validation"
+  type        = string
+  default     = ""
+}
+
+variable "cognito_client_id" {
+  description = "Cognito web client ID for gateway JWT audience validation"
+  type        = string
+  default     = ""
+}
+
 variable "outbox_stream_arn" {
   description = "DynamoDB Streams ARN for outbox table"
   type        = string
   default     = ""
 }
-
-# =============================================================================
-# ECS Cluster
-# =============================================================================
-
 resource "aws_ecs_cluster" "main" {
   name = "${var.name_prefix}-cluster"
 
@@ -253,11 +260,6 @@ resource "aws_ecs_cluster_capacity_providers" "main" {
     capacity_provider = "FARGATE"
   }
 }
-
-# =============================================================================
-# Internal ALB - Gateway Private Backend
-# =============================================================================
-
 resource "aws_lb" "gateway" {
   name               = "${var.name_prefix}-gateway-alb"
   internal           = true
@@ -313,11 +315,6 @@ resource "aws_lb_listener" "gateway" {
     Service = "gateway"
   })
 }
-
-# =============================================================================
-# ECS Task Definition - Gateway
-# =============================================================================
-
 resource "aws_ecs_task_definition" "gateway" {
   family                   = "${var.name_prefix}-gateway"
   network_mode             = "awsvpc"
@@ -340,16 +337,7 @@ resource "aws_ecs_task_definition" "gateway" {
         }
       ]
 
-      environment = [
-        {
-          name  = "SPRING_PROFILES_ACTIVE"
-          value = var.environment
-        },
-        {
-          name  = "AWS_REGION"
-          value = var.aws_region
-        }
-      ]
+      environment = local.gateway_env_list
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -375,11 +363,6 @@ resource "aws_ecs_task_definition" "gateway" {
     Service = "gateway"
   })
 }
-
-# =============================================================================
-# ECS Service - Gateway
-# =============================================================================
-
 resource "aws_ecs_service" "gateway" {
   name            = "${var.name_prefix}-gateway"
   cluster         = aws_ecs_cluster.main.id
@@ -416,12 +399,37 @@ resource "aws_ecs_service" "gateway" {
 
   depends_on = [aws_lb_listener.gateway]
 }
-
-# =============================================================================
-# Lambda Function - Processor
-# =============================================================================
-
 locals {
+  gateway_env_vars = {
+    SPRING_PROFILES_ACTIVE = var.environment
+    AWS_REGION             = var.aws_region
+    AWS_FIPS_ENDPOINTS     = var.environment == "local" ? "false" : tostring(var.use_fips_endpoint)
+    AWS_USE_FIPS_ENDPOINT  = var.environment == "local" ? "false" : tostring(var.use_fips_endpoint)
+    FIPS_APPROVED_ONLY     = "true"
+    FSAMP_FIPS_ENABLED     = var.environment == "local" ? "false" : "true"
+
+    COGNITO_USER_POOL_ID = var.cognito_user_pool_id
+    COGNITO_CLIENT_ID    = var.cognito_client_id
+
+    KMS_KEY_ID     = var.kms_key_arn
+    AWS_KMS_KEY_ID = var.kms_key_arn
+
+    S3_BUCKET_NAME     = var.s3_bucket_name
+    AWS_S3_BUCKET_NAME = var.s3_bucket_name
+
+    SNS_FILE_EVENTS_TOPIC_ARN     = var.file_events_topic_arn
+    AWS_SNS_FILE_EVENTS_TOPIC_ARN = var.file_events_topic_arn
+
+    DYNAMODB_TABLE_NAME                      = var.dynamodb_table_name
+    AWS_DYNAMODB_TABLE_NAME                  = var.dynamodb_table_name
+    OUTBOX_TABLE_NAME                        = var.outbox_table_name
+    AWS_DYNAMODB_OUTBOX_TABLE_NAME           = var.outbox_table_name
+    DYNAMODB_IDEMPOTENCY_TABLE_NAME          = var.idempotency_table_name
+    AWS_DYNAMODB_IDEMPOTENCY_TABLE_NAME      = var.idempotency_table_name
+    DIRECT_PUBLISH_AFTER_OUTBOX              = "false"
+    AWS_DYNAMODB_DIRECT_PUBLISH_AFTER_OUTBOX = "false"
+  }
+
   processor_env_vars = {
     ENVIRONMENT                  = var.environment
     AWS_REGION                   = var.aws_region
@@ -433,7 +441,6 @@ locals {
     USE_FIPS_ENDPOINT            = var.environment == "local" ? "false" : tostring(var.use_fips_endpoint)
     FIPS_REQUIRED                = var.environment == "local" ? "false" : "true"
 
-    # Resource configuration (set by CI/CD or locals)
     SQS_QUEUE_URL       = var.sqs_queue_url
     SNS_TOPIC_ARN       = var.sns_topic_arn
     S3_BUCKET_NAME      = var.s3_bucket_name
@@ -461,12 +468,14 @@ locals {
       value = v
     }
   ]
+
+  gateway_env_list = [
+    for k, v in local.gateway_env_vars : {
+      name  = k
+      value = v
+    }
+  ]
 }
-
-# =============================================================================
-# ECS Task Definition - Processor (Production)
-# =============================================================================
-
 resource "aws_ecs_task_definition" "processor" {
   count = var.enable_processor_ecs ? 1 : 0
 
@@ -505,11 +514,6 @@ resource "aws_ecs_task_definition" "processor" {
     aws_cloudwatch_log_group.processor
   ]
 }
-
-# =============================================================================
-# ECS Service - Processor
-# =============================================================================
-
 resource "aws_ecs_service" "processor" {
   count = var.enable_processor_ecs ? 1 : 0
 
@@ -544,20 +548,17 @@ resource "aws_ecs_service" "processor" {
 }
 
 resource "aws_lambda_function" "processor" {
-  # checkov:skip=CKV_AWS_272: Code signing is documented as a production hardening extension; thesis demo images are already gated by CI scanning/SBOM.
+  # checkov:skip=CKV_AWS_272: Code signing is tracked as production hardening; CI gates images with scans and SBOM.
   function_name = "${var.name_prefix}-processor"
   role          = var.lambda_role_arn
   timeout       = var.processor_timeout
   memory_size   = var.processor_memory
 
-  # Container image deployment — FIPS 140-3 OpenSSL provider baked in
   package_type = "Image"
   image_uri    = var.processor_image
 
-  # Architecture - ARM64 is cheaper and faster for Python
   architectures = ["arm64"]
 
-  # Override CMD from Dockerfile if needed (handler path)
   image_config {
     command = ["processor.lambda_handler.lambda_handler"]
   }
@@ -566,15 +567,12 @@ resource "aws_lambda_function" "processor" {
     variables = local.processor_env_vars
   }
 
-  # KMS encryption for environment variables
   kms_key_arn = var.kms_key_arn
 
-  # X-Ray distributed tracing
   tracing_config {
     mode = "Active"
   }
 
-  # Dead letter queue for failed invocations
   dead_letter_config {
     target_arn = var.dlq_arn
   }
@@ -599,58 +597,31 @@ resource "aws_cloudwatch_log_group" "processor" {
 
   tags = var.tags
 }
-
-# =============================================================================
-# SQS Trigger for Lambda (Event Source Mapping)
-# =============================================================================
 resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   event_source_arn                   = var.sqs_queue_arn
   function_name                      = aws_lambda_function.processor.arn
   batch_size                         = 10
   maximum_batching_window_in_seconds = 5
 
-  # Enable partial batch response for better error handling
   function_response_types = ["ReportBatchItemFailures"]
 
-  # Scaling configuration
   scaling_config {
     maximum_concurrency = var.environment == "prod" ? 50 : 10
   }
 
-  # Filter events (optional - only process specific event types)
-  # filter_criteria {
-  #   filter {
-  #     pattern = jsonencode({
-  #       body = {
-  #         event_type = ["FILE_UPLOADED", "FILE_SCANNED"]
-  #       }
-  #     })
-  #   }
-  # }
 }
-
-# =============================================================================
-# Lambda Function - Outbox Publisher (Transactional Outbox Pattern)
-# =============================================================================
-# Triggered by DynamoDB Streams when new events are written to the outbox table.
-# Publishes events to SNS and marks them as published.
-# =============================================================================
-
 resource "aws_lambda_function" "outbox_publisher" {
-  # checkov:skip=CKV_AWS_272: Code signing is documented as a production hardening extension; thesis demo images are already gated by CI scanning/SBOM.
+  # checkov:skip=CKV_AWS_272: Code signing is tracked as production hardening; CI gates images with scans and SBOM.
   function_name = "${var.name_prefix}-outbox-publisher"
   role          = var.lambda_role_arn
   timeout       = 60
   memory_size   = 256
 
-  # Container image deployment — same FIPS image, different handler
   package_type = "Image"
-  image_uri    = coalesce(var.outbox_publisher_image, var.processor_image)
+  image_uri    = var.outbox_publisher_image != "" ? var.outbox_publisher_image : var.processor_image
 
-  # ARM64 architecture
   architectures = ["arm64"]
 
-  # Override CMD to point at outbox publisher handler
   image_config {
     command = ["processor.outbox_publisher.lambda_handler"]
   }
@@ -659,10 +630,8 @@ resource "aws_lambda_function" "outbox_publisher" {
     variables = local.outbox_publisher_env_vars
   }
 
-  # KMS encryption for environment variables
   kms_key_arn = var.kms_key_arn
 
-  # X-Ray distributed tracing
   tracing_config {
     mode = "Active"
   }
@@ -685,7 +654,6 @@ resource "aws_lambda_function" "outbox_publisher" {
   ]
 }
 
-# CloudWatch Log Group for Outbox Publisher
 resource "aws_cloudwatch_log_group" "outbox_publisher" {
   name              = "/aws/lambda/${var.name_prefix}-outbox-publisher"
   retention_in_days = 365
@@ -693,10 +661,6 @@ resource "aws_cloudwatch_log_group" "outbox_publisher" {
 
   tags = var.tags
 }
-
-# =============================================================================
-# DynamoDB Streams Event Source Mapping for Outbox Publisher
-# =============================================================================
 resource "aws_lambda_event_source_mapping" "outbox_stream" {
   count = var.outbox_stream_arn != "" ? 1 : 0
 
@@ -705,22 +669,16 @@ resource "aws_lambda_event_source_mapping" "outbox_stream" {
   batch_size        = 100
   starting_position = "LATEST"
 
-  # Enable partial batch response for better error handling
   function_response_types = ["ReportBatchItemFailures"]
 
-  # Maximum age of records to process (24 hours)
   maximum_record_age_in_seconds = 86400
 
-  # Maximum retry attempts for failed records
   maximum_retry_attempts = 3
 
-  # Bisect batch on function error (helps isolate bad records)
   bisect_batch_on_function_error = true
 
-  # Parallelization factor (process multiple batches concurrently)
   parallelization_factor = 2
 
-  # Filter to only process INSERT events (new outbox items)
   filter_criteria {
     filter {
       pattern = jsonencode({
@@ -729,18 +687,7 @@ resource "aws_lambda_event_source_mapping" "outbox_stream" {
     }
   }
 
-  # Destination for failed records (optional - send to DLQ)
-  # destination_config {
-  #   on_failure {
-  #     destination_arn = var.dlq_arn
-  #   }
-  # }
 }
-
-# =============================================================================
-# Auto Scaling for ECS
-# =============================================================================
-
 resource "aws_appautoscaling_target" "gateway" {
   max_capacity       = 4
   min_capacity       = 1
@@ -782,11 +729,6 @@ resource "aws_appautoscaling_policy" "gateway_memory" {
     scale_out_cooldown = 60
   }
 }
-
-# =============================================================================
-# Outputs
-# =============================================================================
-
 output "ecs_cluster_arn" {
   description = "ARN of the ECS cluster"
   value       = aws_ecs_cluster.main.arn

@@ -1,17 +1,5 @@
-# =============================================================================
-# Audit Module - CloudTrail, GuardDuty, AWS Config
-# =============================================================================
-# FedRAMP-aligned audit and compliance monitoring services.
-# All services are feature-flagged for cost control in dev/local environments.
-#
-# NIST SP 800-53 Control Families:
-# - AU (Audit and Accountability) → CloudTrail
-# - SI (System and Information Integrity) → GuardDuty
-# - CM (Configuration Management) → AWS Config
-# =============================================================================
-
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.7.0"
 
   required_providers {
     aws = {
@@ -20,11 +8,6 @@ terraform {
     }
   }
 }
-
-# =============================================================================
-# Variables
-# =============================================================================
-
 variable "environment" {
   description = "Environment name"
   type        = string
@@ -68,26 +51,11 @@ variable "enable_aws_config" {
   type        = bool
   default     = true
 }
-
-# =============================================================================
-# Data Sources
-# =============================================================================
-
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
-
-# =============================================================================
-# CloudTrail - API Audit Logging (NIST AU-2, AU-3, AU-6, AU-12)
-# =============================================================================
-# Records all API calls for security audit and compliance.
-# - Multi-region trail for complete coverage
-# - Log file validation for integrity (AU-9)
-# - KMS encryption for confidentiality
-# - S3 bucket with lifecycle policy for cost control
-# =============================================================================
-
+data "aws_partition" "current" {}
 resource "aws_s3_bucket" "cloudtrail_logs" {
-  # checkov:skip=CKV2_AWS_61: Lifecycle is configured by aws_s3_bucket_lifecycle_configuration.cloudtrail_logs; Checkov misses the counted relation.
+  # checkov:skip=CKV2_AWS_61: Lifecycle is configured separately; Checkov misses the counted relation.
   count = var.enable_cloudtrail ? 1 : 0
 
   bucket        = "${var.name_prefix}-cloudtrail-logs"
@@ -151,7 +119,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail_logs" {
     }
 
     expiration {
-      days = var.environment == "prod" ? 2555 : 365 # 7 years prod, 1 year non-prod
+      days = var.environment == "prod" ? 2555 : 365
     }
 
     abort_incomplete_multipart_upload {
@@ -224,7 +192,6 @@ resource "aws_sns_topic" "cloudtrail_alerts" {
   })
 }
 
-# S3 bucket policy allowing CloudTrail to write logs
 resource "aws_s3_bucket_policy" "cloudtrail_logs" {
   count  = var.enable_cloudtrail ? 1 : 0
   bucket = aws_s3_bucket.cloudtrail_logs[0].id
@@ -275,28 +242,26 @@ resource "aws_s3_bucket_policy" "cloudtrail_logs" {
 }
 
 resource "aws_cloudtrail" "main" {
-  # checkov:skip=CKV2_AWS_10: CloudWatch Logs integration is configured via cloud_watch_logs_group_arn/cloud_watch_logs_role_arn; Checkov misses the counted expression.
+  # checkov:skip=CKV2_AWS_10: CloudWatch Logs integration is configured; Checkov misses the counted expression.
   count = var.enable_cloudtrail ? 1 : 0
 
   name                          = "${var.name_prefix}-trail"
   s3_bucket_name                = aws_s3_bucket.cloudtrail_logs[0].id
   is_multi_region_trail         = true
   include_global_service_events = true
-  enable_log_file_validation    = true # AU-9: Integrity verification
+  enable_log_file_validation    = true
   kms_key_id                    = var.kms_key_arn
   cloud_watch_logs_group_arn    = "${aws_cloudwatch_log_group.cloudtrail[0].arn}:*"
   cloud_watch_logs_role_arn     = aws_iam_role.cloudtrail_cloudwatch[0].arn
   sns_topic_name                = aws_sns_topic.cloudtrail_alerts[0].name
 
-  # Log management events (API calls)
   event_selector {
     read_write_type           = "All"
     include_management_events = true
 
-    # Log S3 data events for file access auditing
     data_resource {
       type   = "AWS::S3::Object"
-      values = ["arn:aws:s3"]
+      values = ["arn:${data.aws_partition.current.partition}:s3"]
     }
   }
 
@@ -310,20 +275,11 @@ resource "aws_cloudtrail" "main" {
     aws_iam_role_policy.cloudtrail_cloudwatch
   ]
 }
-
-# =============================================================================
-# GuardDuty - Threat Detection (NIST SI-4, IR-4, IR-5)
-# =============================================================================
-# Continuously monitors for malicious activity and unauthorized behavior.
-# Analyzes CloudTrail, VPC Flow Logs, and DNS logs.
-# =============================================================================
-
 resource "aws_guardduty_detector" "main" {
   count = var.enable_guardduty ? 1 : 0
 
   enable = true
 
-  # Send findings to CloudWatch Events for alerting
   finding_publishing_frequency = var.environment == "prod" ? "FIFTEEN_MINUTES" : "SIX_HOURS"
 
   tags = merge(var.tags, {
@@ -339,11 +295,6 @@ resource "aws_guardduty_detector_feature" "s3_data_events" {
   name        = "S3_DATA_EVENTS"
   status      = "ENABLED"
 }
-
-# =============================================================================
-# Security Hub - Security Findings Aggregation
-# =============================================================================
-
 resource "aws_securityhub_account" "main" {
   count = var.enable_security_hub ? 1 : 0
 }
@@ -351,18 +302,10 @@ resource "aws_securityhub_account" "main" {
 resource "aws_securityhub_standards_subscription" "aws_foundational" {
   count = var.enable_security_hub ? 1 : 0
 
-  standards_arn = "arn:aws:securityhub:${data.aws_region.current.region}::standards/aws-foundational-security-best-practices/v/1.0.0"
+  standards_arn = "arn:${data.aws_partition.current.partition}:securityhub:${data.aws_region.current.region}::standards/aws-foundational-security-best-practices/v/1.0.0"
 
   depends_on = [aws_securityhub_account.main]
 }
-
-# =============================================================================
-# AWS Config - Compliance Monitoring (NIST CM-2, CM-6, CM-8)
-# =============================================================================
-# Tracks resource configuration changes and evaluates compliance rules.
-# =============================================================================
-
-# S3 bucket for AWS Config delivery
 resource "aws_s3_bucket" "config_logs" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -471,7 +414,6 @@ resource "aws_s3_bucket_policy" "config_logs" {
   })
 }
 
-# IAM role for AWS Config
 resource "aws_iam_role" "config" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -497,7 +439,7 @@ resource "aws_iam_role_policy_attachment" "config" {
   count = var.enable_aws_config ? 1 : 0
 
   role       = aws_iam_role.config[0].name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWS_ConfigRole"
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWS_ConfigRole"
 }
 
 resource "aws_iam_role_policy" "config_s3" {
@@ -521,7 +463,6 @@ resource "aws_iam_role_policy" "config_s3" {
   })
 }
 
-# AWS Config Recorder
 resource "aws_config_configuration_recorder" "main" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -534,7 +475,6 @@ resource "aws_config_configuration_recorder" "main" {
   }
 }
 
-# AWS Config Delivery Channel
 resource "aws_config_delivery_channel" "main" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -548,7 +488,6 @@ resource "aws_config_delivery_channel" "main" {
   depends_on = [aws_config_configuration_recorder.main]
 }
 
-# AWS Config Recorder Status
 resource "aws_config_configuration_recorder_status" "main" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -557,12 +496,6 @@ resource "aws_config_configuration_recorder_status" "main" {
 
   depends_on = [aws_config_delivery_channel.main]
 }
-
-# =============================================================================
-# AWS Config Rules - FIPS / FedRAMP Alignment
-# =============================================================================
-
-# Rule: S3 buckets must have server-side encryption enabled
 resource "aws_config_config_rule" "s3_encryption" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -580,7 +513,6 @@ resource "aws_config_config_rule" "s3_encryption" {
   depends_on = [aws_config_configuration_recorder.main]
 }
 
-# Rule: CloudTrail must be enabled
 resource "aws_config_config_rule" "cloudtrail_enabled" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -598,7 +530,6 @@ resource "aws_config_config_rule" "cloudtrail_enabled" {
   depends_on = [aws_config_configuration_recorder.main]
 }
 
-# Rule: IAM root access key should not exist
 resource "aws_config_config_rule" "iam_root_access_key" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -616,7 +547,6 @@ resource "aws_config_config_rule" "iam_root_access_key" {
   depends_on = [aws_config_configuration_recorder.main]
 }
 
-# Rule: S3 bucket public read prohibited
 resource "aws_config_config_rule" "s3_public_read" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -634,7 +564,6 @@ resource "aws_config_config_rule" "s3_public_read" {
   depends_on = [aws_config_configuration_recorder.main]
 }
 
-# Rule: DynamoDB tables should have encryption enabled
 resource "aws_config_config_rule" "dynamodb_encryption" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -651,11 +580,6 @@ resource "aws_config_config_rule" "dynamodb_encryption" {
 
   depends_on = [aws_config_configuration_recorder.main]
 }
-
-# =============================================================================
-# Outputs
-# =============================================================================
-
 output "cloudtrail_arn" {
   description = "ARN of the CloudTrail trail"
   value       = var.enable_cloudtrail ? aws_cloudtrail.main[0].arn : null

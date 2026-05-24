@@ -1,20 +1,7 @@
-# =============================================================================
-# Provider Configuration
-# =============================================================================
-# Dynamic provider based on environment (local = LocalStack, others = AWS)
-#
-# Usage:
-#   terraform init
-#   terraform plan -var-file=envs/dev.tfvars
-#   terraform apply -var-file=envs/dev.tfvars
-# =============================================================================
-
-# AWS Provider for real AWS environments
 provider "aws" {
   region            = var.aws_region
   use_fips_endpoint = var.use_fips_endpoint && !local.is_local
 
-  # LocalStack configuration (only when is_local = true)
   skip_credentials_validation = local.is_local
   skip_metadata_api_check     = local.is_local
   skip_requesting_account_id  = local.is_local

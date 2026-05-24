@@ -1,27 +1,3 @@
-# =============================================================================
-# FSAMP Infrastructure - Main Configuration
-# =============================================================================
-# Single configuration for all environments. Values come from tfvars.
-#
-# Usage:
-#   terraform init -backend-config=backends/local.hcl   # or dev.hcl, prod.hcl
-#   terraform plan -var-file=envs/local.tfvars          # or dev.tfvars, prod.tfvars
-#   terraform apply -var-file=envs/local.tfvars
-#
-# Files:
-#   - provider.tf:  AWS/LocalStack provider configuration
-#   - backend.tf:   State backend (partial config)
-#   - variables.tf: Input variables
-#   - locals.tf:    Computed values
-#   - outputs.tf:   Output definitions
-#   - envs/*.tfvars: Environment-specific values
-#   - backends/*.hcl: Backend configs per environment
-# =============================================================================
-
-# =============================================================================
-# Modules
-# =============================================================================
-
 module "security" {
   source = "./modules/security"
 
@@ -32,7 +8,6 @@ module "security" {
   enable_key_rotation = true
 }
 
-# Networking only for non-local environments
 module "networking" {
   source = "./modules/networking"
   count  = local.is_local ? 0 : 1
@@ -79,7 +54,6 @@ module "observability" {
   kms_key_arn        = module.security.kms_key_arn
 }
 
-# Auth (Cognito) - only for non-local environments
 module "auth" {
   source = "./modules/auth"
   count  = local.is_local ? 0 : 1
@@ -91,12 +65,10 @@ module "auth" {
   callback_urls = var.environment == "prod" ? ["https://app.fsamp.example.com/callback"] : ["http://localhost:3000/callback"]
   logout_urls   = var.environment == "prod" ? ["https://app.fsamp.example.com"] : ["http://localhost:3000"]
 
-  # FedRAMP AC-12: shorter token lifetime in production
   access_token_validity_minutes = var.environment == "prod" ? 30 : 60
   refresh_token_validity_days   = var.environment == "prod" ? 7 : 30
 }
 
-# API Gateway with WAF - only for non-local environments
 module "api_gateway" {
   source = "./modules/api-gateway"
   count  = local.is_local ? 0 : 1
@@ -115,7 +87,6 @@ module "api_gateway" {
   depends_on = [module.auth, module.compute]
 }
 
-# ECR only for non-local environments
 module "ecr" {
   source = "./modules/ecr"
   count  = local.is_local ? 0 : 1
@@ -128,7 +99,6 @@ module "ecr" {
   depends_on = [module.security]
 }
 
-# Compute only for non-local environments (LocalStack handles this via init-aws.sh)
 module "compute" {
   source = "./modules/compute"
   count  = local.is_local ? 0 : 1
@@ -153,25 +123,24 @@ module "compute" {
   enable_container_insights = var.enable_container_insights
   enable_processor_ecs      = var.enable_processor_ecs
 
-  # Processor configuration (Lambda + ECS)
-  sqs_queue_url       = module.messaging.queue_urls.file_processing
-  sns_topic_arn       = module.messaging.topic_arns.processing_events
-  s3_bucket_name      = module.storage.bucket_names.files
-  dynamodb_table_name = module.storage.dynamodb_table_names.file_metadata
-  outbox_table_name   = module.storage.dynamodb_table_names.outbox
+  sqs_queue_url          = module.messaging.queue_urls.file_processing
+  sns_topic_arn          = module.messaging.topic_arns.processing_events
+  file_events_topic_arn  = module.messaging.topic_arns.file_events
+  s3_bucket_name         = module.storage.bucket_names.files
+  dynamodb_table_name    = module.storage.dynamodb_table_names.file_metadata
+  outbox_table_name      = module.storage.dynamodb_table_names.outbox
+  idempotency_table_name = module.storage.dynamodb_table_names.idempotency_keys
+  cognito_user_pool_id   = module.auth[0].user_pool_id
+  cognito_client_id      = module.auth[0].web_client_id
 
-  # Container images from ECR
   gateway_image   = "${module.ecr[0].repository_urls["gateway"]}:${var.gateway_image_tag}"
   processor_image = "${module.ecr[0].repository_urls["processor"]}:${var.processor_image_tag}"
 
-  # Outbox Pattern: DynamoDB Streams for transactional event publishing
   outbox_stream_arn = module.storage.outbox_stream_arn
 
   depends_on = [module.security, module.networking, module.observability, module.messaging, module.ecr]
 }
 
-# Audit services (CloudTrail, GuardDuty, AWS Config) - FedRAMP alignment
-# Feature-flagged per environment for cost control
 module "audit" {
   source = "./modules/audit"
   count  = local.is_local ? 0 : 1
@@ -187,7 +156,3 @@ module "audit" {
 
   depends_on = [module.security]
 }
-
-# =============================================================================
-# Outputs - see outputs.tf for all output definitions
-# =============================================================================
