@@ -4,7 +4,7 @@ FSAMP End-to-End Test Runner
 
 Enterprise-grade E2E tests with full authentication flow:
 - Cognito JWT authentication (no security bypass)
-- Full stack validation: Gateway → S3 → SNS → SQS → Processor → DynamoDB
+- Full stack validation: Gateway -> S3 -> SNS -> SQS -> Processor -> DynamoDB
 - LocalStack Pro integration
 
 Usage:
@@ -26,26 +26,17 @@ import boto3
 import requests
 from botocore.config import Config
 from tenacity import retry, stop_after_attempt, wait_exponential
-
-
-# =============================================================================
-# Configuration
-# =============================================================================
-
 def _discover_cognito_ids() -> tuple[str, str]:
     """Discover Cognito User Pool and Client IDs from LocalStack."""
     endpoint = os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566")
     region = os.getenv("AWS_REGION", "us-west-2")
     
-    # Check env vars first
     env_pool_id = os.getenv("COGNITO_USER_POOL_ID", "")
     env_client_id = os.getenv("COGNITO_CLIENT_ID", "")
     
-    # If env vars are set and look like real IDs (not placeholders), use them
     if env_pool_id and env_client_id and "fsamp-local" not in env_pool_id:
         return env_pool_id, env_client_id
     
-    # Discover from LocalStack
     cognito = boto3.client(
         "cognito-idp",
         endpoint_url=endpoint,
@@ -54,7 +45,6 @@ def _discover_cognito_ids() -> tuple[str, str]:
         region_name=region,
     )
     
-    # Get User Pool ID
     pool_id = None
     pools = cognito.list_user_pools(MaxResults=10)
     for pool in pools.get("UserPools", []):
@@ -65,7 +55,6 @@ def _discover_cognito_ids() -> tuple[str, str]:
     if not pool_id:
         raise RuntimeError("Could not find FSAMP Cognito User Pool in LocalStack")
     
-    # Get Client ID
     client_id = None
     clients = cognito.list_user_pool_clients(UserPoolId=pool_id, MaxResults=10)
     for client in clients.get("UserPoolClients", []):
@@ -87,7 +76,6 @@ class TestConfig:
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "test")
     AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "test")
     
-    # Resource names (must match init-aws.sh)
     S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "fsamp-local-files")
     DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME", "fsamp-local-file-metadata")
     OUTBOX_TABLE_NAME = os.getenv("OUTBOX_TABLE_NAME", "fsamp-local-outbox")
@@ -98,18 +86,15 @@ class TestConfig:
     )
     SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "fsamp-local-processing-queue")
     
-    # Cognito - discovered at runtime
     COGNITO_USER_POOL_ID: str = ""
     COGNITO_CLIENT_ID: str = ""
     _cognito_discovered: bool = False
     
-    # Test users (created by init-aws.sh)
     TEST_USER = os.getenv("TEST_USER", "e2e-test-user")
     TEST_PASSWORD = os.getenv("TEST_PASSWORD", "E2eTestPass123!")
     ADMIN_USER = os.getenv("ADMIN_USER", "e2e-admin-user")
     ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "E2eAdminPass123!")
     
-    # Timeouts
     UPLOAD_TIMEOUT = 30
     PROCESSING_TIMEOUT = 60
     HEALTH_CHECK_TIMEOUT = 120
@@ -121,12 +106,6 @@ class TestConfig:
             return
         cls.COGNITO_USER_POOL_ID, cls.COGNITO_CLIENT_ID = _discover_cognito_ids()
         cls._cognito_discovered = True
-
-
-# =============================================================================
-# AWS Clients
-# =============================================================================
-
 def get_boto_config() -> Config:
     """Get boto3 configuration for LocalStack."""
     return Config(
@@ -178,17 +157,10 @@ def get_sqs_client():
         aws_secret_access_key=TestConfig.AWS_SECRET_ACCESS_KEY,
         config=get_boto_config()
     )
-
-
-# =============================================================================
-# Authentication
-# =============================================================================
-
 class CognitoAuth:
     """Handles Cognito authentication for E2E tests."""
     
     def __init__(self):
-        # Ensure Cognito IDs are discovered before using them
         TestConfig.ensure_cognito_discovered()
         self.cognito = get_cognito_client()
         self._tokens: dict[str, dict] = {}
@@ -202,7 +174,6 @@ class CognitoAuth:
         
         if cache_key in self._tokens:
             token_data = self._tokens[cache_key]
-            # Check if token is still valid (with 5min buffer)
             if token_data.get("expires_at", 0) > time.time() + 300:
                 return token_data["access_token"]
         
@@ -245,7 +216,6 @@ class CognitoAuth:
         return self.authenticate(TestConfig.ADMIN_USER, TestConfig.ADMIN_PASSWORD)
 
 
-# Global auth instance
 _auth: CognitoAuth | None = None
 
 def get_auth() -> CognitoAuth:
@@ -254,12 +224,6 @@ def get_auth() -> CognitoAuth:
     if _auth is None:
         _auth = CognitoAuth()
     return _auth
-
-
-# =============================================================================
-# Test Utilities
-# =============================================================================
-
 class TestResult:
     """Represents a test result."""
     
@@ -271,7 +235,7 @@ class TestResult:
         self.details: dict[str, Any] = {}
     
     def __str__(self) -> str:
-        status = "✅ PASS" if self.passed else "❌ FAIL"
+        status = "PASS" if self.passed else "FAIL"
         result = f"{status} {self.name} ({self.duration:.2f}s)"
         if self.error:
             result += f"\n    Error: {self.error}"
@@ -282,12 +246,6 @@ def log(message: str, level: str = "INFO") -> None:
     """Log a message with timestamp."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] [{level}] {message}")
-
-
-# =============================================================================
-# Health Checks
-# =============================================================================
-
 @retry(stop=stop_after_attempt(12), wait=wait_exponential(multiplier=1, min=2, max=10))
 def wait_for_gateway() -> bool:
     """Wait for gateway to be healthy."""
@@ -311,12 +269,6 @@ def wait_for_localstack() -> bool:
     )
     response.raise_for_status()
     return True
-
-
-# =============================================================================
-# Test Cases
-# =============================================================================
-
 def test_gateway_health() -> TestResult:
     """Test that gateway health endpoint is available."""
     result = TestResult("gateway_health")
@@ -356,7 +308,6 @@ def test_localstack_resources() -> TestResult:
         sqs = get_sqs_client()
         cognito = get_cognito_client()
         
-        # Check S3 bucket
         buckets = s3.list_buckets()
         bucket_names = [b["Name"] for b in buckets.get("Buckets", [])]
         result.details["s3_buckets"] = bucket_names
@@ -366,7 +317,6 @@ def test_localstack_resources() -> TestResult:
             result.duration = time.time() - start
             return result
         
-        # Check DynamoDB table
         tables = dynamodb.list_tables()
         table_names = tables.get("TableNames", [])
         result.details["dynamodb_tables"] = table_names
@@ -382,12 +332,10 @@ def test_localstack_resources() -> TestResult:
             result.duration = time.time() - start
             return result
         
-        # Check SQS queues
         queues = sqs.list_queues()
         queue_urls = queues.get("QueueUrls", [])
         result.details["sqs_queues"] = [q.split("/")[-1] for q in queue_urls]
         
-        # Check Cognito user pool
         pools = cognito.list_user_pools(MaxResults=10)
         pool_names = [p["Name"] for p in pools.get("UserPools", [])]
         result.details["cognito_pools"] = pool_names
@@ -409,12 +357,10 @@ def test_cognito_authentication() -> TestResult:
     try:
         auth = get_auth()
         
-        # Test user authentication
         user_token = auth.get_user_token()
         result.details["user_token_length"] = len(user_token)
         result.details["user_authenticated"] = True
         
-        # Test admin authentication
         admin_token = auth.get_admin_token()
         result.details["admin_token_length"] = len(admin_token)
         result.details["admin_authenticated"] = True
@@ -434,7 +380,6 @@ def test_unauthenticated_request_rejected() -> TestResult:
     start = time.time()
     
     try:
-        # Try to upload without authentication
         response = requests.post(
             f"{TestConfig.GATEWAY_URL}/api/v1/files/upload",
             files={"file": ("test.txt", b"test content", "text/plain")},
@@ -443,7 +388,6 @@ def test_unauthenticated_request_rejected() -> TestResult:
         
         result.details["status_code"] = response.status_code
         
-        # Should be 401 Unauthorized
         if response.status_code == 401:
             result.passed = True
             result.details["security"] = "Properly enforced"
@@ -466,12 +410,10 @@ def test_authenticated_file_upload() -> TestResult:
         auth = get_auth()
         token = auth.get_user_token()
         
-        # Generate unique test file
         file_id = str(uuid.uuid4())
         file_content = f"E2E Test File - {file_id}\nCreated: {datetime.now().isoformat()}"
         filename = f"e2e-test-{file_id}.txt"
         
-        # Calculate checksum for verification
         checksum = hashlib.sha256(file_content.encode()).hexdigest()
         
         headers = {
@@ -510,7 +452,7 @@ def test_full_processing_flow() -> TestResult:
     """
     Test the complete FSAMP file processing flow:
     
-    Gateway → S3 → SNS → SQS → Processor → DynamoDB
+    Gateway -> S3 -> SNS -> SQS -> Processor -> DynamoDB
     
     Steps:
     1. Upload file via Gateway (with JWT auth)
@@ -528,7 +470,6 @@ def test_full_processing_flow() -> TestResult:
         auth = get_auth()
         token = auth.get_user_token()
         
-        # Step 1: Upload file via Gateway
         correlation_id = uuid.uuid4().hex
         idempotency_key = str(uuid.uuid4())
         file_content = f"Full Flow Test - {correlation_id}\nTimestamp: {datetime.now().isoformat()}\nCorrelation: {correlation_id}"
@@ -541,7 +482,7 @@ def test_full_processing_flow() -> TestResult:
             "X-Idempotency-Key": idempotency_key,
         }
         
-        log(f"  → Uploading file: {filename}")
+        log(f"  -> Uploading file: {filename}")
         response = requests.post(
             f"{TestConfig.GATEWAY_URL}/api/v1/files/upload",
             files={"file": (filename, file_content.encode(), "text/plain")},
@@ -556,11 +497,9 @@ def test_full_processing_flow() -> TestResult:
             result.duration = time.time() - start
             return result
         
-        # Parse upload response
         try:
             upload_response = response.json()
             result.details["1_upload_response"] = upload_response
-            # Gateway may return fileId or file_id
             uploaded_file_id = (
                 upload_response.get("fileId") or 
                 upload_response.get("file_id") or
@@ -572,12 +511,10 @@ def test_full_processing_flow() -> TestResult:
             s3_key = None
             result.details["1_upload_raw"] = response.text[:200]
         
-        log(f"  → Upload successful, fileId: {uploaded_file_id}")
+        log(f"  -> Upload successful, fileId: {uploaded_file_id}")
         
-        # Step 2: Verify file in S3
         s3 = get_s3_client()
         
-        # List objects to find our file
         objects = s3.list_objects_v2(
             Bucket=TestConfig.S3_BUCKET_NAME,
             MaxKeys=100
@@ -586,7 +523,6 @@ def test_full_processing_flow() -> TestResult:
         object_keys = [obj["Key"] for obj in objects.get("Contents", [])]
         result.details["2_s3_objects_count"] = len(object_keys)
         
-        # Check if our file exists
         file_found_in_s3 = False
         for key in object_keys:
             if (uploaded_file_id and uploaded_file_id in key) or (s3_key and s3_key == key):
@@ -598,12 +534,10 @@ def test_full_processing_flow() -> TestResult:
                 break
         
         if file_found_in_s3:
-            log(f"  → File found in S3: {result.details.get('2_s3_file_key')}")
+            log(f"  -> File found in S3: {result.details.get('2_s3_file_key')}")
         else:
-            # Try listing with prefix
             result.details["2_s3_sample_keys"] = object_keys[:5]
         
-        # Step 3: Verify Gateway transactional outbox insert
         dynamodb = get_dynamodb_client()
         outbox_found = False
         if uploaded_file_id:
@@ -631,8 +565,7 @@ def test_full_processing_flow() -> TestResult:
             except Exception as outbox_err:
                 result.details["3_outbox_error"] = str(outbox_err)[:100]
 
-        # Step 4: Wait for Processor to complete (with polling)
-        log(f"  → Waiting for Processor (max {max_wait_time}s)...")
+        log(f"  -> Waiting for Processor (max {max_wait_time}s)...")
         
         processing_complete = False
         waited = 0
@@ -641,7 +574,6 @@ def test_full_processing_flow() -> TestResult:
             time.sleep(poll_interval)
             waited += poll_interval
             
-            # Check DynamoDB for metadata
             try:
                 if uploaded_file_id:
                     item_response = dynamodb.query(
@@ -659,11 +591,10 @@ def test_full_processing_flow() -> TestResult:
                         result.details["4_dynamodb_record"] = "found"
                         result.details["4_processing_time"] = f"{waited}s"
                         
-                        # Extract item details
                         item = item_response["Items"][0]
                         result.details["4_file_status"] = item.get("status", {}).get("S", "unknown")
                         result.details["4_processed_at"] = item.get("processedAt", {}).get("S", "unknown")
-                        log(f"  → DynamoDB record found after {waited}s")
+                        log(f"  -> DynamoDB record found after {waited}s")
                         break
                 
             except Exception as db_err:
@@ -672,11 +603,9 @@ def test_full_processing_flow() -> TestResult:
             if processing_complete:
                 break
             
-            # Log progress every 10 seconds
             if waited % 10 == 0:
-                log(f"  → Still waiting... ({waited}s/{max_wait_time}s)")
+                log(f"  -> Still waiting... ({waited}s/{max_wait_time}s)")
         
-        # Step 5: Verify SQS queue is drained (processor consumed messages)
         sqs = get_sqs_client()
         try:
             queue_url = f"{TestConfig.AWS_ENDPOINT_URL}/000000000000/{TestConfig.SQS_QUEUE_NAME}"
@@ -692,7 +621,6 @@ def test_full_processing_flow() -> TestResult:
             result.details["5_sqs_messages_available"] = messages_available
             result.details["5_sqs_messages_in_flight"] = messages_in_flight
             
-            # If queue is (nearly) empty, processor is consuming
             if messages_available == 0:
                 result.details["5_sqs_status"] = "queue drained (processor consuming)"
             else:
@@ -701,12 +629,11 @@ def test_full_processing_flow() -> TestResult:
         except Exception as sqs_err:
             result.details["5_sqs_error"] = str(sqs_err)[:100]
         
-        # Final verdict
         if file_found_in_s3 and outbox_found and processing_complete:
             result.passed = True
             result.details["6_flow_complete"] = True
-            result.details["6_verdict"] = "Full flow verified: Gateway → S3 → Outbox → SNS/SQS → Processor → DynamoDB"
-            log("  → ✓ Full processing flow verified!")
+            result.details["6_verdict"] = "Full flow verified: Gateway -> S3 -> Outbox -> SNS/SQS -> Processor -> DynamoDB"
+            log("  -> OK Full processing flow verified!")
         else:
             missing = []
             if not file_found_in_s3:
@@ -718,7 +645,7 @@ def test_full_processing_flow() -> TestResult:
             result.error = "Full flow incomplete: " + ", ".join(missing)
             result.details["6_flow_complete"] = False
             result.details["6_verdict"] = result.error
-            log(f"  → ✗ {result.error}")
+            log(f"  -> FAIL {result.error}")
         
     except Exception as e:
         result.error = str(e)
@@ -796,7 +723,6 @@ def test_audit_services_active() -> TestResult:
         checks_passed = 0
         total_checks = 3
 
-        # --- CloudTrail (AU-2, AU-3) ---
         try:
             ct = boto3.client("cloudtrail", **creds)
             trails = ct.describe_trails()["trailList"]
@@ -814,7 +740,6 @@ def test_audit_services_active() -> TestResult:
         except Exception as e:
             result.details["cloudtrail"] = f"error: {str(e)[:80]}"
 
-        # --- GuardDuty (SI-4) ---
         try:
             gd = boto3.client("guardduty", **creds)
             detectors = gd.list_detectors()["DetectorIds"]
@@ -829,7 +754,6 @@ def test_audit_services_active() -> TestResult:
         except Exception as e:
             result.details["guardduty"] = f"error: {str(e)[:80]}"
 
-        # --- AWS Config (CM-2, CM-6) ---
         try:
             cfg = boto3.client("config", **creds)
             recorders = cfg.describe_configuration_recorders()[
@@ -884,7 +808,6 @@ def test_iam_roles_exist() -> TestResult:
                 role = iam.get_role(RoleName=role_name)
                 found_roles.append(role_name)
 
-                # Verify role has attached policies
                 policies = iam.list_role_policies(RoleName=role_name)
                 policy_names = policies.get("PolicyNames", [])
                 result.details[role_name] = f"exists, policies={policy_names}"
@@ -901,12 +824,6 @@ def test_iam_roles_exist() -> TestResult:
 
     result.duration = time.time() - start
     return result
-
-
-# =============================================================================
-# Test Runner
-# =============================================================================
-
 def run_all_tests(verbose: bool = False) -> list[TestResult]:
     """Run all E2E tests."""
     results = []
@@ -918,52 +835,45 @@ def run_all_tests(verbose: bool = False) -> list[TestResult]:
     log(f"AWS Endpoint:   {TestConfig.AWS_ENDPOINT_URL}")
     log(f"Region:         {TestConfig.AWS_REGION}")
     
-    # Discover Cognito IDs from LocalStack
     try:
         TestConfig.ensure_cognito_discovered()
         log(f"User Pool:      {TestConfig.COGNITO_USER_POOL_ID}")
         log(f"Client ID:      {TestConfig.COGNITO_CLIENT_ID}")
     except Exception as e:
-        log(f"⚠ Cognito discovery: {e}", "WARN")
+        log(f"Cognito discovery: {e}", "WARN")
     
     log("=" * 70)
     
-    # Wait for services
     log("Waiting for services to be ready...")
     try:
         wait_for_localstack()
-        log("✓ LocalStack is ready")
+        log("OK LocalStack is ready")
     except Exception as e:
-        log(f"✗ LocalStack not ready: {e}", "ERROR")
+        log(f"FAIL LocalStack not ready: {e}", "ERROR")
         return results
     
     try:
         wait_for_gateway()
-        log("✓ Gateway is ready")
+        log("OK Gateway is ready")
     except Exception as e:
-        log(f"✗ Gateway not ready: {e}", "ERROR")
+        log(f"FAIL Gateway not ready: {e}", "ERROR")
         return results
     
     log("=" * 70)
     log("Running tests...")
     log("=" * 70)
     
-    # Define test suite - order matters!
     tests = [
-        # Infrastructure tests
         test_gateway_health,
         test_localstack_resources,
         test_gateway_api_docs,
         test_iam_roles_exist,
         
-        # Security tests
         test_cognito_authentication,
         test_unauthenticated_request_rejected,
         
-        # Compliance tests (FedRAMP AU/SI/CM)
         test_audit_services_active,
         
-        # Functional tests (with auth)
         test_authenticated_file_upload,
         test_full_processing_flow,
     ]
@@ -1001,9 +911,9 @@ def print_summary(results: list[TestResult]) -> int:
         print("\nFailed tests:")
         for r in results:
             if not r.passed:
-                print(f"  ❌ {r.name}: {r.error}")
+                print(f"  {r.name}: {r.error}")
     else:
-        print("\n✅ All tests passed!")
+        print("\nAll tests passed!")
     
     return 0 if failed == 0 else 1
 

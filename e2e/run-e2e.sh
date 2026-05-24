@@ -1,26 +1,4 @@
 #!/bin/bash
-# =============================================================================
-# FSAMP E2E Test Runner
-# =============================================================================
-# Orchestrates end-to-end tests for the complete FSAMP system.
-#
-# Usage:
-#   ./run-e2e.sh [OPTIONS]
-#
-# Options:
-#   --build       Build local images before testing
-#   --local       Run with locally built images (implies --build)
-#   --ci          Run in CI mode (no TTY, fail fast)
-#   --cleanup     Cleanup after tests (default: true)
-#   --no-cleanup  Keep containers running after tests
-#   --help        Show this help message
-#
-# Environment:
-#   LOCALSTACK_AUTH_TOKEN - Required for LocalStack Pro
-#   GATEWAY_IMAGE         - Override gateway image
-#   PROCESSOR_IMAGE       - Override processor image
-# =============================================================================
-
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,23 +6,19 @@ INFRA_DIR="$(dirname "$SCRIPT_DIR")"
 WORKSPACE_DIR="$(dirname "$INFRA_DIR")"
 cd "$SCRIPT_DIR"
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Default options
 MODE="default"
 CLEANUP="true"
 BUILD_IMAGES="false"
 
-# AWS Region - standardized
 export AWS_DEFAULT_REGION="us-west-2"
 export AWS_REGION="us-west-2"
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --build)
@@ -79,7 +53,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate environment
 if [[ -z "${LOCALSTACK_AUTH_TOKEN:-}" ]]; then
     echo -e "${RED}Error: LOCALSTACK_AUTH_TOKEN not set${NC}"
     echo "Export your LocalStack Pro token: export LOCALSTACK_AUTH_TOKEN=your-token"
@@ -112,13 +85,11 @@ cleanup() {
     fi
 }
 
-# Trap for cleanup on exit
 trap cleanup EXIT
 
 build_local_images() {
     log "Building local images..."
     
-    # Build Gateway
     GATEWAY_REPO="${WORKSPACE_DIR}/fsamp-gateway"
     if [[ -d "$GATEWAY_REPO" ]]; then
         log "Building Gateway..."
@@ -134,7 +105,6 @@ build_local_images() {
         log_warning "Gateway repo not found at $GATEWAY_REPO"
     fi
     
-    # Build Processor
     PROCESSOR_REPO="${WORKSPACE_DIR}/fsamp-processor"
     if [[ -d "$PROCESSOR_REPO" ]]; then
         log "Building Processor..."
@@ -151,16 +121,13 @@ build_local_images() {
     fi
 }
 
-# Main execution
 main() {
     log "Starting E2E tests (mode: $MODE)"
     
-    # Build images if requested
     if [[ "$BUILD_IMAGES" == "true" ]]; then
         build_local_images
     fi
     
-    # Set mode-specific options
     case $MODE in
         local)
             log "Using locally built images..."
@@ -173,15 +140,12 @@ main() {
             ;;
     esac
     
-    # Cleanup previous runs
     log "Cleaning up previous runs..."
     docker-compose down -v --remove-orphans 2>/dev/null || true
     
-    # Start infrastructure
     log "Starting LocalStack..."
     docker-compose up -d localstack
     
-    # Wait for LocalStack to be healthy
     log "Waiting for LocalStack to be ready..."
     local retries=30
     while [[ $retries -gt 0 ]]; do
@@ -199,7 +163,6 @@ main() {
         exit 1
     fi
     
-    # Wait for config file (means init-aws.sh completed)
     log "Waiting for LocalStack initialization..."
     retries=30
     while [[ $retries -gt 0 ]]; do
@@ -217,11 +180,9 @@ main() {
         exit 1
     fi
     
-    # Start application services
     log "Starting gateway and processor..."
     docker-compose up -d gateway processor
     
-    # Wait for gateway to be healthy
     log "Waiting for gateway to be ready..."
     retries=30
     while [[ $retries -gt 0 ]]; do
@@ -239,15 +200,13 @@ main() {
         exit 1
     fi
     
-    # Run E2E tests
     log "Running E2E tests..."
     if docker-compose --profile test up --abort-on-container-exit e2e-tests; then
-        log_success "✅ E2E tests passed!"
+        log_success "E2E tests passed!"
         exit 0
     else
-        log_error "❌ E2E tests failed!"
+        log_error "E2E tests failed!"
         
-        # Show logs on failure
         log "Gateway logs:"
         docker-compose logs --tail=50 gateway
         log "Processor logs:"

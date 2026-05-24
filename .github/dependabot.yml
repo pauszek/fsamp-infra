@@ -1,9 +1,6 @@
-# Dependabot configuration — fsamp-infra
-# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
 version: 2
 
 updates:
-  # Terraform providers and modules
   - package-ecosystem: "terraform"
     directory: "/terraform"
     schedule:
@@ -16,7 +13,6 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
-  # E2E test Dockerfile
   - package-ecosystem: "docker"
     directory: "/e2e"
     schedule:
@@ -28,7 +24,6 @@ updates:
     commit-message:
       prefix: "chore(docker)"
 
-  # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

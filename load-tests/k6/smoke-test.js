@@ -13,34 +13,28 @@ import http from 'k6/http';
 import { check, sleep, group } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
 
-// Custom metrics
 const errorRate = new Rate('errors');
 const uploadDuration = new Trend('upload_duration');
 
-// Test configuration
 export const options = {
   vus: 3,
   duration: '1m',
   
   thresholds: {
-    // Strict thresholds for smoke test
     http_req_failed: ['rate<0.01'],      // <1% errors
     http_req_duration: ['p(95)<1000'],   // 95% under 1s
     errors: ['rate<0.01'],               // Custom error rate
   },
   
-  // Tags for filtering in dashboards
   tags: {
     testType: 'smoke',
     environment: __ENV.ENVIRONMENT || 'staging',
   },
 };
 
-// Configuration from environment or defaults
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
 const AUTH_TOKEN = __ENV.AUTH_TOKEN || '';
 
-// Request headers
 const headers = {
   'Content-Type': 'application/json',
   'Authorization': AUTH_TOKEN ? `Bearer ${AUTH_TOKEN}` : '',
@@ -76,7 +70,6 @@ function generateTestFile(sizeBytes) {
 export function setup() {
   console.log(`Starting smoke test against: ${BASE_URL}`);
   
-  // Verify connectivity
   const healthRes = http.get(`${BASE_URL}/actuator/health`, { timeout: '10s' });
   
   if (healthRes.status !== 200) {
@@ -98,7 +91,6 @@ export function setup() {
 export default function(data) {
   
   group('Health Endpoints', function() {
-    // Health check
     const healthRes = http.get(`${BASE_URL}/actuator/health`);
     check(healthRes, {
       'health status is 200': (r) => r.status === 200,
@@ -114,7 +106,6 @@ export default function(data) {
     
     sleep(0.5);
     
-    // Info endpoint
     const infoRes = http.get(`${BASE_URL}/actuator/info`);
     check(infoRes, {
       'info status is 200': (r) => r.status === 200,
@@ -122,13 +113,11 @@ export default function(data) {
   });
   
   group('Upload Endpoint', function() {
-    // Generate unique idempotency key
     const idempotencyKey = uuidv4();
     const reqHeaders = Object.assign({}, headers, {
       'X-Idempotency-Key': idempotencyKey,
     });
     
-    // Small file upload (1KB)
     const testContent = generateTestFile(1024);
     const payload = {
       filename: `smoke-test-${idempotencyKey}.txt`,
@@ -164,7 +153,6 @@ export default function(data) {
       console.error(`Upload failed: ${uploadRes.status} - ${uploadRes.body}`);
     }
     
-    // Test idempotency - same key should return same result
     if (uploadRes.status >= 200 && uploadRes.status < 300) {
       sleep(0.5);
       
@@ -189,7 +177,6 @@ export default function(data) {
   });
   
   group('Error Handling', function() {
-    // Test 404 handling
     const notFoundRes = http.get(`${BASE_URL}/api/v1/nonexistent-endpoint`);
     check(notFoundRes, {
       'nonexistent endpoint returns 404': (r) => r.status === 404,
@@ -197,7 +184,6 @@ export default function(data) {
     
     sleep(0.5);
     
-    // Test invalid payload handling
     const invalidRes = http.post(
       `${BASE_URL}/api/v1/files/upload`,
       '{"invalid": json}',
@@ -208,7 +194,6 @@ export default function(data) {
     });
   });
   
-  // Pause between iterations
   sleep(1);
 }
 
@@ -221,14 +206,11 @@ export function teardown(data) {
   console.log(`Ended at: ${new Date().toISOString()}`);
 }
 
-/**
- * Handle test summary
- */
 export function handleSummary(data) {
   const passed = data.root_group.checks.filter(c => c.passes > 0 && c.fails === 0);
   const failed = data.root_group.checks.filter(c => c.fails > 0);
   
-  console.log('\n========== SMOKE TEST SUMMARY ==========');
+  console.log('\nSmoke test summary');
   console.log(`Total Checks: ${data.root_group.checks.length}`);
   console.log(`Passed: ${passed.length}`);
   console.log(`Failed: ${failed.length}`);
@@ -244,5 +226,4 @@ export function handleSummary(data) {
   };
 }
 
-// Import text summary helper
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
