@@ -18,10 +18,11 @@ The deploy workflow also needs:
 |---|---|---|
 | `GABRBA_APPID` | GitHub variable | GitHub App ID for cross-repo checkout |
 | `GABRBA_SECRET` | GitHub secret | GitHub App private key |
+| `AUTO_DEPLOY_DEV` | GitHub variable | Set to `true` after AWS and GitHub App setup to enable automatic dev deploys |
 
 ## Deploy Flow
 
-Deployment-related merges to `main` in this repository deploy `dev` automatically. Service repositories dispatch the same dev deployment after their main-branch build and image scan pass. Manual promotions run the same image tag through `dev`, then `staging`, then `prod`.
+Deployment-related merges to `main` in this repository deploy `dev` automatically only when `AUTO_DEPLOY_DEV=true`. Service repositories dispatch the same dev deployment after their main-branch build and image scan pass when that variable is enabled. Manual promotions run the same image tag through `dev`, then `staging`, then `prod`.
 
 For a first AWS deploy, keep:
 

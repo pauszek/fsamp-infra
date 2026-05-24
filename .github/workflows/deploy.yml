@@ -144,7 +144,9 @@ jobs:
   deploy-dev:
     name: Deploy Dev
     needs: context
-    if: needs.context.outputs.action == 'deploy-dev' || needs.context.outputs.action == 'promote'
+    if: >
+      (github.event_name == 'workflow_dispatch' || vars.AUTO_DEPLOY_DEV == 'true') &&
+      (needs.context.outputs.action == 'deploy-dev' || needs.context.outputs.action == 'promote')
     uses: ./.github/workflows/deploy-environment.yml
     permissions:
       contents: read
