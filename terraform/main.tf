@@ -52,6 +52,10 @@ module "observability" {
   tags               = local.common_tags
   log_retention_days = local.log_retention_days
   kms_key_arn        = module.security.kms_key_arn
+
+  outbox_table_name                  = module.storage.dynamodb_table_names.outbox
+  gateway_alb_full_name              = local.is_local ? "" : module.compute[0].gateway_alb_arn_suffix
+  gateway_alb_target_group_full_name = local.is_local ? "" : module.compute[0].gateway_alb_target_group_arn_suffix
 }
 
 module "auth" {
@@ -112,7 +116,8 @@ module "compute" {
   ecs_task_role_arn         = module.security.ecs_task_role_arn
   ecs_execution_role_arn    = module.security.ecs_execution_role_arn
   lambda_role_arn           = module.security.lambda_role_arn
-  log_group_name            = module.observability.log_group_names.ecs
+  log_group_name            = "/ecs/${local.name_prefix}"
+  log_retention_days        = local.log_retention_days
   sqs_queue_arn             = module.messaging.queue_arns.file_processing
   dlq_arn                   = module.messaging.queue_arns.dlq
   vpc_id                    = module.networking[0].vpc_id
@@ -136,9 +141,10 @@ module "compute" {
   gateway_image   = "${module.ecr[0].repository_urls["gateway"]}:${var.gateway_image_tag}"
   processor_image = "${module.ecr[0].repository_urls["processor"]}:${var.processor_image_tag}"
 
-  outbox_stream_arn = module.storage.outbox_stream_arn
+  outbox_stream_arn        = module.storage.outbox_stream_arn
+  outbox_publisher_dlq_arn = module.messaging.queue_arns.outbox_publisher_dlq
 
-  depends_on = [module.security, module.networking, module.observability, module.messaging, module.ecr]
+  depends_on = [module.security, module.networking, module.messaging, module.ecr]
 }
 
 module "audit" {
@@ -155,4 +161,38 @@ module "audit" {
   enable_aws_config   = local.enable_config_computed
 
   depends_on = [module.security]
+}
+
+# Cross-region replication for tenant data buckets and audit logs.
+# Feature-flagged via local.enable_crr_computed (default: prod and staging).
+# Uses the aws.replica provider configured in provider.tf.
+module "replication" {
+  source = "./modules/replication"
+  count  = local.is_local ? 0 : 1
+
+  providers = {
+    aws         = aws
+    aws.replica = aws.replica
+  }
+
+  enabled        = local.enable_crr_computed
+  environment    = var.environment
+  name_prefix    = local.name_prefix
+  tags           = local.common_tags
+  replica_region = var.replica_region
+
+  source_buckets = merge(
+    {
+      files     = { id = module.storage.bucket_names.files, arn = module.storage.bucket_arns.files }
+      processed = { id = module.storage.bucket_names.processed, arn = module.storage.bucket_arns.processed }
+    },
+    var.enable_cloudtrail && length(module.audit) > 0 && module.audit[0].cloudtrail_s3_bucket != null ? {
+      cloudtrail_logs = {
+        id  = module.audit[0].cloudtrail_s3_bucket
+        arn = module.audit[0].cloudtrail_s3_bucket_arn
+      }
+    } : {}
+  )
+
+  depends_on = [module.storage, module.audit]
 }

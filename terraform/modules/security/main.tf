@@ -126,6 +126,7 @@ resource "aws_kms_key" "master" {
     Compliance  = "FIPS-140-3-Oriented"
     Purpose     = "Data encryption at rest"
   })
+
 }
 
 resource "aws_kms_alias" "master" {

@@ -1,36 +1,46 @@
 current:
-  gateway: "0.0.4"
-  processor: "0.0.6"
-  event-schema: "0.0.8"
+  gateway: "0.0.6"
+  processor: "0.0.10"
+  event-schema: "1.1.1"
+  infra: "0.0.7"
+  code-ci: "0.0.48"
 
 compatibility:
   gateway:
-    processor: "0.0.4"
-    event-schema: "0.0.7"
-  
+    processor: ">=0.0.9"
+    event-schema: ">=1.1.0,<1.2.0"
+
   processor:
-    gateway: "0.0.3"
-    event-schema: "0.0.7"
+    gateway: ">=0.0.5"
+    event-schema: ">=1.1.0,<1.2.0"
 
 breaking-changes:
+  - date: "2026-05-15"
+    service: event-schema
+    version: "1.1.0"
+    description: "Required schemaVersion=1.1.0 const, fileId/eventId/correlationId UUIDv4, securityContext.kmsKeyId ARN pattern, AES/GCM/NoPadding only, SHA-256 checksum required"
+    affected:
+      - gateway: "<0.0.5"
+      - processor: "<0.0.9"
+
   - date: "2025-12-15"
     service: event-schema
     version: "0.0.7"
     description: "Added securityContext.keyRotationId field"
     affected:
-      - gateway: "0.0.3"
-      - processor: "0.0.4"
-  
+      - gateway: "<0.0.4"
+      - processor: "<0.0.5"
+
   - date: "2025-11-01"
     service: processor
     version: "0.0.4"
     description: "Changed DynamoDB schema to PK/SK pattern"
     affected:
-      - gateway: "0.0.2"
+      - gateway: "<0.0.3"
 
 e2e:
   strategy: "new-vs-stable"
-  
+
   nightly-matrix:
     - gateway: "current"
       processor: "current"

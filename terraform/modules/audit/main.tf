@@ -131,8 +131,12 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail_logs" {
 resource "aws_cloudwatch_log_group" "cloudtrail" {
   count = var.enable_cloudtrail ? 1 : 0
 
-  name              = "/aws/cloudtrail/${var.name_prefix}"
-  retention_in_days = 365
+  name = "/aws/cloudtrail/${var.name_prefix}"
+  # FedRAMP Moderate AU-11 requires audit data retention; the program's
+  # baseline is 3 years (1095 days) for moderate impact systems. Production
+  # uses the longer 7-year window to align with typical financial/compliance
+  # retention requirements. Lower environments use 1 year.
+  retention_in_days = var.environment == "prod" ? 2557 : (var.environment == "staging" ? 1095 : 365)
   kms_key_id        = var.kms_key_arn
 
   tags = var.tags
@@ -255,6 +259,8 @@ resource "aws_cloudtrail" "main" {
   cloud_watch_logs_role_arn     = aws_iam_role.cloudtrail_cloudwatch[0].arn
   sns_topic_name                = aws_sns_topic.cloudtrail_alerts[0].name
 
+  # Management events plus S3/Lambda data events. DynamoDB item history is
+  # covered by application audit records and outbox state, not KMS events.
   event_selector {
     read_write_type           = "All"
     include_management_events = true
@@ -262,6 +268,14 @@ resource "aws_cloudtrail" "main" {
     data_resource {
       type   = "AWS::S3::Object"
       values = ["arn:${data.aws_partition.current.partition}:s3"]
+    }
+
+    data_resource {
+      type = "AWS::Lambda::Function"
+      values = [
+        "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:${var.name_prefix}-processor",
+        "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:${var.name_prefix}-outbox-publisher"
+      ]
     }
   }
 
@@ -588,6 +602,11 @@ output "cloudtrail_arn" {
 output "cloudtrail_s3_bucket" {
   description = "S3 bucket for CloudTrail logs"
   value       = var.enable_cloudtrail ? aws_s3_bucket.cloudtrail_logs[0].id : null
+}
+
+output "cloudtrail_s3_bucket_arn" {
+  description = "ARN of the S3 bucket holding CloudTrail logs (for cross-region replication wiring)."
+  value       = var.enable_cloudtrail ? aws_s3_bucket.cloudtrail_logs[0].arn : null
 }
 
 output "guardduty_detector_id" {

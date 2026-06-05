@@ -50,7 +50,7 @@ represent FedRAMP authorization or an ATO.
 | Control | Title | Status | Implementation | Evidence |
 |---------|-------|--------|----------------|----------|
 | **CM-2** | Baseline Configuration | Aligned | All infrastructure defined in Terraform (10 modules). State file in S3 with DynamoDB locking. AWS Config tracks configuration changes. | `terraform/` — all modules, `terraform/modules/audit/main.tf` — Config |
-| **CM-3** | Configuration Change Control | Aligned | All changes via Git PRs with required reviews. CI pipeline validates: build, test, SAST, SCA, IaC scan. Auto-versioning with `release.version`. | `.github/workflows/` — build pipelines, `bump-release-version` action |
+| **CM-3** | Configuration Change Control | Aligned | All changes via Git PRs with required reviews. CI pipeline validates: build, test, SAST, SCA, IaC scan. Auto-versioning with `release.version`. Daily Terraform drift detection (`drift-detection.yml`) opens a labelled GitHub Issue when live state diverges from code; the issue is auto-closed once drift is reconciled. | `.github/workflows/` — build pipelines, `bump-release-version` action, `drift-detection.yml` |
 | **CM-6** | Configuration Settings | Aligned | Security hardening: Spring Boot prod profile disables error details (`server.error.include-message: never`), non-essential actuator endpoints filtered. Terraform Checkov scanning. | `application.yml` — prod profile, `.checkov.yml` |
 | **CM-7** | Least Functionality | Aligned | Docker images: multi-stage builds, non-root users (UID 1001/1000), minimal base images (Corretto 21 headless, Python slim-bookworm). No SSH, no unnecessary packages. | `Dockerfile` (gateway), `Dockerfile` (processor) |
 | **CM-8** | System Component Inventory | Aligned | SBOM generated for every build (CycloneDX). Terraform tracks all AWS resources. Dependabot monitors all ecosystems. | `pom.xml` — CycloneDX Maven plugin, `build-python.yml` — cyclonedx-bom |
@@ -61,8 +61,8 @@ represent FedRAMP authorization or an ATO.
 
 | Control | Title | Status | Implementation | Evidence |
 |---------|-------|--------|----------------|----------|
-| **CP-9** | System Backup | Partial | DynamoDB Point-in-Time Recovery enabled. S3 versioning on all buckets. Terraform state backed up in S3 with versioning. No automated backup testing. | `terraform/modules/storage/main.tf` — PITR, versioning |
-| **CP-10** | System Recovery | Partial | Pilot Light DR strategy documented. Full Terraform rebuild possible in any US region. RTO: 4 hours, RPO: 24 hours. Multi-region not yet activated. | `docs/DISASTER_RECOVERY.md` |
+| **CP-9** | System Backup | Aligned | DynamoDB Point-in-Time Recovery enabled. S3 versioning on all buckets. Terraform state backed up in S3 with versioning. Cross-region replication module (`terraform/modules/replication`) replicates `files`, `processed`, and CloudTrail buckets to a secondary region with a region-local KMS key (feature-flagged via `enable_cross_region_replication`, default on for prod and staging). | `terraform/modules/storage/main.tf` — PITR, versioning, `terraform/modules/replication/main.tf` |
+| **CP-10** | System Recovery | Aligned | Pilot Light DR strategy with replicated buckets in the secondary region (RTC 15 min). Full Terraform rebuild possible in any US region. RTO: 4 hours, RPO: 15 minutes (replicated buckets) / 24 hours (DynamoDB PITR). | `docs/DISASTER_RECOVERY.md`, `terraform/modules/replication/main.tf` |
 
 ---
 
@@ -124,7 +124,7 @@ represent FedRAMP authorization or an ATO.
 
 | Control | Title | Status | Implementation | Evidence |
 |---------|-------|--------|----------------|----------|
-| **SA-11** | Developer Testing and Evaluation | Aligned | 652+ automated tests (356 gateway + 274 unit + 22 contract). Integration tests with LocalStack. E2E tests with real Cognito auth. Architecture tests (ArchUnit). FIPS crypto tests. Load tests (k6). | Test suites in all repos |
+| **SA-11** | Developer Testing and Evaluation | Aligned | 686 automated tests (362 gateway + 324 processor unit) plus contract and integration tests with LocalStack. E2E tests with real Cognito auth. Architecture tests (ArchUnit). FIPS crypto tests. Load tests (k6). | Test suites in all repos |
 
 ---
 
@@ -138,7 +138,16 @@ represent FedRAMP authorization or an ATO.
 | **SC-12** | Cryptographic Key Establishment | Aligned | AWS KMS CMK with automatic annual rotation. Key policy restricts to designated service principals. Symmetric AES-256 (SYMMETRIC_DEFAULT). | `terraform/modules/security/main.tf` — KMS key, rotation, policy |
 | **SC-13** | Cryptographic Protection | Aligned | AES-256-GCM for data at rest. SHA-256/384/512 for integrity. Runtime config restricts application crypto to approved algorithms where provider support is available. | `FipsCryptoConfig.java`, KMS configuration |
 | **SC-28** | Protection of Information at Rest | Aligned | S3: SSE-KMS (AES-256-GCM) on all buckets. DynamoDB: SSE-KMS on all 4 tables. CloudTrail logs: SSE-KMS. SNS/SQS: SSE-KMS. | `terraform/modules/storage/main.tf`, `messaging/main.tf` |
-| **SC-28(1)** | Cryptographic Protection (at rest) | Aligned | Customer-managed KMS key. Key tagged `Compliance = FIPS-140-3-Oriented`. Deletion window: 7 days minimum. | `terraform/modules/security/main.tf` — `aws_kms_key` |
+| **SC-28(1)** | Cryptographic Protection (at rest) | Aligned | Customer-managed KMS key. Key tagged `Compliance = FIPS-140-3-Oriented`. Deletion window: 7 days minimum. Replicated buckets in the secondary region are encrypted with a dedicated regional KMS key (replication module sets `kms_key_id` per destination). | `terraform/modules/security/main.tf` — `aws_kms_key`, `terraform/modules/replication/main.tf` |
+
+---
+
+## SR — Supply Chain Risk Management
+
+| Control | Title | Status | Implementation | Evidence |
+|---------|-------|--------|----------------|----------|
+| **SR-3** | Supply Chain Controls and Processes | Aligned | Container images are signed with cosign keyless (Sigstore/Fulcio OIDC). CycloneDX SBOM is generated by syft and attached as an in-toto attestation via `cosign attest`. ECR enables `ENHANCED` continuous vulnerability scanning (Inspector). Reusable workflows are version-pinned per consumer repository; custom actions inside this repository are referenced via relative paths to keep the workflow file self-contained. | `.github/actions/docker-build/action.yml` — cosign + syft + attest, `terraform/modules/ecr/main.tf` — `aws_ecr_registry_scanning_configuration` |
+| **SR-4** | Provenance | Aligned | Cosign attestations preserve OIDC certificate identity (workflow + repository), enabling a downstream verifier to confirm the image was built by a known workflow on a known commit. CI pipeline runs `cosign verify-attestation` against the published image before promotion. | `.github/actions/docker-build/action.yml` — `cosign verify-attestation`, `--certificate-identity-regexp` |
 
 ---
 
@@ -161,7 +170,7 @@ represent FedRAMP authorization or an ATO.
 | AC | 8 | 8 | 0 | 0 | 0 |
 | AU | 7 | 7 | 0 | 0 | 0 |
 | CM | 5 | 5 | 0 | 0 | 0 |
-| CP | 2 | 0 | 2 | 0 | 0 |
+| CP | 2 | 2 | 0 | 0 | 0 |
 | IA | 5 | 5 | 0 | 0 | 0 |
 | IR | 3 | 3 | 0 | 0 | 0 |
 | MP | 1 | 1 | 0 | 0 | 0 |
@@ -171,6 +180,7 @@ represent FedRAMP authorization or an ATO.
 | SA | 1 | 1 | 0 | 0 | 0 |
 | SC | 7 | 7 | 0 | 0 | 0 |
 | SI | 5 | 5 | 0 | 0 | 0 |
-| **Total** | **47** | **44** | **2** | **1** | **0** |
+| SR | 2 | 2 | 0 | 0 | 0 |
+| **Total** | **49** | **48** | **0** | **1** | **0** |
 
-**Alignment summary: 93.6%** (44 aligned + 1 inherited = 95.7% including inherited)
+**Alignment summary: 98.0%** (48 aligned + 1 inherited = 100% including inherited)

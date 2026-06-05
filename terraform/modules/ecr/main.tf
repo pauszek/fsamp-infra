@@ -67,6 +67,25 @@ resource "aws_ecr_repository" "repos" {
     Compliance  = "FIPS-140-3-Oriented"
   })
 }
+
+# FedRAMP RA-5 (Vulnerability Monitoring): switch ECR registry-wide to
+# Amazon Inspector enhanced scanning, which provides continuous scanning
+# of in-use images and richer SBOM-based findings than the default basic
+# scanner. This is a registry-wide setting; it must be applied once per
+# account/region and is therefore safe to manage from this module because
+# the FSAMP project owns the entire registry inside its dedicated AWS
+# account boundary.
+resource "aws_ecr_registry_scanning_configuration" "enhanced" {
+  scan_type = "ENHANCED"
+
+  rule {
+    scan_frequency = "CONTINUOUS_SCAN"
+    repository_filter {
+      filter      = "${var.name_prefix}-*"
+      filter_type = "WILDCARD"
+    }
+  }
+}
 resource "aws_ecr_lifecycle_policy" "repos" {
   for_each = aws_ecr_repository.repos
 

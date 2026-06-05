@@ -81,6 +81,22 @@ resource "aws_sqs_queue" "dlq" {
   })
 }
 
+# Dedicated DLQ for outbox publisher Lambda. Receives DynamoDB Streams
+# batches that exhaust the maximum_retry_attempts budget configured on the
+# event source mapping. Without a dedicated destination, failed batches are
+# silently dropped, which would break the at-least-once delivery guarantee
+# of the transactional outbox pattern. (FedRAMP CP-9, AU-2)
+resource "aws_sqs_queue" "outbox_publisher_dlq" {
+  name                      = "${var.name_prefix}-outbox-publisher-dlq"
+  message_retention_seconds = 1209600
+  kms_master_key_id         = var.kms_key_id
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-outbox-publisher-dlq"
+    Purpose = "DLQ for failed DynamoDB Streams batches in the outbox publisher"
+  })
+}
+
 resource "aws_sqs_queue" "file_processing" {
   name                       = "${var.name_prefix}-file-processing"
   visibility_timeout_seconds = 300
@@ -292,17 +308,19 @@ output "topic_arns" {
 output "queue_urls" {
   description = "Map of queue purposes to URLs"
   value = {
-    file_processing  = aws_sqs_queue.file_processing.url
-    analysis_results = aws_sqs_queue.analysis_results.url
-    dlq              = aws_sqs_queue.dlq.url
+    file_processing      = aws_sqs_queue.file_processing.url
+    analysis_results     = aws_sqs_queue.analysis_results.url
+    dlq                  = aws_sqs_queue.dlq.url
+    outbox_publisher_dlq = aws_sqs_queue.outbox_publisher_dlq.url
   }
 }
 
 output "queue_arns" {
   description = "Map of queue purposes to ARNs"
   value = {
-    file_processing  = aws_sqs_queue.file_processing.arn
-    analysis_results = aws_sqs_queue.analysis_results.arn
-    dlq              = aws_sqs_queue.dlq.arn
+    file_processing      = aws_sqs_queue.file_processing.arn
+    analysis_results     = aws_sqs_queue.analysis_results.arn
+    dlq                  = aws_sqs_queue.dlq.arn
+    outbox_publisher_dlq = aws_sqs_queue.outbox_publisher_dlq.arn
   }
 }

@@ -1,0 +1,75 @@
+name: Drift Detection
+
+# Scheduled Terraform drift detection for FSAMP environments.
+# Runs `terraform plan -detailed-exitcode` against each non-local
+# environment and opens a GitHub issue when state diverges from code.
+# FedRAMP CM-3 / CM-6.
+#
+# Backend bucket and lock-table names follow the same convention as
+# `deploy-environment.yml` (`fsamp-${env}-${account_id}-${region}-tfstate`
+# and `fsamp-${env}-terraform-locks`). The account id is sourced from
+# environment-scoped repository variables (`AWS_ACCOUNT_ID`) so the
+# caller stays read-only.
+
+on:
+  schedule:
+    # 03:17 UTC every day. Off-peak for the platform; the unusual minute
+    # avoids contention with other repository scheduled runs.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Override: run drift detection for a single environment'
+        type: choice
+        required: false
+        default: 'all'
+        options:
+          - all
+          - dev
+          - staging
+          - prod
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+jobs:
+  dev:
+    if: github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'dev'
+    uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@main
+    with:
+      environment: dev
+      aws_region: us-west-2
+      backend_bucket: fsamp-dev-${{ vars.AWS_ACCOUNT_ID_DEV }}-us-west-2-tfstate
+      backend_dynamodb_table: fsamp-dev-terraform-locks
+      backend_key: dev/terraform.tfstate
+      tfvars_file: envs/dev.tfvars
+    secrets:
+      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+
+  staging:
+    if: github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'staging'
+    uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@main
+    with:
+      environment: staging
+      aws_region: us-west-2
+      backend_bucket: fsamp-staging-${{ vars.AWS_ACCOUNT_ID_STAGING }}-us-west-2-tfstate
+      backend_dynamodb_table: fsamp-staging-terraform-locks
+      backend_key: staging/terraform.tfstate
+      tfvars_file: envs/staging.tfvars
+    secrets:
+      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+
+  prod:
+    if: github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'prod'
+    uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@main
+    with:
+      environment: prod
+      aws_region: us-west-2
+      backend_bucket: fsamp-prod-${{ vars.AWS_ACCOUNT_ID_PROD }}-us-west-2-tfstate
+      backend_dynamodb_table: fsamp-prod-terraform-locks
+      backend_key: prod/terraform.tfstate
+      tfvars_file: envs/prod.tfvars
+    secrets:
+      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}

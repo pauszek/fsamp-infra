@@ -73,6 +73,12 @@ variable "log_group_name" {
   type        = string
 }
 
+variable "log_retention_days" {
+  description = "CloudWatch log retention in days for ECS task logs"
+  type        = number
+  default     = 365
+}
+
 variable "sqs_queue_arn" {
   description = "SQS queue ARN for Lambda trigger"
   type        = string
@@ -142,15 +148,25 @@ variable "outbox_publisher_image" {
 }
 
 variable "gateway_cpu" {
-  description = "CPU units for gateway task"
+  description = "CPU units for gateway task. Spring Boot 3.5 with ACCP and BC-FIPS providers needs at least 512 to start within reasonable time."
   type        = number
-  default     = 256
+  default     = 512
+
+  validation {
+    condition     = contains([256, 512, 1024, 2048, 4096], var.gateway_cpu)
+    error_message = "Fargate gateway_cpu must be one of 256, 512, 1024, 2048, 4096."
+  }
 }
 
 variable "gateway_memory" {
-  description = "Memory (MB) for gateway task"
+  description = "Memory (MB) for gateway task. Java 21 + Spring Boot + Tika + AWS SDK v2 typically needs 1024 MB minimum to avoid OOM during cold start under load."
   type        = number
-  default     = 512
+  default     = 1024
+
+  validation {
+    condition     = var.gateway_memory >= 512
+    error_message = "Fargate gateway_memory must be at least 512 MB; values below 1024 are likely to cause OOM with the FIPS provider stack."
+  }
 }
 
 variable "processor_memory" {
@@ -224,6 +240,23 @@ variable "outbox_stream_arn" {
   type        = string
   default     = ""
 }
+
+variable "outbox_publisher_dlq_arn" {
+  description = "ARN of the SQS queue that receives outbox publisher batches that exhaust their retry budget. Required by the transactional outbox at-least-once guarantee."
+  type        = string
+  default     = ""
+}
+resource "aws_cloudwatch_log_group" "ecs" {
+  name              = var.log_group_name
+  retention_in_days = var.log_retention_days
+  kms_key_id        = var.kms_key_arn
+
+  tags = merge(var.tags, {
+    Name        = var.log_group_name
+    Environment = var.environment
+  })
+}
+
 resource "aws_ecs_cluster" "main" {
   name = "${var.name_prefix}-cluster"
 
@@ -247,6 +280,8 @@ resource "aws_ecs_cluster" "main" {
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-cluster"
   })
+
+  depends_on = [aws_cloudwatch_log_group.ecs]
 }
 
 resource "aws_ecs_cluster_capacity_providers" "main" {
@@ -362,6 +397,8 @@ resource "aws_ecs_task_definition" "gateway" {
     Name    = "${var.name_prefix}-gateway"
     Service = "gateway"
   })
+
+  depends_on = [aws_cloudwatch_log_group.ecs]
 }
 resource "aws_ecs_service" "gateway" {
   name            = "${var.name_prefix}-gateway"
@@ -458,6 +495,7 @@ locals {
     SNS_TOPIC_ARN                = var.sns_topic_arn
     OUTBOX_TABLE_NAME            = var.outbox_table_name
     MAX_RETRY_COUNT              = "3"
+    PUBLISH_CLAIM_TTL_SECONDS    = "300"
     USE_FIPS_ENDPOINT            = var.environment == "local" ? "false" : tostring(var.use_fips_endpoint)
     FIPS_REQUIRED                = var.environment == "local" ? "false" : "true"
   }
@@ -510,9 +548,7 @@ resource "aws_ecs_task_definition" "processor" {
     Service = "processor"
   })
 
-  depends_on = [
-    aws_cloudwatch_log_group.processor
-  ]
+  depends_on = [aws_cloudwatch_log_group.ecs]
 }
 resource "aws_ecs_service" "processor" {
   count = var.enable_processor_ecs ? 1 : 0
@@ -548,7 +584,17 @@ resource "aws_ecs_service" "processor" {
 }
 
 resource "aws_lambda_function" "processor" {
-  # checkov:skip=CKV_AWS_272: Code signing is tracked as production hardening; CI gates images with scans and SBOM.
+  # Container-image Lambdas cannot use AWS Signer code signing profiles
+  # (CKV_AWS_272) because that feature is restricted to ZIP-based functions.
+  # Supply-chain integrity is therefore enforced one layer down:
+  #   - ECR repositories run with image_tag_mutability=IMMUTABLE so tags
+  #     cannot be re-pushed once published.
+  #   - All images are signed keyless with cosign and Sigstore Fulcio in
+  #     the build pipeline; the Lambda execution role only has read access
+  #     to the FSAMP-owned ECR registry.
+  #   - Inspector enhanced continuous scanning (FedRAMP RA-5) covers the
+  #     image after deployment.
+  # checkov:skip=CKV_AWS_272: Container Lambdas use cosign + ECR immutable tags + Inspector enhanced scanning instead.
   function_name = "${var.name_prefix}-processor"
   role          = var.lambda_role_arn
   timeout       = var.processor_timeout
@@ -611,7 +657,9 @@ resource "aws_lambda_event_source_mapping" "sqs_trigger" {
 
 }
 resource "aws_lambda_function" "outbox_publisher" {
-  # checkov:skip=CKV_AWS_272: Code signing is tracked as production hardening; CI gates images with scans and SBOM.
+  # See processor function above for the supply-chain rationale; the same
+  # constraints apply to all container-image Lambdas in the platform.
+  # checkov:skip=CKV_AWS_272: Container Lambdas use cosign + ECR immutable tags + Inspector enhanced scanning instead.
   function_name = "${var.name_prefix}-outbox-publisher"
   role          = var.lambda_role_arn
   timeout       = 60
@@ -678,6 +726,16 @@ resource "aws_lambda_event_source_mapping" "outbox_stream" {
   bisect_batch_on_function_error = true
 
   parallelization_factor = 2
+
+  # Persist failed batches that exhaust retries to a dedicated SQS queue
+  # so the at-least-once guarantee of the outbox pattern survives
+  # downstream errors. Without this, DDB Streams records dropped after
+  # max_retries are lost permanently. (FedRAMP CP-9, AU-2)
+  destination_config {
+    on_failure {
+      destination_arn = var.outbox_publisher_dlq_arn
+    }
+  }
 
   filter_criteria {
     filter {
@@ -762,6 +820,21 @@ output "processor_service_name" {
 output "gateway_alb_arn" {
   description = "ARN of the internal Gateway ALB"
   value       = aws_lb.gateway.arn
+}
+
+output "gateway_alb_arn_suffix" {
+  description = "ARN suffix of the internal Gateway ALB (e.g. app/<name>/<id>) used for CloudWatch ALB metrics"
+  value       = aws_lb.gateway.arn_suffix
+}
+
+output "gateway_alb_target_group_arn_suffix" {
+  description = "ARN suffix of the gateway ALB target group used for CloudWatch ALB metrics"
+  value       = aws_lb_target_group.gateway.arn_suffix
+}
+
+output "ecs_log_group_name" {
+  description = "CloudWatch log group name used by ECS tasks"
+  value       = aws_cloudwatch_log_group.ecs.name
 }
 
 output "gateway_alb_dns_name" {

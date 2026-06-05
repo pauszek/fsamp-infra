@@ -39,17 +39,24 @@ variable "alarm_sns_topic_arn" {
   type        = string
   default     = ""
 }
-resource "aws_cloudwatch_log_group" "ecs" {
-  name              = "/ecs/${var.name_prefix}"
-  retention_in_days = var.log_retention_days
-  kms_key_id        = var.kms_key_arn
 
-  tags = merge(var.tags, {
-    Name        = "/ecs/${var.name_prefix}"
-    Environment = var.environment
-  })
+variable "gateway_alb_full_name" {
+  description = "Full name of the gateway ALB (e.g. app/fsamp-gw/abc123) used for ALB-side 5xx alarms. Empty value disables the alarm."
+  type        = string
+  default     = ""
 }
 
+variable "gateway_alb_target_group_full_name" {
+  description = "Full name of the gateway ALB target group (e.g. targetgroup/fsamp-gw/abc123) used for target-side 5xx alarms. Empty value disables the alarm."
+  type        = string
+  default     = ""
+}
+
+variable "outbox_table_name" {
+  description = "DynamoDB outbox table name. Empty value disables the stuck outbox alarm."
+  type        = string
+  default     = ""
+}
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.name_prefix}"
   retention_in_days = var.log_retention_days
@@ -500,6 +507,59 @@ resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
   })
 }
 
+# DLQ messages must be drained before SQS retention expires (default 14 days)
+# otherwise failed events vanish silently. (FedRAMP AU-2, CP-9)
+resource "aws_cloudwatch_metric_alarm" "dlq_message_age" {
+  alarm_name          = "${var.name_prefix}-dlq-message-age"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  namespace           = "AWS/SQS"
+  period              = 3600
+  statistic           = "Maximum"
+  threshold           = 86400 # 24h - well under 14d retention
+  alarm_description   = "DLQ message older than 24h - failed event was not investigated and will be lost when SQS retention expires"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    QueueName = "${var.name_prefix}-dlq"
+  }
+
+  alarm_actions = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+
+  tags = merge(var.tags, {
+    Name     = "${var.name_prefix}-dlq-message-age"
+    Severity = "high"
+  })
+}
+
+# Outbox publisher DLQ alarm: any message landing here means a DynamoDB
+# Streams batch was permanently dropped after exhausting retries.
+resource "aws_cloudwatch_metric_alarm" "outbox_publisher_dlq_messages" {
+  alarm_name          = "${var.name_prefix}-outbox-publisher-dlq-messages"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  alarm_description   = "Outbox publisher DLQ has messages - DynamoDB Streams batch dropped after retries exhausted; outbox at-least-once guarantee compromised"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    QueueName = "${var.name_prefix}-outbox-publisher-dlq"
+  }
+
+  alarm_actions = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+  ok_actions    = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+
+  tags = merge(var.tags, {
+    Name     = "${var.name_prefix}-outbox-publisher-dlq-messages"
+    Severity = "critical"
+  })
+}
+
 resource "aws_cloudwatch_metric_alarm" "processor_latency" {
   alarm_name          = "${var.name_prefix}-processor-high-latency"
   comparison_operator = "GreaterThanThreshold"
@@ -620,14 +680,123 @@ resource "aws_cloudwatch_metric_alarm" "sqs_message_age" {
   })
 }
 
+resource "aws_cloudwatch_metric_alarm" "gateway_5xx_target" {
+  count = var.gateway_alb_target_group_full_name != "" && var.gateway_alb_full_name != "" ? 1 : 0
+
+  alarm_name          = "${var.name_prefix}-gateway-5xx"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "HTTPCode_Target_5XX_Count"
+  namespace           = "AWS/ApplicationELB"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 5
+  alarm_description   = "Gateway service is returning HTTP 5xx responses through the ALB"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    TargetGroup  = var.gateway_alb_target_group_full_name
+    LoadBalancer = var.gateway_alb_full_name
+  }
+
+  alarm_actions = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+  ok_actions    = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+
+  tags = merge(var.tags, {
+    Name     = "${var.name_prefix}-gateway-5xx"
+    Severity = "critical"
+  })
+}
+
+resource "aws_cloudwatch_metric_alarm" "gateway_5xx_alb" {
+  count = var.gateway_alb_full_name != "" ? 1 : 0
+
+  alarm_name          = "${var.name_prefix}-gateway-alb-5xx"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "HTTPCode_ELB_5XX_Count"
+  namespace           = "AWS/ApplicationELB"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 5
+  alarm_description   = "ALB-side HTTP 5xx responses (load balancer cannot route to a healthy target)"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    LoadBalancer = var.gateway_alb_full_name
+  }
+
+  alarm_actions = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+  ok_actions    = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+
+  tags = merge(var.tags, {
+    Name     = "${var.name_prefix}-gateway-alb-5xx"
+    Severity = "critical"
+  })
+}
+
+# Publish failures are emitted by the outbox publisher itself. DynamoDB
+# consumed capacity is not used as an event counter.
+resource "aws_cloudwatch_metric_alarm" "outbox_publish_failures" {
+  count = var.outbox_table_name != "" ? 1 : 0
+
+  alarm_name          = "${var.name_prefix}-outbox-publish-failures"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  threshold           = 0
+  alarm_description   = "Outbox publisher reported failed publish or retry attempts"
+  treat_missing_data  = "notBreaching"
+
+  metric_query {
+    id          = "total_failures"
+    expression  = "FILL(publish_failures, 0) + FILL(retry_failures, 0)"
+    label       = "Outbox Publish Failures"
+    return_data = true
+  }
+
+  metric_query {
+    id = "publish_failures"
+    metric {
+      metric_name = "EventsFailedToPublish"
+      namespace   = "FSAMP/OutboxPublisher"
+      period      = 300
+      stat        = "Sum"
+    }
+  }
+
+  metric_query {
+    id = "retry_failures"
+    metric {
+      metric_name = "EventsRetryFailed"
+      namespace   = "FSAMP/OutboxPublisher"
+      period      = 300
+      stat        = "Sum"
+    }
+  }
+
+  alarm_actions = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+  ok_actions    = var.alarm_sns_topic_arn != "" ? [var.alarm_sns_topic_arn] : []
+
+  tags = merge(var.tags, {
+    Name     = "${var.name_prefix}-outbox-publish-failures"
+    Severity = "high"
+  })
+}
+
 resource "aws_cloudwatch_composite_alarm" "critical_health" {
   alarm_name = "${var.name_prefix}-critical-health"
 
-  alarm_rule = join(" OR ", [
-    "ALARM(${aws_cloudwatch_metric_alarm.dlq_messages.alarm_name})",
-    "ALARM(${aws_cloudwatch_metric_alarm.processor_errors.alarm_name})",
-    "ALARM(${aws_cloudwatch_metric_alarm.outbox_publisher_errors.alarm_name})"
-  ])
+  alarm_rule = join(" OR ", concat(
+    [
+      "ALARM(${aws_cloudwatch_metric_alarm.dlq_messages.alarm_name})",
+      "ALARM(${aws_cloudwatch_metric_alarm.outbox_publisher_dlq_messages.alarm_name})",
+      "ALARM(${aws_cloudwatch_metric_alarm.processor_errors.alarm_name})",
+      "ALARM(${aws_cloudwatch_metric_alarm.outbox_publisher_errors.alarm_name})",
+    ],
+    [for a in aws_cloudwatch_metric_alarm.gateway_5xx_target : "ALARM(${a.alarm_name})"],
+    [for a in aws_cloudwatch_metric_alarm.gateway_5xx_alb : "ALARM(${a.alarm_name})"],
+    [for a in aws_cloudwatch_metric_alarm.outbox_publish_failures : "ALARM(${a.alarm_name})"],
+  ))
 
   alarm_description = "CRITICAL: FSAMP system health degraded - requires immediate attention"
 
@@ -642,7 +811,7 @@ resource "aws_cloudwatch_composite_alarm" "critical_health" {
 output "log_group_names" {
   description = "Map of service to log group names"
   value = {
-    ecs         = aws_cloudwatch_log_group.ecs.name
+    ecs         = "/ecs/${var.name_prefix}"
     lambda      = aws_cloudwatch_log_group.lambda.name
     api_gateway = aws_cloudwatch_log_group.api_gateway.name
   }
@@ -661,14 +830,19 @@ output "dashboard_url" {
 output "alarm_arns" {
   description = "Map of alarm names to ARNs"
   value = {
-    processor_errors        = aws_cloudwatch_metric_alarm.processor_errors.arn
-    outbox_publisher_errors = aws_cloudwatch_metric_alarm.outbox_publisher_errors.arn
-    dlq_messages            = aws_cloudwatch_metric_alarm.dlq_messages.arn
-    processor_latency       = aws_cloudwatch_metric_alarm.processor_latency.arn
-    processor_throttles     = aws_cloudwatch_metric_alarm.processor_throttles.arn
-    dynamodb_throttles      = aws_cloudwatch_metric_alarm.dynamodb_throttles.arn
-    sqs_backlog             = aws_cloudwatch_metric_alarm.sqs_backlog.arn
-    sqs_message_age         = aws_cloudwatch_metric_alarm.sqs_message_age.arn
-    critical_health         = aws_cloudwatch_composite_alarm.critical_health.arn
+    processor_errors              = aws_cloudwatch_metric_alarm.processor_errors.arn
+    outbox_publisher_errors       = aws_cloudwatch_metric_alarm.outbox_publisher_errors.arn
+    dlq_messages                  = aws_cloudwatch_metric_alarm.dlq_messages.arn
+    dlq_message_age               = aws_cloudwatch_metric_alarm.dlq_message_age.arn
+    outbox_publisher_dlq_messages = aws_cloudwatch_metric_alarm.outbox_publisher_dlq_messages.arn
+    processor_latency             = aws_cloudwatch_metric_alarm.processor_latency.arn
+    processor_throttles           = aws_cloudwatch_metric_alarm.processor_throttles.arn
+    dynamodb_throttles            = aws_cloudwatch_metric_alarm.dynamodb_throttles.arn
+    sqs_backlog                   = aws_cloudwatch_metric_alarm.sqs_backlog.arn
+    sqs_message_age               = aws_cloudwatch_metric_alarm.sqs_message_age.arn
+    gateway_5xx_target            = try(aws_cloudwatch_metric_alarm.gateway_5xx_target[0].arn, null)
+    gateway_5xx_alb               = try(aws_cloudwatch_metric_alarm.gateway_5xx_alb[0].arn, null)
+    outbox_publish_failures       = try(aws_cloudwatch_metric_alarm.outbox_publish_failures[0].arn, null)
+    critical_health               = aws_cloudwatch_composite_alarm.critical_health.arn
   }
 }

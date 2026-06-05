@@ -533,6 +533,18 @@ resource "aws_wafv2_web_acl_logging_configuration" "api" {
       name = "authorization"
     }
   }
+
+  redacted_fields {
+    single_header {
+      name = "cookie"
+    }
+  }
+
+  redacted_fields {
+    single_header {
+      name = "x-idempotency-key"
+    }
+  }
 }
 output "api_id" {
   description = "API Gateway REST API ID"

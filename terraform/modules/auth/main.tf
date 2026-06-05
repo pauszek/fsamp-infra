@@ -67,7 +67,14 @@ resource "aws_cognito_user_pool" "main" {
     temporary_password_validity_days = 7
   }
 
-  mfa_configuration = var.environment == "prod" ? "ON" : "OPTIONAL"
+  # FedRAMP IA-2(1): MFA required for all environments that handle
+  # production-shaped credentials. Staging mirrors prod so it must enforce
+  # MFA. Dev keeps OPTIONAL to avoid blocking exploratory work.
+  mfa_configuration = (
+    var.environment == "prod" || var.environment == "staging"
+    ? "ON"
+    : "OPTIONAL"
+  )
 
   software_token_mfa_configuration {
     enabled = true
@@ -117,7 +124,15 @@ resource "aws_cognito_user_pool" "main" {
   }
 
   user_pool_add_ons {
-    advanced_security_mode = var.environment == "prod" ? "ENFORCED" : "OFF"
+    # FedRAMP SI-4 / AC-7: threat detection (compromised credentials,
+    # risky logins, IP rate limiting). Enforced in environments exposed
+    # to validation traffic (staging, prod), audit-only in dev so risky
+    # development behaviour is observable but does not block work.
+    advanced_security_mode = (
+      var.environment == "prod" || var.environment == "staging"
+      ? "ENFORCED"
+      : (var.environment == "dev" ? "AUDIT" : "OFF")
+    )
   }
 
   device_configuration {
@@ -165,6 +180,10 @@ resource "aws_cognito_user_pool_client" "web" {
   }
 
   prevent_user_existence_errors = "ENABLED"
+  # FedRAMP IA-5: revoke compromised refresh tokens. Without this Cognito
+  # ignores RevokeToken API calls and refresh tokens remain valid until
+  # natural expiration.
+  enable_token_revocation = true
 
   explicit_auth_flows = [
     "ALLOW_USER_SRP_AUTH",
@@ -204,6 +223,7 @@ resource "aws_cognito_user_pool_client" "service" {
   }
 
   prevent_user_existence_errors = "ENABLED"
+  enable_token_revocation       = true
 }
 resource "aws_cognito_resource_server" "api" {
   identifier   = "https://${var.name_prefix}-api"

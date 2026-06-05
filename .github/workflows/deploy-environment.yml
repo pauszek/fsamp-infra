@@ -69,10 +69,10 @@ jobs:
       has_changes: ${{ steps.plan.outputs.has_changes }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ inputs.aws_region }}
@@ -185,7 +185,7 @@ jobs:
           aws dynamodb wait table-exists --table-name "${LOCK_TABLE}"
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
@@ -232,7 +232,7 @@ jobs:
 
       - name: Upload plan
         if: steps.plan.outputs.has_changes == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tfplan-${{ inputs.environment }}
           path: ${{ env.TF_DIR }}/tfplan
@@ -246,16 +246,16 @@ jobs:
     environment: ${{ inputs.environment }}
     steps:
       - name: Checkout infra
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ inputs.aws_region }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
@@ -348,7 +348,7 @@ jobs:
       - name: Create GitHub App token
         if: inputs.deploy_images && (steps.images.outputs.gateway_exists != 'true' || steps.images.outputs.processor_exists != 'true')
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
@@ -359,7 +359,7 @@ jobs:
 
       - name: Checkout gateway
         if: inputs.deploy_images && steps.images.outputs.gateway_exists != 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           repository: ${{ github.repository_owner }}/fsamp-gateway
           ref: ${{ inputs.gateway_ref }}
@@ -368,7 +368,7 @@ jobs:
 
       - name: Checkout processor
         if: inputs.deploy_images && steps.images.outputs.processor_exists != 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           repository: ${{ github.repository_owner }}/fsamp-processor
           ref: ${{ inputs.processor_ref }}
@@ -377,15 +377,15 @@ jobs:
 
       - name: Login to Amazon ECR
         if: inputs.deploy_images && (steps.images.outputs.gateway_exists != 'true' || steps.images.outputs.processor_exists != 'true')
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@fa648b43de3d4d023bcb3f89ed6940096949c419 # v2
 
       - name: Set up Docker Buildx
         if: inputs.deploy_images && (steps.images.outputs.gateway_exists != 'true' || steps.images.outputs.processor_exists != 'true')
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build and push gateway image
         if: inputs.deploy_images && steps.images.outputs.gateway_exists != 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: services/gateway
           file: services/gateway/Dockerfile
@@ -397,7 +397,7 @@ jobs:
 
       - name: Build and push processor image
         if: inputs.deploy_images && steps.images.outputs.processor_exists != 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: services/processor
           file: services/processor/Dockerfile.lambda
