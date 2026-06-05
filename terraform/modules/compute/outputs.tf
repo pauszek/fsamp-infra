@@ -1,0 +1,79 @@
+output "ecs_cluster_arn" {
+  description = "ARN of the ECS cluster"
+  value       = aws_ecs_cluster.main.arn
+}
+
+output "ecs_cluster_name" {
+  description = "Name of the ECS cluster"
+  value       = aws_ecs_cluster.main.name
+}
+
+output "gateway_task_definition_arn" {
+  description = "ARN of the gateway task definition"
+  value       = aws_ecs_task_definition.gateway.arn
+}
+
+output "gateway_service_name" {
+  description = "Name of the gateway ECS service"
+  value       = aws_ecs_service.gateway.name
+}
+
+output "processor_task_definition_arn" {
+  description = "ARN of the processor ECS task definition"
+  value       = var.enable_processor_ecs ? aws_ecs_task_definition.processor[0].arn : null
+}
+
+output "processor_service_name" {
+  description = "Name of the processor ECS service"
+  value       = var.enable_processor_ecs ? aws_ecs_service.processor[0].name : null
+}
+
+output "gateway_alb_arn" {
+  description = "ARN of the internal Gateway ALB"
+  value       = aws_lb.gateway.arn
+}
+
+output "gateway_alb_arn_suffix" {
+  description = "ARN suffix of the internal Gateway ALB (e.g. app/<name>/<id>) used for CloudWatch ALB metrics"
+  value       = aws_lb.gateway.arn_suffix
+}
+
+output "gateway_alb_target_group_arn_suffix" {
+  description = "ARN suffix of the gateway ALB target group used for CloudWatch ALB metrics"
+  value       = aws_lb_target_group.gateway.arn_suffix
+}
+
+output "ecs_log_group_name" {
+  description = "CloudWatch log group name used by ECS tasks"
+  value       = aws_cloudwatch_log_group.ecs.name
+}
+
+output "gateway_alb_dns_name" {
+  description = "DNS name of the internal Gateway ALB"
+  value       = aws_lb.gateway.dns_name
+}
+
+output "gateway_alb_listener_arn" {
+  description = "ARN of the internal Gateway ALB listener"
+  value       = aws_lb_listener.gateway.arn
+}
+
+output "processor_lambda_arn" {
+  description = "ARN of the processor Lambda function"
+  value       = aws_lambda_function.processor.arn
+}
+
+output "processor_lambda_name" {
+  description = "Name of the processor Lambda function"
+  value       = aws_lambda_function.processor.function_name
+}
+
+output "outbox_publisher_lambda_arn" {
+  description = "ARN of the outbox publisher Lambda function"
+  value       = aws_lambda_function.outbox_publisher.arn
+}
+
+output "outbox_publisher_lambda_name" {
+  description = "Name of the outbox publisher Lambda function"
+  value       = aws_lambda_function.outbox_publisher.function_name
+}

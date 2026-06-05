@@ -8,49 +8,6 @@ terraform {
     }
   }
 }
-variable "environment" {
-  description = "Environment name"
-  type        = string
-}
-
-variable "name_prefix" {
-  description = "Prefix for resource names"
-  type        = string
-}
-
-variable "tags" {
-  description = "Common tags"
-  type        = map(string)
-}
-
-variable "kms_key_arn" {
-  description = "ARN of the KMS key for encryption"
-  type        = string
-}
-
-variable "enable_cloudtrail" {
-  description = "Enable CloudTrail for API audit logging (FedRAMP AU family)"
-  type        = bool
-  default     = true
-}
-
-variable "enable_guardduty" {
-  description = "Enable GuardDuty for threat detection (FedRAMP SI family)"
-  type        = bool
-  default     = true
-}
-
-variable "enable_security_hub" {
-  description = "Enable AWS Security Hub for aggregated security findings"
-  type        = bool
-  default     = false
-}
-
-variable "enable_aws_config" {
-  description = "Enable AWS Config for compliance monitoring (FedRAMP CM family)"
-  type        = bool
-  default     = true
-}
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 data "aws_partition" "current" {}
@@ -593,33 +550,4 @@ resource "aws_config_config_rule" "dynamodb_encryption" {
   })
 
   depends_on = [aws_config_configuration_recorder.main]
-}
-output "cloudtrail_arn" {
-  description = "ARN of the CloudTrail trail"
-  value       = var.enable_cloudtrail ? aws_cloudtrail.main[0].arn : null
-}
-
-output "cloudtrail_s3_bucket" {
-  description = "S3 bucket for CloudTrail logs"
-  value       = var.enable_cloudtrail ? aws_s3_bucket.cloudtrail_logs[0].id : null
-}
-
-output "cloudtrail_s3_bucket_arn" {
-  description = "ARN of the S3 bucket holding CloudTrail logs (for cross-region replication wiring)."
-  value       = var.enable_cloudtrail ? aws_s3_bucket.cloudtrail_logs[0].arn : null
-}
-
-output "guardduty_detector_id" {
-  description = "GuardDuty detector ID"
-  value       = var.enable_guardduty ? aws_guardduty_detector.main[0].id : null
-}
-
-output "security_hub_account_id" {
-  description = "Security Hub account ID"
-  value       = var.enable_security_hub ? aws_securityhub_account.main[0].id : null
-}
-
-output "config_recorder_id" {
-  description = "AWS Config recorder ID"
-  value       = var.enable_aws_config ? aws_config_configuration_recorder.main[0].id : null
 }

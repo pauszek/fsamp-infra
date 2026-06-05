@@ -8,50 +8,6 @@ terraform {
     }
   }
 }
-variable "environment" {
-  description = "Environment name"
-  type        = string
-}
-
-variable "name_prefix" {
-  description = "Prefix for resource names"
-  type        = string
-}
-
-variable "tags" {
-  description = "Common tags"
-  type        = map(string)
-}
-
-variable "callback_urls" {
-  description = "Allowed callback URLs for OAuth"
-  type        = list(string)
-  default     = ["http://localhost:3000/callback"]
-}
-
-variable "logout_urls" {
-  description = "Allowed logout URLs"
-  type        = list(string)
-  default     = ["http://localhost:3000"]
-}
-
-variable "password_min_length" {
-  description = "Minimum password length"
-  type        = number
-  default     = 12
-}
-
-variable "access_token_validity_minutes" {
-  description = "Access / ID token lifetime in minutes. FedRAMP AC-12 recommends ≤30 min for prod."
-  type        = number
-  default     = 60
-}
-
-variable "refresh_token_validity_days" {
-  description = "Refresh token lifetime in days. Shorter values reduce session hijack window."
-  type        = number
-  default     = 30
-}
 resource "aws_cognito_user_pool" "main" {
   name = "${var.name_prefix}-user-pool"
 
@@ -252,45 +208,5 @@ resource "aws_cognito_user_group" "users" {
   user_pool_id = aws_cognito_user_pool.main.id
   description  = "Regular users"
   precedence   = 10
-}
-output "user_pool_id" {
-  description = "Cognito User Pool ID"
-  value       = aws_cognito_user_pool.main.id
-}
-
-output "user_pool_arn" {
-  description = "Cognito User Pool ARN"
-  value       = aws_cognito_user_pool.main.arn
-}
-
-output "user_pool_endpoint" {
-  description = "Cognito User Pool endpoint"
-  value       = aws_cognito_user_pool.main.endpoint
-}
-
-output "user_pool_domain" {
-  description = "Cognito User Pool domain"
-  value       = aws_cognito_user_pool_domain.main.domain
-}
-
-output "web_client_id" {
-  description = "Web application client ID"
-  value       = aws_cognito_user_pool_client.web.id
-}
-
-output "service_client_id" {
-  description = "Service client ID (for M2M auth)"
-  value       = aws_cognito_user_pool_client.service.id
-}
-
-output "service_client_secret" {
-  description = "Service client secret (for M2M auth)"
-  value       = aws_cognito_user_pool_client.service.client_secret
-  sensitive   = true
-}
-
-output "cognito_domain_url" {
-  description = "Full Cognito hosted UI domain URL"
-  value       = "https://${aws_cognito_user_pool_domain.main.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"
 }
 data "aws_region" "current" {}

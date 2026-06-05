@@ -8,73 +8,6 @@ terraform {
     }
   }
 }
-variable "environment" {
-  description = "Environment name"
-  type        = string
-}
-
-variable "name_prefix" {
-  description = "Prefix for resource names"
-  type        = string
-}
-
-variable "tags" {
-  description = "Common tags"
-  type        = map(string)
-}
-
-variable "kms_key_arn" {
-  description = "KMS key ARN for API Gateway and WAF log encryption"
-  type        = string
-}
-
-variable "cognito_user_pool_arn" {
-  description = "ARN of Cognito User Pool for authorization"
-  type        = string
-  default     = null
-}
-
-variable "enable_waf" {
-  description = "Enable WAF for API Gateway"
-  type        = bool
-  default     = true
-}
-
-variable "throttle_rate_limit" {
-  description = "Rate limit for API (requests per second)"
-  type        = number
-  default     = 100
-}
-
-variable "throttle_burst_limit" {
-  description = "Burst limit for API"
-  type        = number
-  default     = 200
-}
-
-variable "private_subnet_ids" {
-  description = "Private subnet IDs for VPC Link"
-  type        = list(string)
-  default     = []
-}
-
-variable "vpc_link_security_group_ids" {
-  description = "Security groups attached to API Gateway VPC Link V2 ENIs"
-  type        = list(string)
-  default     = []
-}
-
-variable "alb_arn" {
-  description = "ARN of the internal ALB for the Gateway service"
-  type        = string
-  default     = null
-}
-
-variable "alb_dns_name" {
-  description = "DNS name of the ALB for the Gateway service"
-  type        = string
-  default     = null
-}
 resource "aws_api_gateway_rest_api" "main" {
   name        = "${var.name_prefix}-api"
   description = "FSAMP REST API - ${var.environment}"
@@ -545,33 +478,4 @@ resource "aws_wafv2_web_acl_logging_configuration" "api" {
       name = "x-idempotency-key"
     }
   }
-}
-output "api_id" {
-  description = "API Gateway REST API ID"
-  value       = aws_api_gateway_rest_api.main.id
-}
-
-output "api_endpoint" {
-  description = "API Gateway invoke URL"
-  value       = aws_api_gateway_stage.main.invoke_url
-}
-
-output "api_stage_name" {
-  description = "API Gateway stage name"
-  value       = aws_api_gateway_stage.main.stage_name
-}
-
-output "waf_web_acl_arn" {
-  description = "WAF Web ACL ARN"
-  value       = var.enable_waf ? aws_wafv2_web_acl.api[0].arn : null
-}
-
-output "api_execution_arn" {
-  description = "API Gateway execution ARN (for Lambda permissions)"
-  value       = aws_api_gateway_rest_api.main.execution_arn
-}
-
-output "vpc_link_id" {
-  description = "VPC Link ID for ALB integration"
-  value       = length(aws_apigatewayv2_vpc_link.main) > 0 ? aws_apigatewayv2_vpc_link.main[0].id : null
 }

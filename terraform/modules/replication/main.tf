@@ -29,43 +29,6 @@ terraform {
 #   - AU-9 Protection of Audit Information
 #   - SC-28(1) Cryptographic Protection (replica also encrypted)
 #
-variable "enabled" {
-  description = "Whether to provision replica buckets and replication rules."
-  type        = bool
-}
-
-variable "environment" {
-  description = "Environment name."
-  type        = string
-}
-
-variable "name_prefix" {
-  description = "Resource name prefix."
-  type        = string
-}
-
-variable "tags" {
-  description = "Common tags."
-  type        = map(string)
-}
-
-variable "replica_region" {
-  description = "Replica AWS region."
-  type        = string
-}
-
-variable "source_buckets" {
-  description = <<-EOT
-    Map of source bucket logical names to their bucket id and ARN. The
-    module attaches a replication configuration to each source bucket and
-    creates a matching destination bucket in the replica region.
-  EOT
-  type = map(object({
-    id  = string
-    arn = string
-  }))
-}
-
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 data "aws_region" "primary" {}
@@ -380,19 +343,4 @@ resource "aws_s3_bucket_replication_configuration" "this" {
     aws_iam_role_policy.replication,
     aws_s3_bucket_versioning.replica
   ]
-}
-
-output "replica_bucket_arns" {
-  description = "Map of source bucket logical name to replica bucket ARN."
-  value       = { for k, b in aws_s3_bucket.replica : k => b.arn }
-}
-
-output "replica_kms_key_arn" {
-  description = "ARN of the replica region KMS key."
-  value       = try(aws_kms_key.replica[0].arn, null)
-}
-
-output "replication_role_arn" {
-  description = "ARN of the IAM role assumed by S3 replication."
-  value       = try(aws_iam_role.replication[0].arn, null)
 }

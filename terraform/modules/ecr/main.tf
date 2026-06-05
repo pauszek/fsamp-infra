@@ -8,37 +8,6 @@ terraform {
     }
   }
 }
-variable "environment" {
-  description = "Environment name"
-  type        = string
-}
-
-variable "name_prefix" {
-  description = "Prefix for resource names"
-  type        = string
-}
-
-variable "kms_key_arn" {
-  description = "ARN of the KMS key for encryption"
-  type        = string
-}
-
-variable "tags" {
-  description = "Common tags"
-  type        = map(string)
-}
-
-variable "image_retention_count" {
-  description = "Number of images to retain per repository"
-  type        = number
-  default     = 10
-}
-
-variable "scan_on_push" {
-  description = "Enable vulnerability scanning on push"
-  type        = bool
-  default     = true
-}
 locals {
   repositories = {
     gateway   = "${var.name_prefix}-gateway"
@@ -173,24 +142,4 @@ resource "aws_ecr_repository_policy" "repos" {
       }
     ]
   })
-}
-output "repository_urls" {
-  description = "ECR repository URLs"
-  value = {
-    for k, v in aws_ecr_repository.repos : k => v.repository_url
-  }
-}
-
-output "repository_arns" {
-  description = "ECR repository ARNs"
-  value = {
-    for k, v in aws_ecr_repository.repos : k => v.arn
-  }
-}
-
-output "repository_names" {
-  description = "ECR repository names"
-  value = {
-    for k, v in aws_ecr_repository.repos : k => v.name
-  }
 }

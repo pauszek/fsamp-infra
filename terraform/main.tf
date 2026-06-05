@@ -175,11 +175,10 @@ module "replication" {
     aws.replica = aws.replica
   }
 
-  enabled        = local.enable_crr_computed
-  environment    = var.environment
-  name_prefix    = local.name_prefix
-  tags           = local.common_tags
-  replica_region = var.replica_region
+  enabled     = local.enable_crr_computed
+  environment = var.environment
+  name_prefix = local.name_prefix
+  tags        = local.common_tags
 
   source_buckets = merge(
     {

@@ -8,55 +8,6 @@ terraform {
     }
   }
 }
-variable "environment" {
-  description = "Environment name"
-  type        = string
-}
-
-variable "name_prefix" {
-  description = "Prefix for resource names"
-  type        = string
-}
-
-variable "tags" {
-  description = "Common tags"
-  type        = map(string)
-}
-
-variable "kms_key_arn" {
-  description = "KMS key ARN for CloudWatch log encryption"
-  type        = string
-}
-
-variable "log_retention_days" {
-  description = "CloudWatch log retention in days"
-  type        = number
-  default     = 30
-}
-
-variable "alarm_sns_topic_arn" {
-  description = "SNS topic ARN for CloudWatch alarm notifications"
-  type        = string
-  default     = ""
-}
-
-variable "gateway_alb_full_name" {
-  description = "Full name of the gateway ALB (e.g. app/fsamp-gw/abc123) used for ALB-side 5xx alarms. Empty value disables the alarm."
-  type        = string
-  default     = ""
-}
-
-variable "gateway_alb_target_group_full_name" {
-  description = "Full name of the gateway ALB target group (e.g. targetgroup/fsamp-gw/abc123) used for target-side 5xx alarms. Empty value disables the alarm."
-  type        = string
-  default     = ""
-}
-
-variable "outbox_table_name" {
-  description = "DynamoDB outbox table name. Empty value disables the stuck outbox alarm."
-  type        = string
-  default     = ""
-}
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${var.name_prefix}"
   retention_in_days = var.log_retention_days
@@ -807,42 +758,4 @@ resource "aws_cloudwatch_composite_alarm" "critical_health" {
     Name     = "${var.name_prefix}-critical-health"
     Severity = "critical"
   })
-}
-output "log_group_names" {
-  description = "Map of service to log group names"
-  value = {
-    ecs         = "/ecs/${var.name_prefix}"
-    lambda      = aws_cloudwatch_log_group.lambda.name
-    api_gateway = aws_cloudwatch_log_group.api_gateway.name
-  }
-}
-
-output "dashboard_name" {
-  description = "CloudWatch dashboard name"
-  value       = aws_cloudwatch_dashboard.main.dashboard_name
-}
-
-output "dashboard_url" {
-  description = "URL to CloudWatch dashboard"
-  value       = "https://${data.aws_region.current.region}.console.aws.amazon.com/cloudwatch/home?region=${data.aws_region.current.region}#dashboards:name=${aws_cloudwatch_dashboard.main.dashboard_name}"
-}
-
-output "alarm_arns" {
-  description = "Map of alarm names to ARNs"
-  value = {
-    processor_errors              = aws_cloudwatch_metric_alarm.processor_errors.arn
-    outbox_publisher_errors       = aws_cloudwatch_metric_alarm.outbox_publisher_errors.arn
-    dlq_messages                  = aws_cloudwatch_metric_alarm.dlq_messages.arn
-    dlq_message_age               = aws_cloudwatch_metric_alarm.dlq_message_age.arn
-    outbox_publisher_dlq_messages = aws_cloudwatch_metric_alarm.outbox_publisher_dlq_messages.arn
-    processor_latency             = aws_cloudwatch_metric_alarm.processor_latency.arn
-    processor_throttles           = aws_cloudwatch_metric_alarm.processor_throttles.arn
-    dynamodb_throttles            = aws_cloudwatch_metric_alarm.dynamodb_throttles.arn
-    sqs_backlog                   = aws_cloudwatch_metric_alarm.sqs_backlog.arn
-    sqs_message_age               = aws_cloudwatch_metric_alarm.sqs_message_age.arn
-    gateway_5xx_target            = try(aws_cloudwatch_metric_alarm.gateway_5xx_target[0].arn, null)
-    gateway_5xx_alb               = try(aws_cloudwatch_metric_alarm.gateway_5xx_alb[0].arn, null)
-    outbox_publish_failures       = try(aws_cloudwatch_metric_alarm.outbox_publish_failures[0].arn, null)
-    critical_health               = aws_cloudwatch_composite_alarm.critical_health.arn
-  }
 }
