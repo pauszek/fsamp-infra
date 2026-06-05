@@ -120,10 +120,10 @@ validate:
 	cd terraform && terraform validate
 
 lint:
-	cd terraform && tflint --recursive
+	tflint --chdir=terraform --recursive --config "$(CURDIR)/.tflint.hcl"
 
 security:
-	checkov -d terraform/ --framework terraform
+	checkov -d terraform/ --config-file .checkov.yml --quiet
 
 clean:
 	find terraform -type d -name ".terraform" -exec rm -rf {} + 2>/dev/null || true

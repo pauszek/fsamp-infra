@@ -464,13 +464,15 @@ jobs:
       - name: Deployment summary
         if: always()
         run: |
-          echo "## Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Environment | \`${{ inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Region | \`${{ inputs.aws_region }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| AWS account | \`${{ needs.plan.outputs.account_id }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Image tag | \`${{ needs.plan.outputs.image_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| State bucket | \`${{ needs.plan.outputs.state_bucket }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Gateway ref | \`${{ inputs.gateway_ref }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Processor ref | \`${{ inputs.processor_ref }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Deployment Summary"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Environment | \`${{ inputs.environment }}\` |"
+            echo "| Region | \`${{ inputs.aws_region }}\` |"
+            echo "| AWS account | \`${{ needs.plan.outputs.account_id }}\` |"
+            echo "| Image tag | \`${{ needs.plan.outputs.image_tag }}\` |"
+            echo "| State bucket | \`${{ needs.plan.outputs.state_bucket }}\` |"
+            echo "| Gateway ref | \`${{ inputs.gateway_ref }}\` |"
+            echo "| Processor ref | \`${{ inputs.processor_ref }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
