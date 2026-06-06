@@ -19,4 +19,3 @@ ignore: |
   .terraform/
   *.tfstate
   node_modules/
-

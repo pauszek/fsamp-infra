@@ -8,37 +8,6 @@ terraform {
     }
   }
 }
-variable "environment" {
-  description = "Environment name"
-  type        = string
-}
-
-variable "name_prefix" {
-  description = "Prefix for resource names"
-  type        = string
-}
-
-variable "kms_key_id" {
-  description = "ID of the KMS key for encryption"
-  type        = string
-}
-
-variable "tags" {
-  description = "Common tags"
-  type        = map(string)
-}
-
-variable "message_retention_seconds" {
-  description = "SQS message retention period in seconds"
-  type        = number
-  default     = 86400
-}
-
-variable "dlq_max_receive_count" {
-  description = "Max receive count before moving to DLQ"
-  type        = number
-  default     = 3
-}
 data "aws_caller_identity" "current" {}
 resource "aws_sns_topic" "file_events" {
   name              = "${var.name_prefix}-file-events"
@@ -78,6 +47,22 @@ resource "aws_sqs_queue" "dlq" {
   tags = merge(var.tags, {
     Name    = "${var.name_prefix}-dlq"
     Purpose = "Dead letter queue for failed messages"
+  })
+}
+
+# Dedicated DLQ for outbox publisher Lambda. Receives DynamoDB Streams
+# batches that exhaust the maximum_retry_attempts budget configured on the
+# event source mapping. Without a dedicated destination, failed batches are
+# silently dropped, which would break the at-least-once delivery guarantee
+# of the transactional outbox pattern. (FedRAMP CP-9, AU-2)
+resource "aws_sqs_queue" "outbox_publisher_dlq" {
+  name                      = "${var.name_prefix}-outbox-publisher-dlq"
+  message_retention_seconds = 1209600
+  kms_master_key_id         = var.kms_key_id
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-outbox-publisher-dlq"
+    Purpose = "DLQ for failed DynamoDB Streams batches in the outbox publisher"
   })
 }
 
@@ -279,30 +264,4 @@ resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
   alarm_actions = [aws_sns_topic.dlq_alerts.arn]
 
   tags = var.tags
-}
-output "topic_arns" {
-  description = "Map of topic purposes to ARNs"
-  value = {
-    file_events       = aws_sns_topic.file_events.arn
-    processing_events = aws_sns_topic.processing_events.arn
-    dlq_alerts        = aws_sns_topic.dlq_alerts.arn
-  }
-}
-
-output "queue_urls" {
-  description = "Map of queue purposes to URLs"
-  value = {
-    file_processing  = aws_sqs_queue.file_processing.url
-    analysis_results = aws_sqs_queue.analysis_results.url
-    dlq              = aws_sqs_queue.dlq.url
-  }
-}
-
-output "queue_arns" {
-  description = "Map of queue purposes to ARNs"
-  value = {
-    file_processing  = aws_sqs_queue.file_processing.arn
-    analysis_results = aws_sqs_queue.analysis_results.arn
-    dlq              = aws_sqs_queue.dlq.arn
-  }
 }

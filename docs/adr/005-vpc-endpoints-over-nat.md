@@ -1,9 +1,11 @@
 # ADR-005: VPC Endpoints over NAT Gateway
 
 ## Status
+
 Accepted
 
 ## Context
+
 ECS tasks and Lambda functions in private subnets need to access AWS services (S3, SQS, SNS, ECR, etc.).
 Two options exist:
 
@@ -32,6 +34,7 @@ Two options exist:
 | KMS | Interface | ~$7.30/month |
 
 ## Decision
+
 We will use **VPC Endpoints** instead of NAT Gateway.
 
 ### Implementation
@@ -52,7 +55,7 @@ resource "aws_vpc_endpoint" "dynamodb" {
 # Interface Endpoints (only when NAT disabled)
 resource "aws_vpc_endpoint" "ecr_api" {
   count = var.enable_nat_gateway ? 0 : 1  # Conditional creation
-  
+
   vpc_id              = aws_vpc.main.id
   service_name        = "com.amazonaws.${region}.ecr.api"
   vpc_endpoint_type   = "Interface"
@@ -62,11 +65,11 @@ resource "aws_vpc_endpoint" "ecr_api" {
 
 ### Conditional Logic
 
-```
+```text
 IF enable_nat_gateway = true:
   - NAT Gateway created
   - Interface endpoints NOT created (use NAT for AWS API calls)
-  
+
 IF enable_nat_gateway = false:
   - NAT Gateway NOT created
   - Interface endpoints created for ECR, Logs, SQS, SNS, KMS
@@ -76,12 +79,14 @@ IF enable_nat_gateway = false:
 ## Consequences
 
 ### Positive
+
 - **Cost savings**: ~$25-30/month saved vs NAT Gateway
 - **Security**: Traffic stays within AWS network
 - **Performance**: Lower latency (no internet hop)
 - **Simplicity**: No NAT HA concerns
 
 ### Negative
+
 - **More resources**: 6+ endpoints vs 1 NAT Gateway
 - **DNS complexity**: Private DNS must be enabled
 - **Internet access**: No general internet access from private subnets
@@ -89,6 +94,7 @@ IF enable_nat_gateway = false:
 ### When to use NAT Gateway instead
 
 Use NAT Gateway (`enable_nat_gateway = true`) when:
+
 - Tasks need to access external APIs (not AWS)
 - Pulling images from Docker Hub (not ECR)
 - Accessing external webhooks
@@ -112,7 +118,7 @@ module "fsamp" {
 ```
 
 ## References
+
 - [VPC Endpoints Pricing](https://aws.amazon.com/privatelink/pricing/)
 - [NAT Gateway Pricing](https://aws.amazon.com/vpc/pricing/)
 - [VPC Endpoints vs NAT Gateway](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints.html)
-

@@ -2,8 +2,8 @@
 
 ## Scope
 
-This review covers the five FSAMP repositories: `fsamp-infra`, `fsamp-gateway`,
-`fsamp-processor`, `fsamp-event-schema`, and `fsamp-code-ci`.
+This review covers the six FSAMP repositories: `fsamp-infra`, `fsamp-gateway`,
+`fsamp-processor`, `fsamp-event-schema`, `fsamp-code-ci`, and `fsamp-demo-flow`.
 
 The document records FedRAMP Moderate alignment work and FIPS 140-3-oriented
 security decisions. It is not a FedRAMP authorization package and does not
@@ -48,10 +48,11 @@ represent an ATO.
 
 | Risk | Rationale | Follow-up |
 |---|---|---|
-| Single-region deployment | Keeps thesis scope and cost realistic | Document multi-region DR as future work |
+| Cross-region replication is feature-flagged (default on for prod and staging only) | Cost-aware default for academic environments | Activate via `enable_cross_region_replication=true` for any tenant requiring multi-region durability |
 | Non-production token lifetime can be longer than prod | Developer ergonomics in dev/staging | Keep prod at shorter lifetime |
 | Python dependencies use minimum pins | CI scans and Dependabot reduce exposure | Add lockfile generation if reproducibility becomes a requirement |
 | LocalStack is not a compliance boundary | It is only a local integration test target | Keep production controls enforced in AWS profiles |
+| E2E build target uses `REQUIRE_FIPS_PROVIDER=false` | LocalStack lacks an OpenSSL FIPS provider; full FIPS path is verified separately by the `FIPS mode check (container)` step in `build-python.yml` | Keep both validation paths in CI |
 
 ## Next Improvements
 

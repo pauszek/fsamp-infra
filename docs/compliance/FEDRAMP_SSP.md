@@ -43,7 +43,7 @@ for a reference implementation. It does not imply FedRAMP authorization or an AT
 
 ### 1.3 System Boundary
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         FSAMP Authorization Boundary                    │
 │                                                                         │
@@ -104,7 +104,7 @@ Note: Processor runs in both ECS Fargate and Lambda as production-capable modes;
 | **Integrity** | Moderate | File checksums (SHA-256) and CloudTrail log file validation ensure integrity |
 | **Availability** | Low | Single-region deployment; Pilot Light DR strategy with 4-hour RTO |
 
-**Overall Categorization: MODERATE**
+Overall categorization: **MODERATE**
 
 Formula: SC = {(confidentiality, MODERATE), (integrity, MODERATE), (availability, LOW)}
 
@@ -135,7 +135,7 @@ High-water mark: **MODERATE**
 
 ### 3.3 Dual-Provider Strategy (Gateway)
 
-```
+```text
 JVM Security Providers:
   Position 1: ACCP 2.4.1          (CMVP #4631, primary)
   Position 2: BC-FIPS 2.0.0       (CMVP #4743, supplementary)
@@ -152,7 +152,7 @@ provider availability and AES-GCM capability.
 
 ### 4.1 File Upload Flow
 
-```
+```text
 1. Client authenticates via Cognito (OAuth2 PKCE + MFA)
 2. Client sends POST /api/v1/files with JWT Bearer token
 3. API Gateway validates WAF rules + JWT authorizer

@@ -16,7 +16,7 @@ for i in {1..30}; do
         --max-results 1 \
         --query 'UserPools[0].Id' \
         --output text 2>/dev/null || echo "")
-    
+
     if [ -n "$USER_POOL_ID" ] && [ "$USER_POOL_ID" != "None" ]; then
         break
     fi

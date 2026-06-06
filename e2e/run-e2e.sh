@@ -89,7 +89,7 @@ trap cleanup EXIT
 
 build_local_images() {
     log "Building local images..."
-    
+
     GATEWAY_REPO="${WORKSPACE_DIR}/fsamp-gateway"
     if [[ -d "$GATEWAY_REPO" ]]; then
         log "Building Gateway..."
@@ -104,7 +104,7 @@ build_local_images() {
     else
         log_warning "Gateway repo not found at $GATEWAY_REPO"
     fi
-    
+
     PROCESSOR_REPO="${WORKSPACE_DIR}/fsamp-processor"
     if [[ -d "$PROCESSOR_REPO" ]]; then
         log "Building Processor..."
@@ -123,11 +123,11 @@ build_local_images() {
 
 main() {
     log "Starting E2E tests (mode: $MODE)"
-    
+
     if [[ "$BUILD_IMAGES" == "true" ]]; then
         build_local_images
     fi
-    
+
     case $MODE in
         local)
             log "Using locally built images..."
@@ -139,13 +139,13 @@ main() {
             export COMPOSE_INTERACTIVE_NO_CLI=1
             ;;
     esac
-    
+
     log "Cleaning up previous runs..."
     docker-compose down -v --remove-orphans 2>/dev/null || true
-    
+
     log "Starting LocalStack..."
     docker-compose up -d localstack
-    
+
     log "Waiting for LocalStack to be ready..."
     local retries=30
     while [[ $retries -gt 0 ]]; do
@@ -156,13 +156,13 @@ main() {
         retries=$((retries - 1))
         sleep 2
     done
-    
+
     if [[ $retries -eq 0 ]]; then
         log_error "LocalStack failed to start"
         docker-compose logs localstack
         exit 1
     fi
-    
+
     log "Waiting for LocalStack initialization..."
     retries=30
     while [[ $retries -gt 0 ]]; do
@@ -173,16 +173,16 @@ main() {
         retries=$((retries - 1))
         sleep 2
     done
-    
+
     if [[ $retries -eq 0 ]]; then
         log_error "LocalStack initialization failed"
         docker-compose logs localstack
         exit 1
     fi
-    
+
     log "Starting gateway and processor..."
     docker-compose up -d gateway processor
-    
+
     log "Waiting for gateway to be ready..."
     retries=30
     while [[ $retries -gt 0 ]]; do
@@ -193,25 +193,25 @@ main() {
         retries=$((retries - 1))
         sleep 2
     done
-    
+
     if [[ $retries -eq 0 ]]; then
         log_error "Gateway failed to start"
         docker-compose logs gateway
         exit 1
     fi
-    
+
     log "Running E2E tests..."
     if docker-compose --profile test up --abort-on-container-exit e2e-tests; then
         log_success "E2E tests passed!"
         exit 0
     else
         log_error "E2E tests failed!"
-        
+
         log "Gateway logs:"
         docker-compose logs --tail=50 gateway
         log "Processor logs:"
         docker-compose logs --tail=50 processor
-        
+
         exit 1
     fi
 }

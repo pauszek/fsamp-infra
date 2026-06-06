@@ -1,14 +1,17 @@
 # ADR-004: FIPS 140-3 Encryption & FedRAMP Alignment Strategy
 
 ## Status
+
 Accepted — revised 2026-05 for FIPS/FedRAMP-aligned wording
 
 ## Context
-The FSAMP platform handles sensitive file data and requires strong encryption. 
-FIPS 140-3 (Federal Information Processing Standard) provides cryptographic module validation 
+
+The FSAMP platform handles sensitive file data and requires strong encryption.
+FIPS 140-3 (Federal Information Processing Standard) provides cryptographic module validation
 that is recognized as a high security standard.
 
 ### Requirements
+
 - Encryption at rest for all data (S3, DynamoDB, SQS, SNS)
 - Encryption in transit (TLS 1.2+) with FIPS-capable TLS stacks
 - Application-layer FIPS-capable crypto providers (JVM + Python)
@@ -18,18 +21,22 @@ that is recognized as a high security standard.
 - Compliance documentation for thesis
 
 ### AWS FIPS Alignment
+
 AWS KMS and AWS FIPS endpoints provide the managed cryptographic boundary. The platform treats
 FIPS as an end-to-end posture: FIPS-capable modules, FIPS endpoints where available, and clear evidence.
 
 ## Decision
+
 We will implement **FIPS 140-3-oriented encryption controls and FedRAMP-aligned security controls** using:
 
 ### 1. AWS KMS — Master Key Management
+
 - Single Customer Master Key (CMK) per environment
 - Automatic annual key rotation enabled
 - AES-256-GCM (FIPS-approved algorithm)
 
 ### 2. Encryption at Rest
+
 - S3: SSE-KMS with bucket keys
 - DynamoDB: KMS encryption
 - SQS/SNS: KMS encryption
@@ -37,6 +44,7 @@ We will implement **FIPS 140-3-oriented encryption controls and FedRAMP-aligned 
 - ECS: KMS for execute command
 
 ### 3. Encryption in Transit — Transport Security Enforcement
+
 - TLS 1.2+ for all API calls
 - VPC Endpoints for internal AWS traffic
 - HTTPS-only for API Gateway
@@ -48,6 +56,7 @@ We will implement **FIPS 140-3-oriented encryption controls and FedRAMP-aligned 
 ### 4. Application Layer — FIPS Crypto Providers
 
 #### Java (Gateway — Spring Boot / Corretto 21)
+
 Dual-provider strategy for a FIPS 140-3-oriented runtime posture:
 
 | Position | Provider | Use |
@@ -61,6 +70,7 @@ Dual-provider strategy for a FIPS 140-3-oriented runtime posture:
 - **AWS SDK FIPS endpoints**: `.fipsEnabled(true)` on all production SDK clients (S3, SNS, KMS, STS, DynamoDB, SQS); auto-disabled for non-US regions
 
 #### Python (Processor — Lambda Container Image)
+
 - **Container image** based on `public.ecr.aws/lambda/python:3.14` (AL2023)
 - **OpenSSL FIPS provider** installed and activated (`openssl fipsinstall`, `fips=yes`)
 - **FIPS-capable TLS**: `ssl` / `cryptography` operations use the configured OpenSSL provider
@@ -70,12 +80,14 @@ Dual-provider strategy for a FIPS 140-3-oriented runtime posture:
 - **ECS Dockerfile**: identical FIPS OpenSSL setup for standalone Fargate deployment option
 
 ### 5. Access Controls (FedRAMP Alignment)
+
 - **Swagger UI secured in staging/prod** — requires `ROLE_ADMINS` (FedRAMP AC-3)
 - **CORS origin restriction** — `localhost:*` only in local/dev; explicit origins in staging/prod (FedRAMP AC-4)
 - **Cognito token lifetime** — 30 min access tokens in prod, 60 min in dev/local (FedRAMP AC-12)
 - **MFA enforced** in prod (`mfa_configuration = "ON"`)
 
 ### 6. Audit Services (FedRAMP AU-2, SI-4, CM-2)
+
 Feature-flagged services enabled in staging/prod:
 
 | Service | FedRAMP Control | Purpose |
@@ -88,7 +100,7 @@ All audit resources use KMS encryption and have `count`-based feature flags for 
 
 ### Architecture
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │                    Encryption & Security Architecture                │
 ├──────────────────────────────────────────────────────────────────────┤
@@ -132,6 +144,7 @@ All audit resources use KMS encryption and have `count`-based feature flags for 
 ## Consequences
 
 ### Positive
+
 - All data encrypted with FIPS 140-3-oriented cryptography
 - **End-to-end FIPS-oriented posture**: JVM providers -> AWS SDK FIPS endpoints -> KMS
 - Single key simplifies management (cost: ~$1/month)
@@ -143,6 +156,7 @@ All audit resources use KMS encryption and have `count`-based feature flags for 
 - Strong thesis security chapter content with concrete NIST control family mappings
 
 ### Negative
+
 - KMS adds ~3-5ms latency per operation
 - Single key = single point of configuration
 - FIPS endpoints only in supported US regions; other regions rely on the configured runtime providers
@@ -152,6 +166,7 @@ All audit resources use KMS encryption and have `count`-based feature flags for 
 - Audit services (CloudTrail, GuardDuty, Config) add cost in staging/prod
 
 ### Mitigations
+
 - Use S3 Bucket Keys to reduce KMS calls (90% cost reduction)
 - Implement key policy with service-specific conditions
 - Feature flags for audit services (`enable_cloudtrail`, `enable_guardduty`, `enable_aws_config`)
@@ -161,6 +176,7 @@ All audit resources use KMS encryption and have `count`-based feature flags for 
 - Same Dockerfile.lambda used for both processor and outbox-publisher Lambda functions (different CMD)
 
 ## References
+
 - [AWS FIPS compliance documentation](https://aws.amazon.com/compliance/fips/)
 - [FIPS 140-3 Standard](https://csrc.nist.gov/publications/detail/fips/140/3/final)
 - [AWS KMS Key Rotation](https://docs.aws.amazon.com/kms/latest/developerguide/rotate-keys.html)

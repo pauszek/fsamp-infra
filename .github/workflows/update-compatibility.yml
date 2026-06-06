@@ -3,7 +3,7 @@ name: Update Compatibility Matrix
 on:
   repository_dispatch:
     types: [update-compatibility]
-  
+
   workflow_dispatch:
     inputs:
       service:
@@ -26,10 +26,10 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
@@ -48,9 +48,9 @@ jobs:
             SERVICE="${{ inputs.service }}"
             VERSION="${{ inputs.version }}"
           fi
-          
+
           VERSION="${VERSION#v}"
-          
+
           echo "service=${SERVICE}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Updating ${SERVICE} to version ${VERSION}"
@@ -61,30 +61,30 @@ jobs:
           VERSION: ${{ steps.params.outputs.version }}
         run: |
           COMPAT_FILE="compatibility.yml"
-          
+
           echo "Current values:"
           yq '.current' "$COMPAT_FILE"
-          
+
           yq -i ".current.${SERVICE} = \"${VERSION}\"" "$COMPAT_FILE"
-          
+
           echo ""
           echo "Updated values:"
           yq '.current' "$COMPAT_FILE"
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: update ${{ steps.params.outputs.service }} to ${{ steps.params.outputs.version }}"
           title: "Update compatibility: ${{ steps.params.outputs.service }} to ${{ steps.params.outputs.version }}"
           body: |
-            
+
             This PR updates the compatibility matrix with the latest released version:
-            
+
             | Service | Version |
             |---------|---------|
             | ${{ steps.params.outputs.service }} | ${{ steps.params.outputs.version }} |
-            
+
             - E2E tests will now use `${{ steps.params.outputs.service }}:${{ steps.params.outputs.version }}` as the stable counterpart
             - This version has passed all CI checks and security scans
           branch: "compat-update/${{ steps.params.outputs.service }}-${{ steps.params.outputs.version }}"

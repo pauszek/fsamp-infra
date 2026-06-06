@@ -161,3 +161,34 @@ variable "localstack_endpoint" {
   type        = string
   default     = "http://localhost:4566"
 }
+
+variable "replica_region" {
+  description = <<-EOT
+    Secondary AWS region used for cross-region replication of CloudTrail
+    logs and tenant data buckets (FedRAMP CP-9, AU-9). Should be a
+    FIPS-capable region distinct from var.aws_region. The replica provider
+    is created unconditionally; replication resources are gated by
+    var.enable_cross_region_replication.
+  EOT
+  type        = string
+  default     = "us-east-1"
+
+  validation {
+    condition     = can(regex("^[a-z]{2}-[a-z]+-[0-9]$", var.replica_region))
+    error_message = "Replica region must be a valid region code (e.g., us-east-1)"
+  }
+}
+
+variable "enable_cross_region_replication" {
+  description = <<-EOT
+    Enable cross-region replication for CloudTrail logs and S3 data buckets.
+    Required by FedRAMP Moderate baseline (CP-9 Information System Backup,
+    AU-9 Protection of Audit Information) for production-grade resilience.
+    Cost: roughly equal to one extra copy of replicated data plus
+    inter-region transfer fees. Recommended: enabled for staging and prod,
+    disabled for dev. When null, the value defaults to true for prod and
+    staging and false otherwise.
+  EOT
+  type        = bool
+  default     = null
+}

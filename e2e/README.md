@@ -4,7 +4,7 @@ Enterprise-grade end-to-end tests for the complete FSAMP system with **full secu
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          E2E Test Architecture                               │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -48,13 +48,15 @@ Enterprise-grade end-to-end tests for the complete FSAMP system with **full secu
    - Pre-created test users
 
 2. **Test Users** (created by init-aws.sh):
+
    | User | Password | Group | Purpose |
    |------|----------|-------|---------|
    | `e2e-test-user` | `E2eTestPass123!` | USERS | Standard upload tests |
    | `e2e-admin-user` | `E2eAdminPass123!` | ADMINS | Admin operations |
 
 3. **Authentication Flow**:
-   ```
+
+   ```text
    E2E Test -> Cognito admin_initiate_auth -> JWT Token -> Gateway (validates JWT)
    ```
 
@@ -140,7 +142,7 @@ e2e-tests:
   runs-on: ubuntu-latest
   steps:
     - uses: actions/checkout@v4
-    
+
     - name: Start LocalStack
       uses: LocalStack/setup-localstack@main
       with:
@@ -148,7 +150,7 @@ e2e-tests:
         use-pro: 'true'
       env:
         LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
-    
+
     - name: Run E2E Tests
       run: |
         cd fsamp-infra/e2e

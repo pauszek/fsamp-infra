@@ -8,37 +8,6 @@ terraform {
     }
   }
 }
-variable "environment" {
-  description = "Environment name"
-  type        = string
-}
-
-variable "name_prefix" {
-  description = "Prefix for resource names"
-  type        = string
-}
-
-variable "kms_key_arn" {
-  description = "ARN of the KMS key for encryption"
-  type        = string
-}
-
-variable "tags" {
-  description = "Common tags"
-  type        = map(string)
-}
-
-variable "image_retention_count" {
-  description = "Number of images to retain per repository"
-  type        = number
-  default     = 10
-}
-
-variable "scan_on_push" {
-  description = "Enable vulnerability scanning on push"
-  type        = bool
-  default     = true
-}
 locals {
   repositories = {
     gateway   = "${var.name_prefix}-gateway"
@@ -66,6 +35,25 @@ resource "aws_ecr_repository" "repos" {
     Environment = var.environment
     Compliance  = "FIPS-140-3-Oriented"
   })
+}
+
+# FedRAMP RA-5 (Vulnerability Monitoring): switch ECR registry-wide to
+# Amazon Inspector enhanced scanning, which provides continuous scanning
+# of in-use images and richer SBOM-based findings than the default basic
+# scanner. This is a registry-wide setting; it must be applied once per
+# account/region and is therefore safe to manage from this module because
+# the FSAMP project owns the entire registry inside its dedicated AWS
+# account boundary.
+resource "aws_ecr_registry_scanning_configuration" "enhanced" {
+  scan_type = "ENHANCED"
+
+  rule {
+    scan_frequency = "CONTINUOUS_SCAN"
+    repository_filter {
+      filter      = "${var.name_prefix}-*"
+      filter_type = "WILDCARD"
+    }
+  }
 }
 resource "aws_ecr_lifecycle_policy" "repos" {
   for_each = aws_ecr_repository.repos
@@ -154,24 +142,4 @@ resource "aws_ecr_repository_policy" "repos" {
       }
     ]
   })
-}
-output "repository_urls" {
-  description = "ECR repository URLs"
-  value = {
-    for k, v in aws_ecr_repository.repos : k => v.repository_url
-  }
-}
-
-output "repository_arns" {
-  description = "ECR repository ARNs"
-  value = {
-    for k, v in aws_ecr_repository.repos : k => v.arn
-  }
-}
-
-output "repository_names" {
-  description = "ECR repository names"
-  value = {
-    for k, v in aws_ecr_repository.repos : k => v.name
-  }
 }

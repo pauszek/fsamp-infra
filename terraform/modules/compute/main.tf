@@ -8,222 +8,17 @@ terraform {
     }
   }
 }
-variable "environment" {
-  description = "Environment name"
-  type        = string
+resource "aws_cloudwatch_log_group" "ecs" {
+  name              = var.log_group_name
+  retention_in_days = var.log_retention_days
+  kms_key_id        = var.kms_key_arn
+
+  tags = merge(var.tags, {
+    Name        = var.log_group_name
+    Environment = var.environment
+  })
 }
 
-variable "name_prefix" {
-  description = "Prefix for resource names"
-  type        = string
-}
-
-variable "tags" {
-  description = "Common tags"
-  type        = map(string)
-}
-
-variable "kms_key_arn" {
-  description = "ARN of the KMS key for encryption"
-  type        = string
-}
-
-variable "ecs_task_role_arn" {
-  description = "ARN of the ECS task role"
-  type        = string
-}
-
-variable "ecs_execution_role_arn" {
-  description = "ARN of the ECS execution role"
-  type        = string
-}
-
-variable "lambda_role_arn" {
-  description = "ARN of the Lambda execution role"
-  type        = string
-}
-
-variable "vpc_id" {
-  description = "VPC ID for ECS"
-  type        = string
-}
-
-variable "subnet_ids" {
-  description = "Subnet IDs for ECS tasks"
-  type        = list(string)
-}
-
-variable "security_group_id" {
-  description = "Security group ID for ECS tasks"
-  type        = string
-}
-
-variable "lambda_security_group_id" {
-  description = "Security group ID for Lambda functions"
-  type        = string
-}
-
-variable "alb_security_group_id" {
-  description = "Security group ID for the internal Gateway ALB"
-  type        = string
-}
-
-variable "log_group_name" {
-  description = "CloudWatch log group name for ECS"
-  type        = string
-}
-
-variable "sqs_queue_arn" {
-  description = "SQS queue ARN for Lambda trigger"
-  type        = string
-}
-
-variable "dlq_arn" {
-  description = "Dead letter queue ARN for Lambda"
-  type        = string
-}
-
-variable "aws_region" {
-  description = "AWS region"
-  type        = string
-  default     = "us-west-2"
-}
-
-variable "use_fips_endpoint" {
-  description = "Use AWS FIPS endpoints where supported (us-* regions only)"
-  type        = bool
-  default     = true
-}
-
-variable "gateway_image" {
-  description = "Docker image for gateway service (ECR URI)"
-  type        = string
-}
-
-variable "sqs_queue_url" {
-  description = "SQS queue URL for processor environment"
-  type        = string
-  default     = ""
-}
-
-variable "sns_topic_arn" {
-  description = "SNS topic ARN for processor events"
-  type        = string
-  default     = ""
-}
-
-variable "file_events_topic_arn" {
-  description = "SNS topic ARN for gateway FILE_UPLOADED events"
-  type        = string
-  default     = ""
-}
-
-variable "s3_bucket_name" {
-  description = "S3 bucket name for processor file storage"
-  type        = string
-  default     = ""
-}
-
-variable "dynamodb_table_name" {
-  description = "DynamoDB table name for processor metadata"
-  type        = string
-  default     = ""
-}
-
-variable "processor_image" {
-  description = "ECR image URI for processor Lambda (container image deployment)"
-  type        = string
-}
-
-variable "outbox_publisher_image" {
-  description = "ECR image URI for outbox publisher Lambda (container image deployment)"
-  type        = string
-  default     = ""
-}
-
-variable "gateway_cpu" {
-  description = "CPU units for gateway task"
-  type        = number
-  default     = 256
-}
-
-variable "gateway_memory" {
-  description = "Memory (MB) for gateway task"
-  type        = number
-  default     = 512
-}
-
-variable "processor_memory" {
-  description = "Memory (MB) for processor Lambda"
-  type        = number
-  default     = 512
-}
-
-variable "processor_timeout" {
-  description = "Timeout (seconds) for processor Lambda"
-  type        = number
-  default     = 300
-}
-
-variable "processor_ecs_cpu" {
-  description = "CPU units for processor ECS task"
-  type        = number
-  default     = 256
-}
-
-variable "processor_ecs_memory" {
-  description = "Memory (MB) for processor ECS task"
-  type        = number
-  default     = 512
-}
-
-variable "processor_desired_count" {
-  description = "Desired count for processor ECS service"
-  type        = number
-  default     = 1
-}
-
-variable "enable_processor_ecs" {
-  description = "Enable optional ECS/Fargate processor service. Core runtime uses Lambda processor."
-  type        = bool
-  default     = false
-}
-
-variable "enable_container_insights" {
-  description = "Enable CloudWatch Container Insights for ECS"
-  type        = bool
-  default     = true
-}
-
-variable "outbox_table_name" {
-  description = "DynamoDB outbox table name"
-  type        = string
-  default     = ""
-}
-
-variable "idempotency_table_name" {
-  description = "DynamoDB idempotency table name for gateway retries"
-  type        = string
-  default     = ""
-}
-
-variable "cognito_user_pool_id" {
-  description = "Cognito User Pool ID for gateway JWT validation"
-  type        = string
-  default     = ""
-}
-
-variable "cognito_client_id" {
-  description = "Cognito web client ID for gateway JWT audience validation"
-  type        = string
-  default     = ""
-}
-
-variable "outbox_stream_arn" {
-  description = "DynamoDB Streams ARN for outbox table"
-  type        = string
-  default     = ""
-}
 resource "aws_ecs_cluster" "main" {
   name = "${var.name_prefix}-cluster"
 
@@ -247,6 +42,8 @@ resource "aws_ecs_cluster" "main" {
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-cluster"
   })
+
+  depends_on = [aws_cloudwatch_log_group.ecs]
 }
 
 resource "aws_ecs_cluster_capacity_providers" "main" {
@@ -362,6 +159,8 @@ resource "aws_ecs_task_definition" "gateway" {
     Name    = "${var.name_prefix}-gateway"
     Service = "gateway"
   })
+
+  depends_on = [aws_cloudwatch_log_group.ecs]
 }
 resource "aws_ecs_service" "gateway" {
   name            = "${var.name_prefix}-gateway"
@@ -458,6 +257,7 @@ locals {
     SNS_TOPIC_ARN                = var.sns_topic_arn
     OUTBOX_TABLE_NAME            = var.outbox_table_name
     MAX_RETRY_COUNT              = "3"
+    PUBLISH_CLAIM_TTL_SECONDS    = "300"
     USE_FIPS_ENDPOINT            = var.environment == "local" ? "false" : tostring(var.use_fips_endpoint)
     FIPS_REQUIRED                = var.environment == "local" ? "false" : "true"
   }
@@ -510,9 +310,7 @@ resource "aws_ecs_task_definition" "processor" {
     Service = "processor"
   })
 
-  depends_on = [
-    aws_cloudwatch_log_group.processor
-  ]
+  depends_on = [aws_cloudwatch_log_group.ecs]
 }
 resource "aws_ecs_service" "processor" {
   count = var.enable_processor_ecs ? 1 : 0
@@ -548,7 +346,17 @@ resource "aws_ecs_service" "processor" {
 }
 
 resource "aws_lambda_function" "processor" {
-  # checkov:skip=CKV_AWS_272: Code signing is tracked as production hardening; CI gates images with scans and SBOM.
+  # Container-image Lambdas cannot use AWS Signer code signing profiles
+  # (CKV_AWS_272) because that feature is restricted to ZIP-based functions.
+  # Supply-chain integrity is therefore enforced one layer down:
+  #   - ECR repositories run with image_tag_mutability=IMMUTABLE so tags
+  #     cannot be re-pushed once published.
+  #   - All images are signed keyless with cosign and Sigstore Fulcio in
+  #     the build pipeline; the Lambda execution role only has read access
+  #     to the FSAMP-owned ECR registry.
+  #   - Inspector enhanced continuous scanning (FedRAMP RA-5) covers the
+  #     image after deployment.
+  # checkov:skip=CKV_AWS_272: Container Lambdas use cosign + ECR immutable tags + Inspector enhanced scanning instead.
   function_name = "${var.name_prefix}-processor"
   role          = var.lambda_role_arn
   timeout       = var.processor_timeout
@@ -611,7 +419,9 @@ resource "aws_lambda_event_source_mapping" "sqs_trigger" {
 
 }
 resource "aws_lambda_function" "outbox_publisher" {
-  # checkov:skip=CKV_AWS_272: Code signing is tracked as production hardening; CI gates images with scans and SBOM.
+  # See processor function above for the supply-chain rationale; the same
+  # constraints apply to all container-image Lambdas in the platform.
+  # checkov:skip=CKV_AWS_272: Container Lambdas use cosign + ECR immutable tags + Inspector enhanced scanning instead.
   function_name = "${var.name_prefix}-outbox-publisher"
   role          = var.lambda_role_arn
   timeout       = 60
@@ -679,6 +489,23 @@ resource "aws_lambda_event_source_mapping" "outbox_stream" {
 
   parallelization_factor = 2
 
+  # Persist failed batches that exhaust retries to a dedicated SQS queue
+  # so the at-least-once guarantee of the outbox pattern survives
+  # downstream errors. Without this, DDB Streams records dropped after
+  # max_retries are lost permanently. (FedRAMP CP-9, AU-2)
+  destination_config {
+    on_failure {
+      destination_arn = var.outbox_publisher_dlq_arn
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.outbox_publisher_dlq_arn != ""
+      error_message = "outbox_publisher_dlq_arn must be set when outbox_stream_arn enables the outbox stream mapping."
+    }
+  }
+
   filter_criteria {
     filter {
       pattern = jsonencode({
@@ -694,6 +521,10 @@ resource "aws_appautoscaling_target" "gateway" {
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.gateway.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
+
+  tags = merge(var.tags, {
+    Name = "${var.name_prefix}-gateway-autoscaling-target"
+  })
 }
 
 resource "aws_appautoscaling_policy" "gateway_cpu" {
@@ -728,68 +559,4 @@ resource "aws_appautoscaling_policy" "gateway_memory" {
     scale_in_cooldown  = 300
     scale_out_cooldown = 60
   }
-}
-output "ecs_cluster_arn" {
-  description = "ARN of the ECS cluster"
-  value       = aws_ecs_cluster.main.arn
-}
-
-output "ecs_cluster_name" {
-  description = "Name of the ECS cluster"
-  value       = aws_ecs_cluster.main.name
-}
-
-output "gateway_task_definition_arn" {
-  description = "ARN of the gateway task definition"
-  value       = aws_ecs_task_definition.gateway.arn
-}
-
-output "gateway_service_name" {
-  description = "Name of the gateway ECS service"
-  value       = aws_ecs_service.gateway.name
-}
-
-output "processor_task_definition_arn" {
-  description = "ARN of the processor ECS task definition"
-  value       = var.enable_processor_ecs ? aws_ecs_task_definition.processor[0].arn : null
-}
-
-output "processor_service_name" {
-  description = "Name of the processor ECS service"
-  value       = var.enable_processor_ecs ? aws_ecs_service.processor[0].name : null
-}
-
-output "gateway_alb_arn" {
-  description = "ARN of the internal Gateway ALB"
-  value       = aws_lb.gateway.arn
-}
-
-output "gateway_alb_dns_name" {
-  description = "DNS name of the internal Gateway ALB"
-  value       = aws_lb.gateway.dns_name
-}
-
-output "gateway_alb_listener_arn" {
-  description = "ARN of the internal Gateway ALB listener"
-  value       = aws_lb_listener.gateway.arn
-}
-
-output "processor_lambda_arn" {
-  description = "ARN of the processor Lambda function"
-  value       = aws_lambda_function.processor.arn
-}
-
-output "processor_lambda_name" {
-  description = "Name of the processor Lambda function"
-  value       = aws_lambda_function.processor.function_name
-}
-
-output "outbox_publisher_lambda_arn" {
-  description = "ARN of the outbox publisher Lambda function"
-  value       = aws_lambda_function.outbox_publisher.arn
-}
-
-output "outbox_publisher_lambda_name" {
-  description = "Name of the outbox publisher Lambda function"
-  value       = aws_lambda_function.outbox_publisher.function_name
 }

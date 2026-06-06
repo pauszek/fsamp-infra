@@ -74,7 +74,7 @@ continuously, and the full environment is brought up on demand during a DR event
 **RTO:** < 15 minutes  
 **Action:** Automatic
 
-```
+```text
 1. ECS auto-replaces unhealthy tasks (health check grace period: 60s)
 2. Lambda: SQS retry policy re-invokes on failure (maxRetries: 3)
 3. DLQ captures permanently failed messages for manual review
@@ -86,7 +86,7 @@ continuously, and the full environment is brought up on demand during a DR event
 **Trigger:** Operator error, application bug  
 **RTO:** < 1 hour
 
-```
+```text
 1. S3: Restore from version history
    aws s3api list-object-versions --bucket fsamp-<env>-storage
    aws s3api get-object --bucket fsamp-<env>-storage --key <key> --version-id <id> restored.bin
@@ -106,7 +106,7 @@ continuously, and the full environment is brought up on demand during a DR event
 **Trigger:** Region outage, catastrophic failure, security incident  
 **RTO:** ≤ 4 hours
 
-```
+```text
 Step 1: Verify prerequisites (30 min)
   - Confirm Terraform state accessible (S3 backend in secondary region)
   - Confirm container images available (GHCR/ECR cross-region)
@@ -140,7 +140,7 @@ Step 5: Validation (60 min)
 **Trigger:** GuardDuty finding, unauthorized access detected  
 **RTO:** < 2 hours
 
-```
+```text
 1. IMMEDIATE: Rotate affected IAM credentials / KMS keys
    aws iam update-access-key --status Inactive --access-key-id <key>
 
@@ -180,7 +180,7 @@ Step 5: Validation (60 min)
 
 ### Test Execution Checklist
 
-```
+```text
 □ Schedule drill with all stakeholders (1 week notice)
 □ Snapshot current environment state
 □ Execute recovery procedure per Section 4
