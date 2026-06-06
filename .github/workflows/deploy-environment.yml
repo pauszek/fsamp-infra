@@ -389,7 +389,7 @@ jobs:
         with:
           context: services/gateway
           file: services/gateway/Dockerfile
-          platforms: linux/amd64
+          platforms: linux/arm64
           push: true
           tags: ${{ steps.ecr.outputs.gateway_repository }}:${{ needs.plan.outputs.image_tag }}
           provenance: true
