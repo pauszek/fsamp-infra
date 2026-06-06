@@ -1,21 +1,8 @@
 name: Drift Detection
 
-# Scheduled Terraform drift detection for FSAMP environments.
-# Runs `terraform plan -detailed-exitcode` against each non-local
-# environment and opens a GitHub issue when state diverges from code.
-# FedRAMP CM-3 / CM-6.
-#
-# Backend bucket and lock-table names follow the same convention as
-# `deploy-environment.yml` (`fsamp-${env}-${account_id}-${region}-tfstate`
-# and `fsamp-${env}-terraform-locks`). The account id is sourced from
-# environment-scoped repository variables (`AWS_ACCOUNT_ID`) so the
-# caller stays read-only.
-
 on:
   schedule:
-    # 03:17 UTC every day. Off-peak for the platform; the unusual minute
-    # avoids contention with other repository scheduled runs.
-    - cron: '17 3 * * *'
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       environment:
