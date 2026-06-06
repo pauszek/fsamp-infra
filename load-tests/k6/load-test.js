@@ -1,9 +1,9 @@
 /**
  * FSAMP Load Test
- * 
+ *
  * Standard load test simulating realistic traffic patterns.
  * Tests the system under expected normal load conditions.
- * 
+ *
  * Usage:
  *   k6 run load-test.js
  *   k6 run -e BASE_URL=https://api.example.com load-test.js
@@ -34,35 +34,35 @@ export const options = {
     { duration: '3m', target: 20 },   // Scale down to 20
     { duration: '2m', target: 0 },    // Ramp down to 0
   ],
-  
+
   thresholds: {
     http_req_failed: ['rate<0.005'],
-    
+
     http_req_duration: ['p(50)<200', 'p(95)<500', 'p(99)<2000'],
     upload_latency: ['p(95)<3000', 'p(99)<5000'],
     health_latency: ['p(95)<100'],
-    
+
     errors: ['rate<0.005'],
     http_5xx_errors: ['rate<0.001'],
-    
+
     'checks{type:critical}': ['rate>0.99'],
     'checks{type:upload}': ['rate>0.98'],
   },
-  
+
   tags: {
     testType: 'load',
     environment: __ENV.ENVIRONMENT || 'staging',
   },
-  
+
   gracefulStop: '30s',
 };
 const CONFIG = {
   baseUrl: __ENV.BASE_URL || 'http://localhost:8080',
   authToken: __ENV.AUTH_TOKEN || '',
-  
+
   timeout: '30s',
   uploadTimeout: '60s',
-  
+
   fileSizes: [
     1024,        // 1 KB
     10240,       // 10 KB
@@ -70,7 +70,7 @@ const CONFIG = {
     524288,      // 512 KB
     1048576,     // 1 MB
   ],
-  
+
   fileTypes: [
     { ext: 'txt', mime: 'text/plain' },
     { ext: 'json', mime: 'application/json' },
@@ -78,7 +78,7 @@ const CONFIG = {
     { ext: 'png', mime: 'image/png' },
     { ext: 'xml', mime: 'application/xml' },
   ],
-  
+
   thinkTimeMin: 1,
   thinkTimeMax: 3,
 };
@@ -105,7 +105,7 @@ function generateFileContent(sizeBytes) {
     }
     return content;
   }
-  
+
   const pattern = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. '.repeat(100);
   let content = '';
   while (content.length < sizeBytes) {
@@ -122,15 +122,15 @@ function buildHeaders(idempotencyKey) {
     'Content-Type': 'application/json',
     'X-Request-ID': uuidv4(),
   };
-  
+
   if (CONFIG.authToken) {
     headers['Authorization'] = `Bearer ${CONFIG.authToken}`;
   }
-  
+
   if (idempotencyKey) {
     headers['X-Idempotency-Key'] = idempotencyKey;
   }
-  
+
   return headers;
 }
 
@@ -141,22 +141,22 @@ export function setup() {
   console.log(`\nFSAMP Load Test`);
   console.log(`Target: ${CONFIG.baseUrl}`);
   console.log('');
-  
+
   const healthRes = http.get(`${CONFIG.baseUrl}/actuator/health`, {
     timeout: '10s',
   });
-  
+
   if (healthRes.status !== 200) {
     throw new Error(`Health check failed: ${healthRes.status}`);
   }
-  
+
   const healthBody = JSON.parse(healthRes.body);
   if (healthBody.status !== 'UP') {
     throw new Error(`System not healthy: ${healthBody.status}`);
   }
-  
+
   console.log('OK System health verified');
-  
+
   return {
     startTime: new Date().toISOString(),
     baseUrl: CONFIG.baseUrl,
@@ -165,18 +165,18 @@ export function setup() {
 export default function(data) {
   const vu = __VU;
   const iter = __ITER;
-  
+
   const scenarios = [
     { name: 'upload', weight: 60 },
     { name: 'health', weight: 20 },
     { name: 'status', weight: 20 },
   ];
-  
+
   const totalWeight = scenarios.reduce((sum, s) => sum + s.weight, 0);
   const random = Math.random() * totalWeight;
   let cumulative = 0;
   let selectedScenario = 'upload';
-  
+
   for (const scenario of scenarios) {
     cumulative += scenario.weight;
     if (random <= cumulative) {
@@ -184,7 +184,7 @@ export default function(data) {
       break;
     }
   }
-  
+
   switch (selectedScenario) {
     case 'upload':
       uploadScenario(vu, iter);
@@ -196,7 +196,7 @@ export default function(data) {
       statusScenario();
       break;
   }
-  
+
   thinkTime();
 }
 /**
@@ -207,10 +207,10 @@ function uploadScenario(vu, iter) {
     const idempotencyKey = uuidv4();
     const fileSize = randomItem(CONFIG.fileSizes);
     const fileType = randomItem(CONFIG.fileTypes);
-    
+
     const content = generateFileContent(fileSize);
     const filename = `load-test-vu${vu}-iter${iter}-${idempotencyKey}.${fileType.ext}`;
-    
+
     const payload = JSON.stringify({
       filename: filename,
       content: content,
@@ -222,9 +222,9 @@ function uploadScenario(vu, iter) {
         timestamp: new Date().toISOString(),
       },
     });
-    
+
     const headers = buildHeaders(idempotencyKey);
-    
+
     const startTime = new Date();
     const response = http.post(
       `${CONFIG.baseUrl}/api/v1/files/upload`,
@@ -236,16 +236,16 @@ function uploadScenario(vu, iter) {
       }
     );
     const duration = new Date() - startTime;
-    
+
     uploadLatency.add(duration);
     bytesUploaded.add(fileSize);
-    
+
     if (response.status >= 500) {
       http5xxRate.add(1);
     } else {
       http5xxRate.add(0);
     }
-    
+
     const success = check(response, {
       'upload: status is 2xx': (r) => r.status >= 200 && r.status < 300,
       'upload: has fileId': (r) => {
@@ -257,7 +257,7 @@ function uploadScenario(vu, iter) {
       },
       'upload: latency < 3s': (r) => r.timings.duration < 3000,
     }, { type: 'upload' });
-    
+
     if (success) {
       successfulUploads.add(1);
       errorRate.add(0);
@@ -266,7 +266,7 @@ function uploadScenario(vu, iter) {
       failedUploads.add(1);
       errorRate.add(1);
       sloCompliance.add(0);
-      
+
       console.warn(`Upload failed: VU=${vu}, Status=${response.status}, Body=${response.body.substring(0, 200)}`);
     }
   });
@@ -283,9 +283,9 @@ function healthScenario() {
       tags: { name: 'health', endpoint: 'health' },
     });
     const duration = new Date() - startTime;
-    
+
     healthLatency.add(duration);
-    
+
     check(response, {
       'health: status is 200': (r) => r.status === 200,
       'health: status is UP': (r) => {
@@ -309,13 +309,13 @@ function statusScenario() {
       '/actuator/info',
       '/actuator/metrics',
     ];
-    
+
     for (const endpoint of endpoints) {
       const response = http.get(`${CONFIG.baseUrl}${endpoint}`, {
         timeout: CONFIG.timeout,
         tags: { name: 'status', endpoint: endpoint },
       });
-      
+
       check(response, {
         [`${endpoint}: status is 2xx`]: (r) => r.status >= 200 && r.status < 300,
       });
@@ -332,17 +332,17 @@ export function handleSummary(data) {
   const httpFailed = data.metrics.http_req_failed?.values?.rate || 0;
   const p95Latency = data.metrics.http_req_duration?.values?.['p(95)'] || 0;
   const p99Latency = data.metrics.http_req_duration?.values?.['p(99)'] || 0;
-  
+
   const availabilitySLO = httpFailed < 0.005;
   const latencyP95SLO = p95Latency < 500;
   const latencyP99SLO = p99Latency < 2000;
-  
+
   console.log('\nSLO status');
   console.log(`Availability (99.5%): ${availabilitySLO ? 'PASS' : 'FAIL'} (${((1 - httpFailed) * 100).toFixed(3)}%)`);
   console.log(`Latency p95 (<500ms): ${latencyP95SLO ? 'PASS' : 'FAIL'} (${p95Latency.toFixed(0)}ms)`);
   console.log(`Latency p99 (<2000ms): ${latencyP99SLO ? 'PASS' : 'FAIL'} (${p99Latency.toFixed(0)}ms)`);
   console.log('');
-  
+
   return {
     'stdout': textSummary(data, { indent: '  ', enableColors: true }),
     'load-test-results.json': JSON.stringify(data, null, 2),

@@ -1,9 +1,9 @@
 /**
  * FSAMP Smoke Test
- * 
+ *
  * Quick validation test to verify the system is functional.
  * Run this after deployments or before heavier load tests.
- * 
+ *
  * Usage:
  *   k6 run smoke-test.js
  *   k6 run -e BASE_URL=https://api.example.com smoke-test.js
@@ -19,13 +19,13 @@ const uploadDuration = new Trend('upload_duration');
 export const options = {
   vus: 3,
   duration: '1m',
-  
+
   thresholds: {
     http_req_failed: ['rate<0.01'],      // <1% errors
     http_req_duration: ['p(95)<1000'],   // 95% under 1s
     errors: ['rate<0.01'],               // Custom error rate
   },
-  
+
   tags: {
     testType: 'smoke',
     environment: __ENV.ENVIRONMENT || 'staging',
@@ -69,16 +69,16 @@ function generateTestFile(sizeBytes) {
  */
 export function setup() {
   console.log(`Starting smoke test against: ${BASE_URL}`);
-  
+
   const healthRes = http.get(`${BASE_URL}/actuator/health`, { timeout: '10s' });
-  
+
   if (healthRes.status !== 200) {
     console.error(`Health check failed: ${healthRes.status}`);
     throw new Error('System health check failed - aborting smoke test');
   }
-  
+
   console.log('Health check passed - system is responding');
-  
+
   return {
     startTime: new Date().toISOString(),
     baseUrl: BASE_URL,
@@ -89,7 +89,7 @@ export function setup() {
  * Main test function - runs for each VU iteration
  */
 export default function(data) {
-  
+
   group('Health Endpoints', function() {
     const healthRes = http.get(`${BASE_URL}/actuator/health`);
     check(healthRes, {
@@ -103,28 +103,28 @@ export default function(data) {
         }
       },
     }) || errorRate.add(1);
-    
+
     sleep(0.5);
-    
+
     const infoRes = http.get(`${BASE_URL}/actuator/info`);
     check(infoRes, {
       'info status is 200': (r) => r.status === 200,
     }) || errorRate.add(1);
   });
-  
+
   group('Upload Endpoint', function() {
     const idempotencyKey = uuidv4();
     const reqHeaders = Object.assign({}, headers, {
       'X-Idempotency-Key': idempotencyKey,
     });
-    
+
     const testContent = generateTestFile(1024);
     const payload = {
       filename: `smoke-test-${idempotencyKey}.txt`,
       content: testContent,
       contentType: 'text/plain',
     };
-    
+
     const startTime = new Date();
     const uploadRes = http.post(
       `${BASE_URL}/api/v1/files/upload`,
@@ -132,9 +132,9 @@ export default function(data) {
       { headers: reqHeaders, timeout: '30s' }
     );
     const duration = new Date() - startTime;
-    
+
     uploadDuration.add(duration);
-    
+
     const uploadSuccess = check(uploadRes, {
       'upload status is 2xx': (r) => r.status >= 200 && r.status < 300,
       'upload response has fileId': (r) => {
@@ -147,21 +147,21 @@ export default function(data) {
       },
       'upload response time < 5s': (r) => r.timings.duration < 5000,
     });
-    
+
     if (!uploadSuccess) {
       errorRate.add(1);
       console.error(`Upload failed: ${uploadRes.status} - ${uploadRes.body}`);
     }
-    
+
     if (uploadRes.status >= 200 && uploadRes.status < 300) {
       sleep(0.5);
-      
+
       const retryRes = http.post(
         `${BASE_URL}/api/v1/files/upload`,
         JSON.stringify(payload),
         { headers: reqHeaders, timeout: '30s' }
       );
-      
+
       check(retryRes, {
         'idempotent retry returns same fileId': (r) => {
           try {
@@ -175,15 +175,15 @@ export default function(data) {
       });
     }
   });
-  
+
   group('Error Handling', function() {
     const notFoundRes = http.get(`${BASE_URL}/api/v1/nonexistent-endpoint`);
     check(notFoundRes, {
       'nonexistent endpoint returns 404': (r) => r.status === 404,
     });
-    
+
     sleep(0.5);
-    
+
     const invalidRes = http.post(
       `${BASE_URL}/api/v1/files/upload`,
       '{"invalid": json}',
@@ -193,7 +193,7 @@ export default function(data) {
       'invalid JSON returns 400': (r) => r.status === 400,
     });
   });
-  
+
   sleep(1);
 }
 
@@ -209,17 +209,17 @@ export function teardown(data) {
 export function handleSummary(data) {
   const passed = data.root_group.checks.filter(c => c.passes > 0 && c.fails === 0);
   const failed = data.root_group.checks.filter(c => c.fails > 0);
-  
+
   console.log('\nSmoke test summary');
   console.log(`Total Checks: ${data.root_group.checks.length}`);
   console.log(`Passed: ${passed.length}`);
   console.log(`Failed: ${failed.length}`);
-  
+
   if (failed.length > 0) {
     console.log('\nFailed Checks:');
     failed.forEach(c => console.log(`  - ${c.name}: ${c.fails} failures`));
   }
-  
+
   return {
     'stdout': textSummary(data, { indent: '  ', enableColors: true }),
     'smoke-test-results.json': JSON.stringify(data, null, 2),

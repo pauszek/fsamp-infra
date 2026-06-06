@@ -9,4 +9,3 @@ localstack_endpoint = "http://localhost:4566"
 tags = {
   Team = "development"
 }
-

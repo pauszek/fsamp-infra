@@ -298,7 +298,7 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "Recent Errors (All Services)"
           region = data.aws_region.current.region
           query  = <<-EOT
-            SOURCE '/aws/lambda/${var.name_prefix}-processor' 
+            SOURCE '/aws/lambda/${var.name_prefix}-processor'
             | SOURCE '/aws/lambda/${var.name_prefix}-outbox-publisher'
             | SOURCE '/ecs/${var.name_prefix}'
             | filter @message like /ERROR|error|Error|CRITICAL|Exception/

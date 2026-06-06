@@ -90,10 +90,11 @@ resource "aws_cloudwatch_log_group" "cloudtrail" {
 
   name = "/aws/cloudtrail/${var.name_prefix}"
   # FedRAMP Moderate AU-11 requires audit data retention; the program's
-  # baseline is 3 years (1095 days) for moderate impact systems. Production
+  # baseline is 3 years (1096 days, the closest CloudWatch-supported value)
+  # for moderate impact systems. Production
   # uses the longer 7-year window to align with typical financial/compliance
   # retention requirements. Lower environments use 1 year.
-  retention_in_days = var.environment == "prod" ? 2557 : (var.environment == "staging" ? 1095 : 365)
+  retention_in_days = var.environment == "prod" ? 2557 : (var.environment == "staging" ? 1096 : 365)
   kms_key_id        = var.kms_key_arn
 
   tags = var.tags

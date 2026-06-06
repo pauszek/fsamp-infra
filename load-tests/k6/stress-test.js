@@ -1,9 +1,9 @@
 /**
  * FSAMP Stress Test
- * 
+ *
  * Push the system beyond normal capacity to find breaking points.
  * Identifies the maximum throughput and failure modes.
- * 
+ *
  * Usage:
  *   k6 run stress-test.js
  *   k6 run -e BASE_URL=https://api.example.com stress-test.js
@@ -24,39 +24,39 @@ const recoveryTime = new Gauge('recovery_time_seconds');
 export const options = {
   stages: [
     { duration: '1m', target: 50 },
-    
+
     { duration: '2m', target: 100 },
     { duration: '2m', target: 100 },  // Hold
-    
+
     { duration: '2m', target: 200 },
     { duration: '2m', target: 200 },  // Hold
-    
+
     { duration: '2m', target: 300 },
     { duration: '2m', target: 300 },  // Hold (likely breaking point)
-    
+
     { duration: '2m', target: 400 },
     { duration: '2m', target: 400 },  // Hold (beyond capacity)
-    
+
     { duration: '2m', target: 100 },
     { duration: '2m', target: 50 },
     { duration: '1m', target: 0 },
   ],
-  
+
   thresholds: {
     http_req_failed: ['rate<0.10'],  // Allow up to 10% errors
     http_req_duration: ['p(95)<10000'],  // Allow higher latency
-    
+
     errors: ['rate<0.15'],
     http_5xx_errors: ['rate<0.10'],
   },
-  
+
   tags: {
     testType: 'stress',
     environment: __ENV.ENVIRONMENT || 'staging',
   },
-  
+
   thresholds_abort_on_fail: false,
-  
+
   gracefulStop: '60s',
 };
 const CONFIG = {
@@ -64,7 +64,7 @@ const CONFIG = {
   authToken: __ENV.AUTH_TOKEN || '',
   timeout: '60s',
   uploadTimeout: '120s',
-  
+
   fileSizes: [
     1024,    // 1 KB
     5120,    // 5 KB
@@ -93,15 +93,15 @@ function buildHeaders(idempotencyKey) {
     'Content-Type': 'application/json',
     'X-Request-ID': uuidv4(),
   };
-  
+
   if (CONFIG.authToken) {
     headers['Authorization'] = `Bearer ${CONFIG.authToken}`;
   }
-  
+
   if (idempotencyKey) {
     headers['X-Idempotency-Key'] = idempotencyKey;
   }
-  
+
   return headers;
 }
 
@@ -114,15 +114,15 @@ export function setup() {
   console.log(`Target: ${CONFIG.baseUrl}`);
   console.log(`Warning: this test pushes the system to failure`);
   console.log('');
-  
+
   const healthRes = http.get(`${CONFIG.baseUrl}/actuator/health`, {
     timeout: '10s',
   });
-  
+
   if (healthRes.status !== 200) {
     console.warn(`Warning: Initial health check returned ${healthRes.status}`);
   }
-  
+
   return {
     startTime: new Date().toISOString(),
     baseUrl: CONFIG.baseUrl,
@@ -131,12 +131,12 @@ export function setup() {
 export default function(data) {
   const vu = __VU;
   const iter = __ITER;
-  
+
   group('Stress Upload', function() {
     const idempotencyKey = uuidv4();
     const fileSize = randomItem(CONFIG.fileSizes);
     const content = generateFileContent(fileSize);
-    
+
     const payload = JSON.stringify({
       filename: `stress-test-vu${vu}-${idempotencyKey}.txt`,
       content: content,
@@ -148,9 +148,9 @@ export default function(data) {
         activeVUs: __VU,
       },
     });
-    
+
     const headers = buildHeaders(idempotencyKey);
-    
+
     const startTime = new Date();
     const response = http.post(
       `${CONFIG.baseUrl}/api/v1/files/upload`,
@@ -162,13 +162,13 @@ export default function(data) {
       }
     );
     const duration = new Date() - startTime;
-    
+
     uploadLatency.add(duration);
-    
+
     if (response.status >= 500) {
       http5xxRate.add(1);
       consecutiveErrors++;
-      
+
       if (!breakingPointDetected && consecutiveErrors >= ERROR_THRESHOLD) {
         breakingPointDetected = true;
         breakingPointTime = new Date().toISOString();
@@ -179,7 +179,7 @@ export default function(data) {
       }
     } else {
       http5xxRate.add(0);
-      
+
       if (breakingPointDetected && consecutiveErrors > 0) {
         const recoveryStart = new Date();
         if (response.status >= 200 && response.status < 300) {
@@ -190,14 +190,14 @@ export default function(data) {
         consecutiveErrors = 0;
       }
     }
-    
+
     const success = check(response, {
       'stress: status is 2xx': (r) => r.status >= 200 && r.status < 300,
       'stress: not rate limited': (r) => r.status !== 429,
       'stress: not server error': (r) => r.status < 500,
       'stress: latency < 10s': (r) => r.timings.duration < 10000,
     });
-    
+
     if (success) {
       successfulRequests.add(1);
       errorRate.add(0);
@@ -205,26 +205,26 @@ export default function(data) {
       failedRequests.add(1);
       errorRate.add(1);
     }
-    
+
     if (iter % 100 === 0) {
       console.log(`VU ${vu}, Iter ${iter}: ${response.status} (${duration}ms)`);
     }
   });
-  
+
   sleep(0.1);
 }
 export function teardown(data) {
   console.log(`\nStress Test Completed`);
   console.log(`Started: ${data.startTime}`);
   console.log(`Ended: ${new Date().toISOString()}`);
-  
+
   if (breakingPointDetected) {
     console.log(`\nBreaking point detected`);
     console.log(`Time: ${breakingPointTime}`);
   } else {
     console.log(`\nNo breaking point detected within test parameters`);
   }
-  
+
   console.log('');
 }
 export function handleSummary(data) {
@@ -233,7 +233,7 @@ export function handleSummary(data) {
   const maxVUs = data.metrics.vus_max?.values?.max || 0;
   const p95Latency = data.metrics.http_req_duration?.values?.['p(95)'] || 0;
   const p99Latency = data.metrics.http_req_duration?.values?.['p(99)'] || 0;
-  
+
   console.log('\nStress test results');
   console.log(`Max VUs Reached: ${maxVUs}`);
   console.log(`Total Requests: ${totalRequests}`);
@@ -241,7 +241,7 @@ export function handleSummary(data) {
   console.log(`Error Rate: ${((failedRequests / totalRequests) * 100).toFixed(2)}%`);
   console.log(`Latency p95: ${p95Latency.toFixed(0)}ms`);
   console.log(`Latency p99: ${p99Latency.toFixed(0)}ms`);
-  
+
   if (breakingPointDetected) {
     console.log(`\nBreaking point: ~${maxVUs} VUs`);
     console.log(`Recommendation: Scale infrastructure or add rate limiting`);
@@ -249,7 +249,7 @@ export function handleSummary(data) {
     console.log(`\nSystem handled ${maxVUs} VUs without breaking`);
   }
   console.log('');
-  
+
   return {
     'stdout': textSummary(data, { indent: '  ', enableColors: true }),
     'stress-test-results.json': JSON.stringify(data, null, 2),

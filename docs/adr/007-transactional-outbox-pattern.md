@@ -1,12 +1,15 @@
 # ADR-007: Transactional Outbox Pattern
 
 ## Status
+
 Accepted
 
 ## Date
+
 2026-05
 
 ## Context
+
 Gateway uploads a file, writes metadata, and emits a `FILE_UPLOADED` event. A direct S3/DynamoDB/SNS sequence creates a dual-write risk: metadata can be committed while the event publish fails.
 
 The platform needs:
@@ -17,11 +20,13 @@ The platform needs:
 - no distributed transaction coordinator.
 
 ## Decision
+
 Use a DynamoDB-backed transactional outbox.
 
 Gateway writes file metadata and an outbox record in one DynamoDB transaction. A DynamoDB Stream triggers the outbox publisher Lambda, which publishes to SNS and updates the outbox record status.
 
 ## Consequences
+
 Positive:
 
 - no lost events after a successful metadata transaction,

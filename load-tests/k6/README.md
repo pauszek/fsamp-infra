@@ -67,6 +67,7 @@ docker run -i grafana/k6 run - < load-test.js
 ### 1. Smoke Test
 
 Minimal load to verify the system is functional:
+
 - 1-5 VUs (Virtual Users)
 - Duration: 1 minute
 - Use case: Quick validation after deployment
@@ -78,6 +79,7 @@ k6 run smoke-test.js
 ### 2. Load Test
 
 Standard load testing with realistic traffic:
+
 - Ramp up: 0 -> 50 VUs over 2 minutes
 - Sustained: 50 VUs for 5 minutes
 - Ramp down: 50 -> 0 VUs over 2 minutes
@@ -89,6 +91,7 @@ k6 run load-test.js
 ### 3. Stress Test
 
 Push the system beyond normal capacity:
+
 - Progressive ramp: 0 -> 100 -> 200 -> 300 VUs
 - Find breaking points
 - Monitor recovery
@@ -100,6 +103,7 @@ k6 run stress-test.js
 ### 4. Spike Test
 
 Sudden dramatic increases in traffic:
+
 - Baseline: 10 VUs
 - Spike: 10 -> 200 VUs instantly
 - Recovery monitoring
@@ -116,10 +120,10 @@ Tests are configured with thresholds matching our SLOs:
 thresholds: {
   // Availability: 99.5%
   'http_req_failed': ['rate<0.005'],
-  
+
   // Latency SLOs
   'http_req_duration': ['p(95)<500', 'p(99)<2000'],
-  
+
   // Error rate
   'http_req_failed{endpoint:upload}': ['rate<0.01'],
 }
@@ -196,10 +200,10 @@ load-test:
 
 ### Sample Output
 
-```
-     OK status is 200
-     OK response time < 500ms
-     OK upload successful
+```text
+   OK status is 200
+   OK response time < 500ms
+   OK upload successful
 
      checks.........................: 100.00% OK 15000  FAIL 0
      data_received..................: 45 MB   450 kB/s

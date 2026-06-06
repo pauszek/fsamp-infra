@@ -16,7 +16,7 @@ services:
       - IAM_SOFT_MODE=0
       - LAMBDA_EXECUTOR=docker
       - DOCKER_HOST=unix:///var/run/docker.sock
-      
+
       - PERSISTENCE=${PERSISTENCE:-1}
       - DEBUG=${DEBUG:-0}
     volumes:

@@ -3,7 +3,7 @@ name: Update Compatibility Matrix
 on:
   repository_dispatch:
     types: [update-compatibility]
-  
+
   workflow_dispatch:
     inputs:
       service:
@@ -26,7 +26,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -48,9 +48,9 @@ jobs:
             SERVICE="${{ inputs.service }}"
             VERSION="${{ inputs.version }}"
           fi
-          
+
           VERSION="${VERSION#v}"
-          
+
           echo "service=${SERVICE}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Updating ${SERVICE} to version ${VERSION}"
@@ -61,12 +61,12 @@ jobs:
           VERSION: ${{ steps.params.outputs.version }}
         run: |
           COMPAT_FILE="compatibility.yml"
-          
+
           echo "Current values:"
           yq '.current' "$COMPAT_FILE"
-          
+
           yq -i ".current.${SERVICE} = \"${VERSION}\"" "$COMPAT_FILE"
-          
+
           echo ""
           echo "Updated values:"
           yq '.current' "$COMPAT_FILE"
@@ -78,13 +78,13 @@ jobs:
           commit-message: "chore: update ${{ steps.params.outputs.service }} to ${{ steps.params.outputs.version }}"
           title: "Update compatibility: ${{ steps.params.outputs.service }} to ${{ steps.params.outputs.version }}"
           body: |
-            
+
             This PR updates the compatibility matrix with the latest released version:
-            
+
             | Service | Version |
             |---------|---------|
             | ${{ steps.params.outputs.service }} | ${{ steps.params.outputs.version }} |
-            
+
             - E2E tests will now use `${{ steps.params.outputs.service }}:${{ steps.params.outputs.version }}` as the stable counterpart
             - This version has passed all CI checks and security scans
           branch: "compat-update/${{ steps.params.outputs.service }}-${{ steps.params.outputs.version }}"

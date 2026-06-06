@@ -10,7 +10,8 @@
 #     pull-request workflows and unrelated branches from assuming the role.
 #   - Permissions policy follows least-privilege for the resources Terraform
 #     actually manages: it intentionally avoids iam:* and kms:* wildcards.
-#     IAM and KMS actions are scoped to FSAMP-prefixed resources only.
+#     IAM actions are scoped to FSAMP-prefixed resources; KMS actions are
+#     action-scoped because several key-management APIs require Resource "*".
 #   - Optional managed policy fallback (USE_MANAGED_FALLBACK=true) attaches
 #     PowerUserAccess + IAMFullAccess for environments where the inline
 #     policy is too restrictive during early bootstrap. This is OFF by default.
@@ -177,9 +178,11 @@ jq -n \
     ]
   }' > "${trust_policy}"
 
-# Least-privilege permissions policy. IAM and KMS actions are scoped to
-# resources owned by the FSAMP project. Other AWS service actions are
-# constrained to operations Terraform requires for plan/apply.
+# Least-privilege permissions policy. IAM actions are scoped to resources
+# owned by the FSAMP project. KMS bootstrap actions remain action-scoped
+# because several key-management APIs require Resource "*"; Terraform applies
+# Project/Environment tags to the keys it creates. Other AWS service actions
+# are constrained to operations Terraform requires for plan/apply.
 jq -n \
   --arg accountId "${account_id}" \
   --arg partition "${partition}" \
@@ -366,12 +369,7 @@ jq -n \
           "kms:PutKeyPolicy", "kms:UpdateKeyDescription",
           "kms:TagResource", "kms:UntagResource"
         ],
-        Resource: "*",
-        Condition: {
-          "ForAnyValue:StringLike": {
-            "aws:TagKeys": ["Project", "Environment"]
-          }
-        }
+        Resource: "*"
       },
       {
         Sid: "DenyDangerousActions",

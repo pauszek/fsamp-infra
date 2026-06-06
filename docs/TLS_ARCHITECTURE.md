@@ -10,7 +10,7 @@ security-group isolation. AWS SDK calls use AWS FIPS endpoints where supported.
 
 ## End-to-End TLS Flow
 
-```
+```text
 ┌─────────┐   TLS 1.2   ┌──────────────┐   HTTP/VPC Link   ┌─────┐  HTTP  ┌──────────┐
 │  Client  │────────────▶│ API Gateway  │──────────────────▶│ ALB │──────▶│ ECS:8080 │
 │ (HTTPS)  │             │ (AWS-managed │   (private subnet) │     │       │ Gateway  │
@@ -58,6 +58,7 @@ VPC Link traffic never leaves the AWS network backbone.
 | Security group | ECS SG accepts inbound 8080 **only** from ALB SG |
 
 The container runs plain HTTP. This is intentional:
+
 - Eliminates certificate management at the application level
 - Reduces CPU overhead (no TLS handshake per request)
 - The entire path is within a single VPC on private subnets
@@ -77,6 +78,7 @@ All AWS SDK calls from Gateway and Processor use **AWS FIPS endpoints where supp
 | STS | `sts-fips.us-west-2.amazonaws.com` | |
 
 Configuration:
+
 - **Gateway (Java):** `aws.fips-endpoints: true` in `application.yml` -> Java AWS SDK v2 FIPS mode
 - **Processor (Python):** `AWS_USE_FIPS_ENDPOINT=true` env var -> boto3 FIPS mode
 - **Terraform:** `use_fips_endpoint = true` in provider configuration
@@ -107,7 +109,9 @@ All VPC Endpoints have security groups restricting inbound to port 443 from VPC 
 ## Data-in-Transit Policies (Terraform-enforced)
 
 ### S3 Buckets
+
 All buckets enforce TLS via bucket policy:
+
 ```json
 {
   "Effect": "Deny",
@@ -121,9 +125,11 @@ All buckets enforce TLS via bucket policy:
 ```
 
 ### SQS Queues
+
 All queues deny access when `aws:SecureTransport = false`.
 
 ### SNS Topics
+
 Topic policy denies `sns:Publish` over non-TLS connections.
 
 ## Network-Level Enforcement
@@ -152,6 +158,7 @@ Topic policy denies `sns:Publish` over non-TLS connections.
 
 2. **No custom domain / ACM certificate** — The platform uses the default `execute-api`
    domain. For production deployment with a custom domain, add:
+
    ```hcl
    resource "aws_api_gateway_domain_name" "main" {
      domain_name              = "api.example.com"

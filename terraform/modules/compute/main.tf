@@ -499,6 +499,13 @@ resource "aws_lambda_event_source_mapping" "outbox_stream" {
     }
   }
 
+  lifecycle {
+    precondition {
+      condition     = var.outbox_publisher_dlq_arn != ""
+      error_message = "outbox_publisher_dlq_arn must be set when outbox_stream_arn enables the outbox stream mapping."
+    }
+  }
+
   filter_criteria {
     filter {
       pattern = jsonencode({
