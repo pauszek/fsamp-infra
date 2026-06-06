@@ -365,7 +365,7 @@ resource "aws_lambda_function" "processor" {
   package_type = "Image"
   image_uri    = var.processor_image
 
-  architectures = ["arm64"]
+  architectures = ["x86_64"]
 
   image_config {
     command = ["processor.lambda_handler.lambda_handler"]
@@ -430,7 +430,7 @@ resource "aws_lambda_function" "outbox_publisher" {
   package_type = "Image"
   image_uri    = var.outbox_publisher_image != "" ? var.outbox_publisher_image : var.processor_image
 
-  architectures = ["arm64"]
+  architectures = ["x86_64"]
 
   image_config {
     command = ["processor.outbox_publisher.lambda_handler"]
