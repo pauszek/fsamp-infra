@@ -71,6 +71,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
+      - name: Validate deployment region
+        shell: bash
+        env:
+          AWS_REGION: ${{ inputs.aws_region }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${AWS_REGION}" != "us-west-2" ]]; then
+            echo "::error::FSAMP deployments are restricted to us-west-2. Requested: ${AWS_REGION}"
+            exit 1
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
@@ -169,6 +181,21 @@ jobs:
                     "aws:SecureTransport": "false"
                   }
                 }
+              },
+              {
+                "Sid": "DenyOutdatedTLS",
+                "Effect": "Deny",
+                "Principal": "*",
+                "Action": "s3:*",
+                "Resource": [
+                  "arn:${PARTITION}:s3:::${STATE_BUCKET}",
+                  "arn:${PARTITION}:s3:::${STATE_BUCKET}/*"
+                ],
+                "Condition": {
+                  "NumericLessThan": {
+                    "s3:TlsVersion": 1.2
+                  }
+                }
               }
             ]
           }
@@ -183,6 +210,26 @@ jobs:
               --key-schema AttributeName=LockID,KeyType=HASH
           fi
           aws dynamodb wait table-exists --table-name "${LOCK_TABLE}"
+          pitr_status="$(aws dynamodb describe-continuous-backups \
+            --table-name "${LOCK_TABLE}" \
+            --query 'ContinuousBackupsDescription.PointInTimeRecoveryDescription.PointInTimeRecoveryStatus' \
+            --output text 2>/dev/null || true)"
+          if [[ "${pitr_status}" != "ENABLED" ]]; then
+            aws dynamodb update-continuous-backups \
+              --table-name "${LOCK_TABLE}" \
+              --point-in-time-recovery-specification PointInTimeRecoveryEnabled=true >/dev/null
+          fi
+
+          sse_type="$(aws dynamodb describe-table \
+            --table-name "${LOCK_TABLE}" \
+            --query 'Table.SSEDescription.SSEType' \
+            --output text 2>/dev/null || true)"
+          if [[ "${sse_type}" != "KMS" ]]; then
+            aws dynamodb update-table \
+              --table-name "${LOCK_TABLE}" \
+              --sse-specification Enabled=true,SSEType=KMS >/dev/null
+            aws dynamodb wait table-exists --table-name "${LOCK_TABLE}"
+          fi
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
@@ -248,6 +295,18 @@ jobs:
       - name: Checkout infra
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
+      - name: Validate deployment region
+        shell: bash
+        env:
+          AWS_REGION: ${{ inputs.aws_region }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${AWS_REGION}" != "us-west-2" ]]; then
+            echo "::error::FSAMP deployments are restricted to us-west-2. Requested: ${AWS_REGION}"
+            exit 1
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
@@ -286,7 +345,6 @@ jobs:
             -auto-approve
 
       - name: Resolve ECR repositories
-        if: inputs.deploy_images
         id: ecr
         working-directory: ${{ env.TF_DIR }}
         shell: bash
@@ -311,13 +369,13 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Check image tags
-        if: inputs.deploy_images
         id: images
         shell: bash
         env:
           GATEWAY_REPOSITORY: ${{ steps.ecr.outputs.gateway_repository }}
           PROCESSOR_REPOSITORY: ${{ steps.ecr.outputs.processor_repository }}
           IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
+          DEPLOY_IMAGES: ${{ inputs.deploy_images }}
         run: |
           set -euo pipefail
 
@@ -327,22 +385,40 @@ jobs:
 
             aws ecr describe-images \
               --repository-name "${repository_name}" \
-              --image-ids "imageTag=${IMAGE_TAG}" >/dev/null 2>&1
+              --image-ids "imageTag=${IMAGE_TAG}" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text 2>/dev/null
           }
 
           gateway_exists=false
           processor_exists=false
 
-          if image_exists "${GATEWAY_REPOSITORY}"; then
+          gateway_digest="$(image_exists "${GATEWAY_REPOSITORY}" || true)"
+          processor_digest="$(image_exists "${PROCESSOR_REPOSITORY}" || true)"
+
+          if [[ -n "${gateway_digest}" && "${gateway_digest}" != "None" ]]; then
             gateway_exists=true
           fi
-          if image_exists "${PROCESSOR_REPOSITORY}"; then
+          if [[ -n "${processor_digest}" && "${processor_digest}" != "None" ]]; then
             processor_exists=true
+          fi
+
+          if [[ "${DEPLOY_IMAGES}" != "true" ]]; then
+            if [[ "${gateway_exists}" != "true" ]]; then
+              echo "::error::deploy_images=false requires an existing gateway image tag: ${IMAGE_TAG}"
+              exit 1
+            fi
+            if [[ "${processor_exists}" != "true" ]]; then
+              echo "::error::deploy_images=false requires an existing processor image tag: ${IMAGE_TAG}"
+              exit 1
+            fi
           fi
 
           {
             echo "gateway_exists=${gateway_exists}"
             echo "processor_exists=${processor_exists}"
+            echo "gateway_digest=${gateway_digest}"
+            echo "processor_digest=${processor_digest}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub App token
@@ -376,7 +452,6 @@ jobs:
           path: services/processor
 
       - name: Login to Amazon ECR
-        if: inputs.deploy_images && (steps.images.outputs.gateway_exists != 'true' || steps.images.outputs.processor_exists != 'true')
         uses: aws-actions/amazon-ecr-login@fa648b43de3d4d023bcb3f89ed6940096949c419 # v2
 
       - name: Set up Docker Buildx
@@ -384,6 +459,7 @@ jobs:
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Build and push gateway image
+        id: gateway-build
         if: inputs.deploy_images && steps.images.outputs.gateway_exists != 'true'
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
@@ -396,6 +472,7 @@ jobs:
           sbom: true
 
       - name: Build and push processor image
+        id: processor-build
         if: inputs.deploy_images && steps.images.outputs.processor_exists != 'true'
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
@@ -406,6 +483,107 @@ jobs:
           tags: ${{ steps.ecr.outputs.processor_repository }}:${{ needs.plan.outputs.image_tag }}
           provenance: true
           sbom: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: Sign and verify gateway image
+        id: gateway-sign
+        if: inputs.deploy_images
+        shell: bash
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+          IMAGE_REPOSITORY: ${{ steps.ecr.outputs.gateway_repository }}
+          BUILT_DIGEST: ${{ steps.gateway-build.outputs.digest }}
+          EXISTING_DIGEST: ${{ steps.images.outputs.gateway_digest }}
+        run: |
+          set -euo pipefail
+
+          digest="${BUILT_DIGEST:-${EXISTING_DIGEST:-}}"
+          if [[ -z "${digest}" || "${digest}" == "None" ]]; then
+            echo "::error::Gateway image digest could not be resolved."
+            exit 1
+          fi
+
+          image_ref="${IMAGE_REPOSITORY}@${digest}"
+          cosign sign --yes "${image_ref}"
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/${{ github.repository_owner }}/.+" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${image_ref}" >/dev/null
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify existing gateway image
+        id: gateway-verify
+        if: ${{ !inputs.deploy_images }}
+        shell: bash
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+          IMAGE_REPOSITORY: ${{ steps.ecr.outputs.gateway_repository }}
+          DIGEST: ${{ steps.images.outputs.gateway_digest }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DIGEST}" || "${DIGEST}" == "None" ]]; then
+            echo "::error::Gateway image digest could not be resolved."
+            exit 1
+          fi
+
+          image_ref="${IMAGE_REPOSITORY}@${DIGEST}"
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/${{ github.repository_owner }}/.+" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${image_ref}" >/dev/null
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign and verify processor image
+        id: processor-sign
+        if: inputs.deploy_images
+        shell: bash
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+          IMAGE_REPOSITORY: ${{ steps.ecr.outputs.processor_repository }}
+          BUILT_DIGEST: ${{ steps.processor-build.outputs.digest }}
+          EXISTING_DIGEST: ${{ steps.images.outputs.processor_digest }}
+        run: |
+          set -euo pipefail
+
+          digest="${BUILT_DIGEST:-${EXISTING_DIGEST:-}}"
+          if [[ -z "${digest}" || "${digest}" == "None" ]]; then
+            echo "::error::Processor image digest could not be resolved."
+            exit 1
+          fi
+
+          image_ref="${IMAGE_REPOSITORY}@${digest}"
+          cosign sign --yes "${image_ref}"
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/${{ github.repository_owner }}/.+" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${image_ref}" >/dev/null
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify existing processor image
+        id: processor-verify
+        if: ${{ !inputs.deploy_images }}
+        shell: bash
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+          IMAGE_REPOSITORY: ${{ steps.ecr.outputs.processor_repository }}
+          DIGEST: ${{ steps.images.outputs.processor_digest }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DIGEST}" || "${DIGEST}" == "None" ]]; then
+            echo "::error::Processor image digest could not be resolved."
+            exit 1
+          fi
+
+          image_ref="${IMAGE_REPOSITORY}@${DIGEST}"
+          cosign verify \
+            --certificate-identity-regexp "https://github.com/${{ github.repository_owner }}/.+" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${image_ref}" >/dev/null
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Terraform apply
         id: apply
@@ -429,6 +607,8 @@ jobs:
             -var="aws_region=${{ inputs.aws_region }}" \
             -var="gateway_image_tag=${{ needs.plan.outputs.image_tag }}" \
             -var="processor_image_tag=${{ needs.plan.outputs.image_tag }}" \
+            -var="gateway_image_digest=${{ steps.gateway-sign.outputs.digest || steps.gateway-verify.outputs.digest }}" \
+            -var="processor_image_digest=${{ steps.processor-sign.outputs.digest || steps.processor-verify.outputs.digest }}" \
             -input=false \
             -lock-timeout=5m \
             -out=tfplan
@@ -472,6 +652,8 @@ jobs:
             echo "| Region | \`${{ inputs.aws_region }}\` |"
             echo "| AWS account | \`${{ needs.plan.outputs.account_id }}\` |"
             echo "| Image tag | \`${{ needs.plan.outputs.image_tag }}\` |"
+            echo "| Gateway digest | \`${{ steps.gateway-sign.outputs.digest || steps.gateway-verify.outputs.digest || 'not-resolved' }}\` |"
+            echo "| Processor digest | \`${{ steps.processor-sign.outputs.digest || steps.processor-verify.outputs.digest || 'not-resolved' }}\` |"
             echo "| State bucket | \`${{ needs.plan.outputs.state_bucket }}\` |"
             echo "| Gateway ref | \`${{ inputs.gateway_ref }}\` |"
             echo "| Processor ref | \`${{ inputs.processor_ref }}\` |"

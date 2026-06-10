@@ -138,8 +138,16 @@ module "compute" {
   cognito_user_pool_id   = module.auth[0].user_pool_id
   cognito_client_id      = module.auth[0].web_client_id
 
-  gateway_image   = "${module.ecr[0].repository_urls["gateway"]}:${var.gateway_image_tag}"
-  processor_image = "${module.ecr[0].repository_urls["processor"]}:${var.processor_image_tag}"
+  gateway_image = (
+    var.gateway_image_digest != ""
+    ? "${module.ecr[0].repository_urls["gateway"]}@${var.gateway_image_digest}"
+    : "${module.ecr[0].repository_urls["gateway"]}:${var.gateway_image_tag}"
+  )
+  processor_image = (
+    var.processor_image_digest != ""
+    ? "${module.ecr[0].repository_urls["processor"]}@${var.processor_image_digest}"
+    : "${module.ecr[0].repository_urls["processor"]}:${var.processor_image_tag}"
+  )
 
   outbox_stream_arn        = module.storage.outbox_stream_arn
   outbox_publisher_dlq_arn = module.messaging.queue_arns.outbox_publisher_dlq
