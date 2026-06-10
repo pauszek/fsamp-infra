@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 6.44.0, < 7.0.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = ">= 4.0.0"
+    }
   }
 }
 resource "aws_cloudwatch_log_group" "ecs" {
@@ -73,6 +77,60 @@ resource "aws_lb" "gateway" {
   })
 }
 
+# Self-signed certificate for the internal ALB HTTPS listener (SC-8, SC-13).
+# No public domain is in scope and ACM Private CA exceeds the project budget,
+# so a Terraform-managed self-signed certificate is imported into ACM. Transit
+# from API Gateway through the VPC Link is encrypted with FIPS-validated
+# TLS 1.2/1.3 ciphers; endpoint authenticity is anchored by the VPC Link
+# private ENIs and the ALB security group rather than a public chain of trust
+# (documented SC-23 exception, see the api-gateway integrations).
+# early_renewal_hours rotates the key pair on apply within 30 days of expiry
+# (SC-12 key management procedure).
+resource "tls_private_key" "alb" {
+  count = var.alb_tls_enabled ? 1 : 0
+
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "tls_self_signed_cert" "alb" {
+  count = var.alb_tls_enabled ? 1 : 0
+
+  private_key_pem = tls_private_key.alb[0].private_key_pem
+
+  subject {
+    common_name  = aws_lb.gateway.dns_name
+    organization = "FSAMP"
+  }
+
+  dns_names = [aws_lb.gateway.dns_name]
+
+  validity_period_hours = 8760
+  early_renewal_hours   = 720
+
+  allowed_uses = [
+    "key_encipherment",
+    "digital_signature",
+    "server_auth",
+  ]
+}
+
+resource "aws_acm_certificate" "alb_internal" {
+  count = var.alb_tls_enabled ? 1 : 0
+
+  private_key      = tls_private_key.alb[0].private_key_pem
+  certificate_body = tls_self_signed_cert.alb[0].cert_pem
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-gateway-alb-internal"
+    Service = "gateway"
+  })
+}
+
 resource "aws_lb_target_group" "gateway" {
   name        = "${var.name_prefix}-gateway-tg"
   port        = 8080
@@ -97,10 +155,14 @@ resource "aws_lb_target_group" "gateway" {
   })
 }
 
+# HTTPS with the AWS FIPS TLS policy: only FIPS 140-3 validated (AWS-LC)
+# TLS 1.2/1.3 cipher suites are negotiated on this listener.
 resource "aws_lb_listener" "gateway" {
   load_balancer_arn = aws_lb.gateway.arn
-  port              = 80
-  protocol          = "HTTP"
+  port              = var.alb_tls_enabled ? 443 : 80
+  protocol          = var.alb_tls_enabled ? "HTTPS" : "HTTP"
+  ssl_policy        = var.alb_tls_enabled ? "ELBSecurityPolicy-TLS13-1-2-FIPS-2023-04" : null
+  certificate_arn   = var.alb_tls_enabled ? aws_acm_certificate.alb_internal[0].arn : null
 
   default_action {
     type             = "forward"

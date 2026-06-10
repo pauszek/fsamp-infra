@@ -65,3 +65,9 @@ variable "alb_dns_name" {
   type        = string
   default     = null
 }
+
+variable "alb_tls_enabled" {
+  description = "Use HTTPS for VPC Link integrations to the internal ALB (must match the compute module's alb_tls_enabled)."
+  type        = bool
+  default     = true
+}
