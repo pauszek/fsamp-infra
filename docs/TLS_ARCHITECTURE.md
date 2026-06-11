@@ -5,15 +5,16 @@
 ## Overview
 
 FSAMP enforces TLS 1.2+ for all external and inter-service communication. TLS terminates
-at the AWS API Gateway edge; internal VPC traffic flows over private subnets with
-security-group isolation. AWS SDK calls use AWS FIPS endpoints where supported.
+at the AWS API Gateway edge and is re-established with the AWS FIPS TLS policy on the
+API Gateway -> ALB hop; only the final ALB -> task hop inside the private subnets is
+plain HTTP under security-group isolation. AWS SDK calls use AWS FIPS endpoints.
 
 ## End-to-End TLS Flow
 
 ```text
-┌─────────┐   TLS 1.2   ┌──────────────┐   HTTP/VPC Link   ┌─────┐  HTTP  ┌──────────┐
+┌─────────┐   TLS 1.2   ┌──────────────┐  HTTPS/VPC Link   ┌─────┐  HTTP  ┌──────────┐
 │  Client  │────────────▶│ API Gateway  │──────────────────▶│ ALB │──────▶│ ECS:8080 │
-│ (HTTPS)  │             │ (AWS-managed │   (private subnet) │     │       │ Gateway  │
+│ (HTTPS)  │             │ (AWS-managed │  (FIPS TLS policy) │ 443 │       │ Gateway  │
 └─────────┘             │  TLS cert)   │                   └─────┘       └──────────┘
                         └──────────────┘
                                │
@@ -38,16 +39,28 @@ built-in `execute-api` domain with automatic certificate rotation.
 
 ### 2. VPC Link — API Gateway -> ALB (Private Subnet)
 
-Traffic between API Gateway and the ALB traverses an **AWS VPC Link** over
-private subnets. This is **not encrypted at the transport layer** (HTTP) but is:
+| Property | Value |
+|----------|-------|
+| Listener | HTTPS:443 on the internal ALB |
+| TLS policy | `ELBSecurityPolicy-TLS13-1-2-FIPS-2023-04` (AWS-LC, FIPS 140-3 validated cipher suites only) |
+| Certificate | Terraform-managed self-signed RSA-2048, imported into ACM |
+| Integration | `https://` URIs with `tls_config { insecure_skip_verification = true }` |
 
-- Confined to the private VPC (no internet routing)
-- Protected by security groups (ALB SG accepts only from API GW)
-- Isolated in private subnets with no public IP addresses
-- Monitored via VPC Flow Logs (FedRAMP AU-2)
+Traffic between API Gateway and the ALB traverses an **AWS VPC Link** over private
+subnets and is **encrypted with FIPS-validated TLS 1.2/1.3** (SC-8, SC-13).
 
-This is a standard AWS architecture pattern — AWS documentation confirms that
-VPC Link traffic never leaves the AWS network backbone.
+**Compensating control (documented SC-23 exception):** the ALB presents a
+self-signed certificate because no public domain is in scope and ACM Private CA
+exceeds the project budget, so the API Gateway integrations skip certificate
+verification. Endpoint authenticity is anchored instead by:
+
+- VPC Link private ENIs (traffic cannot be redirected outside the VPC)
+- ALB security group (443 accepted only from the VPC CIDR)
+- Private subnets with no public IPs, monitored via VPC Flow Logs (AU-2)
+
+**Certificate rotation (SC-12):** `early_renewal_hours = 720` makes
+`terraform apply` regenerate the key pair and re-import the certificate within
+30 days of expiry; the certificate is valid for 1 year.
 
 ### 3. ALB -> ECS Container (Private Subnet)
 
@@ -144,17 +157,19 @@ Topic policy denies `sns:Publish` over non-TLS connections.
 
 | Control | Implementation |
 |---------|----------------|
-| **SC-8** | TLS 1.2 at API Gateway edge; FIPS endpoints for all AWS service calls |
-| **SC-8(1)** | FIPS-capable crypto providers (ACCP, BC-FIPS, OpenSSL FIPS) |
+| **SC-8** | TLS 1.2 at API Gateway edge; FIPS TLS policy on the API GW -> ALB hop; FIPS endpoints for all AWS service calls |
+| **SC-8(1)** | FIPS-capable crypto providers (ACCP, BC-FIPS, OpenSSL FIPS); AWS-LC FIPS cipher suites on the ALB listener |
 | **SC-13** | AES-256-GCM, SHA-256/384/512 via FIPS-oriented providers |
-| **SC-23** | Session tokens (JWT) transmitted only over HTTPS |
+| **SC-23** | Session tokens (JWT) transmitted only over HTTPS; documented exception for ALB certificate verification (compensating controls above) |
 
 ## Security Considerations
 
-1. **Intra-VPC HTTP traffic** — API GW -> ALB -> ECS uses HTTP within private subnets.
-   This is accepted because the traffic never leaves the VPC, is security-group-isolated,
-   and is monitored via VPC Flow Logs. AWS considers this an acceptable pattern for
-   FedRAMP Moderate workloads.
+1. **Intra-VPC HTTP traffic** — only the final ALB -> ECS:8080 hop uses HTTP, within
+   private subnets. This is accepted because the traffic never leaves the VPC, the ECS
+   SG accepts 8080 exclusively from the ALB SG, and the path is monitored via VPC Flow
+   Logs (SC-7 boundary protection). Spring-side TLS termination was evaluated and
+   rejected as disproportionate (keystore management, BC-FIPS TLS stack, health-check
+   changes) for a single-VPC east-west hop.
 
 2. **No custom domain / ACM certificate** — The platform uses the default `execute-api`
    domain. For production deployment with a custom domain, add:
