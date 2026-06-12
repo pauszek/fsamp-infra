@@ -242,3 +242,26 @@ variable "outbox_publisher_dlq_arn" {
   type        = string
   default     = ""
 }
+
+variable "enable_lambdas" {
+  description = "Create the processor and outbox-publisher container Lambdas. Disable locally until images exist in the local ECR (the e2e flow runs the processor as a compose container)."
+  type        = bool
+  default     = true
+}
+
+variable "alb_certificate_mode" {
+  description = "Certificate for the ALB TLS listener: 'self-signed' (Terraform-managed, imported into ACM; documented SC-23 exception) or 'acm' (DNS-validated ACM certificate with a Route53 zone for alb_domain_name)."
+  type        = string
+  default     = "self-signed"
+
+  validation {
+    condition     = contains(["self-signed", "acm"], var.alb_certificate_mode)
+    error_message = "alb_certificate_mode must be 'self-signed' or 'acm'."
+  }
+}
+
+variable "alb_domain_name" {
+  description = "Domain for the ALB certificate and Route53 alias when alb_certificate_mode = 'acm'."
+  type        = string
+  default     = null
+}

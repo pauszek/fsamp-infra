@@ -1,6 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
+# When the local environment is provisioned by Terraform (LocalStack Pro as
+# the primary infrastructure: make local-all), this imperative bootstrap must
+# not run - the same resource names would conflict with the Terraform-managed
+# ones. CI e2e keeps the script path (FSAMP_TF_MANAGED unset/0).
+if [ "${FSAMP_TF_MANAGED:-0}" = "1" ]; then
+    echo "FSAMP_TF_MANAGED=1 - skipping imperative bootstrap; resources are Terraform-managed."
+    exit 0
+fi
+
 REGION="${AWS_DEFAULT_REGION:-us-west-2}"
 ACCOUNT_ID="000000000000"
 ENDPOINT="http://localhost:4566"
@@ -77,7 +86,7 @@ DLQ_ARN=$(awslocal sqs get-queue-attributes \
     --output text)
 
 QUEUE_URL=$(awslocal sqs create-queue \
-    --queue-name "fsamp-local-processing-queue" \
+    --queue-name "fsamp-local-file-processing" \
     --attributes '{
         "VisibilityTimeout": "300",
         "MessageRetentionPeriod": "1209600",
@@ -196,7 +205,7 @@ echo "  OK DynamoDB idempotency keys table created: fsamp-local-idempotency-keys
 echo "Creating Cognito User Pool..."
 
 USER_POOL_ID=$(awslocal cognito-idp create-user-pool \
-    --pool-name "fsamp-local-pool" \
+    --pool-name "fsamp-local-user-pool" \
     --policies '{
         "PasswordPolicy": {
             "MinimumLength": 8,
@@ -362,7 +371,7 @@ awslocal iam put-role-policy \
                 "Sid": "SQSConsume",
                 "Effect": "Allow",
                 "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"],
-                "Resource": "arn:aws:sqs:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-processing-queue"
+                "Resource": "arn:aws:sqs:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-file-processing"
             },
             {
                 "Sid": "S3ReadOnly",
@@ -524,7 +533,7 @@ export S3_BUCKET_NAME=fsamp-local-files
 
 export SNS_TOPIC_ARN=$SNS_TOPIC_ARN
 
-export SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-processing-queue
+export SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-file-processing
 
 export DYNAMODB_TABLE_NAME=fsamp-local-file-metadata
 export DYNAMODB_OUTBOX_TABLE_NAME=fsamp-local-outbox

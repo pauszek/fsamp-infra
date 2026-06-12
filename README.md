@@ -41,14 +41,19 @@ Prerequisites:
 - AWS CLI v2
 - LocalStack Pro token for full local emulation
 
-LocalStack:
+LocalStack Pro is the primary runtime environment: the same Terraform modules
+provision it, Terraform state lives in LocalStack S3 with lockfile locking,
+and test users are seeded after apply (see ADR-001 revision).
 
 ```bash
 export LOCALSTACK_AUTH_TOKEN=your-token
-make up
-make init-local
-make apply-local
+make local-all       # up (FSAMP_TF_MANAGED=1) + init-local + apply-local + seed-local
 ```
+
+The edge stack (ECS/ALB/API Gateway) and container Lambdas are opt-in via
+`local_enable_edge_stack` / `local_enable_lambdas` in `terraform/envs/local.tfvars`
+once images are pushed to the local ECR. The imperative bootstrap
+(`localstack/init-aws.sh`) runs only when `FSAMP_TF_MANAGED` is unset (CI e2e path).
 
 AWS bootstrap:
 
@@ -89,11 +94,13 @@ scripts/
 
 ```bash
 make help
+make local-all
 make up
 make down
 make init-local
 make plan-local
 make apply-local
+make seed-local
 make init-dev
 make plan-dev
 ```

@@ -12,6 +12,17 @@ terraform {
     }
   }
 }
+locals {
+  use_self_signed_cert = var.alb_tls_enabled && var.alb_certificate_mode == "self-signed"
+  use_acm_cert         = var.alb_tls_enabled && var.alb_certificate_mode == "acm"
+
+  alb_certificate_arn = (
+    local.use_acm_cert
+    ? aws_acm_certificate_validation.alb_acm[0].certificate_arn
+    : (local.use_self_signed_cert ? aws_acm_certificate.alb_internal[0].arn : null)
+  )
+}
+
 resource "aws_cloudwatch_log_group" "ecs" {
   name              = var.log_group_name
   retention_in_days = var.log_retention_days
@@ -198,14 +209,14 @@ resource "aws_lb" "gateway" {
 # early_renewal_hours rotates the key pair on apply within 30 days of expiry
 # (SC-12 key management procedure).
 resource "tls_private_key" "alb" {
-  count = var.alb_tls_enabled ? 1 : 0
+  count = local.use_self_signed_cert ? 1 : 0
 
   algorithm = "RSA"
   rsa_bits  = 2048
 }
 
 resource "tls_self_signed_cert" "alb" {
-  count = var.alb_tls_enabled ? 1 : 0
+  count = local.use_self_signed_cert ? 1 : 0
 
   private_key_pem = tls_private_key.alb[0].private_key_pem
 
@@ -227,7 +238,7 @@ resource "tls_self_signed_cert" "alb" {
 }
 
 resource "aws_acm_certificate" "alb_internal" {
-  count = var.alb_tls_enabled ? 1 : 0
+  count = local.use_self_signed_cert ? 1 : 0
 
   private_key      = tls_private_key.alb[0].private_key_pem
   certificate_body = tls_self_signed_cert.alb[0].cert_pem
@@ -266,6 +277,86 @@ resource "aws_lb_target_group" "gateway" {
   })
 }
 
+# DNS-validated ACM certificate (alb_certificate_mode = "acm"): removes the
+# self-signed SC-23 exception entirely - the certificate chain is verifiable
+# and the API Gateway integrations enforce verification. Requires a publicly
+# delegated domain in real AWS; under LocalStack Pro validation succeeds
+# locally without delegation.
+resource "aws_route53_zone" "alb" {
+  count = local.use_acm_cert ? 1 : 0
+
+  name = var.alb_domain_name
+
+  lifecycle {
+    precondition {
+      condition     = var.alb_domain_name != null
+      error_message = "alb_domain_name must be set when alb_certificate_mode = \"acm\"."
+    }
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-alb-zone"
+    Service = "gateway"
+  })
+}
+
+resource "aws_acm_certificate" "alb_acm" {
+  count = local.use_acm_cert ? 1 : 0
+
+  domain_name       = var.alb_domain_name
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-gateway-alb-acm"
+    Service = "gateway"
+  })
+}
+
+resource "aws_route53_record" "alb_cert_validation" {
+  for_each = local.use_acm_cert ? {
+    for dvo in aws_acm_certificate.alb_acm[0].domain_validation_options :
+    dvo.domain_name => {
+      name   = dvo.resource_record_name
+      type   = dvo.resource_record_type
+      record = dvo.resource_record_value
+    }
+  } : {}
+
+  zone_id         = aws_route53_zone.alb[0].zone_id
+  name            = each.value.name
+  type            = each.value.type
+  records         = [each.value.record]
+  ttl             = 60
+  allow_overwrite = true
+}
+
+resource "aws_acm_certificate_validation" "alb_acm" {
+  count = local.use_acm_cert ? 1 : 0
+
+  certificate_arn         = aws_acm_certificate.alb_acm[0].arn
+  validation_record_fqdns = [for r in aws_route53_record.alb_cert_validation : r.fqdn]
+}
+
+# The domain resolves to the internal ALB inside the VPC (and inside
+# LocalStack); API Gateway integrations address the ALB by this name.
+resource "aws_route53_record" "alb_alias" {
+  count = local.use_acm_cert ? 1 : 0
+
+  zone_id = aws_route53_zone.alb[0].zone_id
+  name    = var.alb_domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.gateway.dns_name
+    zone_id                = aws_lb.gateway.zone_id
+    evaluate_target_health = false
+  }
+}
+
 # HTTPS with the AWS FIPS TLS policy: only FIPS 140-3 validated (AWS-LC)
 # TLS 1.2/1.3 cipher suites are negotiated on this listener.
 resource "aws_lb_listener" "gateway" {
@@ -273,7 +364,7 @@ resource "aws_lb_listener" "gateway" {
   port              = var.alb_tls_enabled ? 443 : 80
   protocol          = var.alb_tls_enabled ? "HTTPS" : "HTTP"
   ssl_policy        = var.alb_tls_enabled ? "ELBSecurityPolicy-TLS13-1-2-FIPS-2023-04" : null
-  certificate_arn   = var.alb_tls_enabled ? aws_acm_certificate.alb_internal[0].arn : null
+  certificate_arn   = local.alb_certificate_arn
 
   default_action {
     type             = "forward"
@@ -530,6 +621,8 @@ resource "aws_lambda_function" "processor" {
   #   - Inspector enhanced continuous scanning (FedRAMP RA-5) covers the
   #     image after deployment.
   # checkov:skip=CKV_AWS_272: Container Lambdas use cosign + ECR immutable tags + Inspector enhanced scanning instead.
+  count = var.enable_lambdas ? 1 : 0
+
   function_name = "${var.name_prefix}-processor"
   role          = var.lambda_role_arn
   timeout       = var.processor_timeout
@@ -572,6 +665,8 @@ resource "aws_lambda_function" "processor" {
 }
 
 resource "aws_cloudwatch_log_group" "processor" {
+  count = var.enable_lambdas ? 1 : 0
+
   name              = "/aws/lambda/${var.name_prefix}-processor"
   retention_in_days = 365
   kms_key_id        = var.kms_key_arn
@@ -579,8 +674,10 @@ resource "aws_cloudwatch_log_group" "processor" {
   tags = var.tags
 }
 resource "aws_lambda_event_source_mapping" "sqs_trigger" {
+  count = var.enable_lambdas ? 1 : 0
+
   event_source_arn                   = var.sqs_queue_arn
-  function_name                      = aws_lambda_function.processor.arn
+  function_name                      = aws_lambda_function.processor[0].arn
   batch_size                         = 10
   maximum_batching_window_in_seconds = 5
 
@@ -595,6 +692,8 @@ resource "aws_lambda_function" "outbox_publisher" {
   # See processor function above for the supply-chain rationale; the same
   # constraints apply to all container-image Lambdas in the platform.
   # checkov:skip=CKV_AWS_272: Container Lambdas use cosign + ECR immutable tags + Inspector enhanced scanning instead.
+  count = var.enable_lambdas ? 1 : 0
+
   function_name = "${var.name_prefix}-outbox-publisher"
   role          = var.lambda_role_arn
   timeout       = 60
@@ -638,6 +737,8 @@ resource "aws_lambda_function" "outbox_publisher" {
 }
 
 resource "aws_cloudwatch_log_group" "outbox_publisher" {
+  count = var.enable_lambdas ? 1 : 0
+
   name              = "/aws/lambda/${var.name_prefix}-outbox-publisher"
   retention_in_days = 365
   kms_key_id        = var.kms_key_arn
@@ -645,10 +746,10 @@ resource "aws_cloudwatch_log_group" "outbox_publisher" {
   tags = var.tags
 }
 resource "aws_lambda_event_source_mapping" "outbox_stream" {
-  count = var.outbox_stream_arn != "" ? 1 : 0
+  count = var.enable_lambdas && var.outbox_stream_arn != "" ? 1 : 0
 
   event_source_arn  = var.outbox_stream_arn
-  function_name     = aws_lambda_function.outbox_publisher.arn
+  function_name     = aws_lambda_function.outbox_publisher[0].arn
   batch_size        = 100
   starting_position = "LATEST"
 

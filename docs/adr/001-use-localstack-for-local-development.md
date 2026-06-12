@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted — revised 2026-06: LocalStack Pro promoted to the primary runtime environment
 
 ## Context
 
@@ -62,3 +62,24 @@ Key reasons:
 - [LocalStack Pro Documentation](https://docs.localstack.cloud/overview/)
 - [LocalStack AWS Coverage](https://docs.localstack.cloud/user-guide/aws/feature-coverage/)
 - [Terraform LocalStack Provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
+
+## Revision (2026-06)
+
+LocalStack Pro is no longer only a fast feedback loop: it is the primary
+runtime environment of the project. Consequences:
+
+- The local environment is provisioned by the **same Terraform modules** as
+  the AWS environments (`make local-all`). Module deployment is controlled by
+  `local_enable_*` flags: the core stack (networking, Cognito, ECR, storage,
+  messaging, observability) is on by default; the edge stack (ECS/ALB/API
+  Gateway) and the container Lambdas are opt-in until images are pushed to
+  the local ECR.
+- Terraform state is stored in LocalStack S3 (`fsamp-local-tf-state`) with
+  native lockfile locking (`terraform/envs/local.s3.tfbackend`), mirroring
+  the remote-state flow used in AWS.
+- The imperative bootstrap (`localstack/init-aws.sh`) is skipped when
+  `FSAMP_TF_MANAGED=1` and remains only as the CI e2e path; resource names
+  were aligned with the Terraform naming convention.
+- Test users are seeded with `make seed-local` after `terraform apply`.
+- Local emulation still does not constitute a compliance boundary; AWS-side
+  evidence (CloudTrail, Config, Security Hub) requires a real AWS run.

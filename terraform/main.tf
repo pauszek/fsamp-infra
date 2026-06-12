@@ -10,7 +10,7 @@ module "security" {
 
 module "networking" {
   source = "./modules/networking"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_core ? 1 : 0
 
   environment              = var.environment
   name_prefix              = local.name_prefix
@@ -36,10 +36,11 @@ module "storage" {
 module "messaging" {
   source = "./modules/messaging"
 
-  environment = var.environment
-  name_prefix = local.name_prefix
-  kms_key_id  = module.security.kms_key_id
-  tags        = local.common_tags
+  environment   = var.environment
+  name_prefix   = local.name_prefix
+  kms_key_id    = module.security.kms_key_id
+  tags          = local.common_tags
+  enable_alarms = !local.is_local
 
   depends_on = [module.security]
 }
@@ -52,15 +53,16 @@ module "observability" {
   tags               = local.common_tags
   log_retention_days = local.log_retention_days
   kms_key_arn        = module.security.kms_key_arn
+  enable_alarms      = !local.is_local
 
   outbox_table_name                  = module.storage.dynamodb_table_names.outbox
-  gateway_alb_full_name              = local.is_local ? "" : module.compute[0].gateway_alb_arn_suffix
-  gateway_alb_target_group_full_name = local.is_local ? "" : module.compute[0].gateway_alb_target_group_arn_suffix
+  gateway_alb_full_name              = length(module.compute) > 0 ? module.compute[0].gateway_alb_arn_suffix : ""
+  gateway_alb_target_group_full_name = length(module.compute) > 0 ? module.compute[0].gateway_alb_target_group_arn_suffix : ""
 }
 
 module "auth" {
   source = "./modules/auth"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_core ? 1 : 0
 
   environment = var.environment
   name_prefix = local.name_prefix
@@ -71,11 +73,14 @@ module "auth" {
 
   access_token_validity_minutes = var.environment == "prod" ? 30 : 60
   refresh_token_validity_days   = var.environment == "prod" ? 7 : 30
+
+  # Local e2e logs in with USER_PASSWORD_AUTH; AWS environments stay SRP-only.
+  enable_password_auth_flow = local.is_local
 }
 
 module "api_gateway" {
   source = "./modules/api-gateway"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_edge ? 1 : 0
 
   environment                 = var.environment
   name_prefix                 = local.name_prefix
@@ -86,26 +91,28 @@ module "api_gateway" {
   private_subnet_ids          = module.networking[0].private_subnet_ids
   vpc_link_security_group_ids = [module.networking[0].alb_security_group_id]
   alb_arn                     = module.compute[0].gateway_alb_arn
-  alb_dns_name                = module.compute[0].gateway_alb_dns_name
+  alb_dns_name                = module.compute[0].gateway_endpoint_host
+  alb_tls_verified            = module.compute[0].alb_tls_verified
 
   depends_on = [module.auth, module.compute]
 }
 
 module "ecr" {
   source = "./modules/ecr"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_core ? 1 : 0
 
-  environment = var.environment
-  name_prefix = local.name_prefix
-  kms_key_arn = module.security.kms_key_arn
-  tags        = local.common_tags
+  environment              = var.environment
+  name_prefix              = local.name_prefix
+  kms_key_arn              = module.security.kms_key_arn
+  tags                     = local.common_tags
+  enable_registry_scanning = !local.is_local
 
   depends_on = [module.security]
 }
 
 module "compute" {
   source = "./modules/compute"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_edge ? 1 : 0
 
   environment               = var.environment
   name_prefix               = local.name_prefix
@@ -127,6 +134,9 @@ module "compute" {
   alb_security_group_id     = module.networking[0].alb_security_group_id
   enable_container_insights = var.enable_container_insights
   enable_processor_ecs      = var.enable_processor_ecs
+  enable_lambdas            = !local.is_local || var.local_enable_lambdas
+  alb_certificate_mode      = var.alb_certificate_mode
+  alb_domain_name           = var.alb_domain_name
 
   sqs_queue_url          = module.messaging.queue_urls.file_processing
   sns_topic_arn          = module.messaging.topic_arns.processing_events
@@ -149,7 +159,7 @@ module "compute" {
 
 module "audit" {
   source = "./modules/audit"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_audit ? 1 : 0
 
   environment         = var.environment
   name_prefix         = local.name_prefix

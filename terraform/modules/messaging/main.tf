@@ -247,6 +247,8 @@ resource "aws_sns_topic_subscription" "file_events_to_processing" {
   raw_message_delivery = true
 }
 resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-dlq-messages"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1

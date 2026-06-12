@@ -16,6 +16,14 @@ locals {
   is_staging    = var.environment == "staging"
   is_local      = var.environment == "local"
 
+  # LocalStack Pro is a first-class deployment target: the same Terraform
+  # modules provision the local environment. Core (networking, auth, ECR)
+  # is on by default; the edge stack (ECS/ALB/API Gateway) and the container
+  # Lambdas are opt-in because they need images in the local ECR first.
+  deploy_core  = !local.is_local || var.local_enable_core_stack
+  deploy_edge  = local.deploy_core && (!local.is_local || var.local_enable_edge_stack)
+  deploy_audit = !local.is_local || var.local_enable_audit
+
   # FedRAMP SC-7(8): WAF is required on every internet-facing environment,
   # not just production. Staging is treated as internet-facing because it
   # exposes the same Cognito-protected API as prod for validation runs.

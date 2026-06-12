@@ -29,3 +29,9 @@ variable "scan_on_push" {
   type        = bool
   default     = true
 }
+
+variable "enable_registry_scanning" {
+  description = "Enable Inspector enhanced registry scanning (RA-5). Disable locally - LocalStack does not model Inspector."
+  type        = bool
+  default     = true
+}

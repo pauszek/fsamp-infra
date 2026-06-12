@@ -63,6 +63,47 @@ variable "use_fips_endpoint" {
   default     = true
 }
 
+variable "local_enable_core_stack" {
+  description = "Local (LocalStack Pro) only: provision the core stack (networking, Cognito, ECR) with the same Terraform modules as AWS environments."
+  type        = bool
+  default     = true
+}
+
+variable "local_enable_edge_stack" {
+  description = "Local (LocalStack Pro) only: provision the edge stack (ECS/ALB/API Gateway). Requires the core stack; container images should be pushed to the local ECR for ECS tasks to start."
+  type        = bool
+  default     = false
+}
+
+variable "local_enable_lambdas" {
+  description = "Local (LocalStack Pro) only: create the container-image Lambdas (processor, outbox publisher). Requires images in the local ECR; the e2e flow runs the processor as a compose container instead."
+  type        = bool
+  default     = false
+}
+
+variable "local_enable_audit" {
+  description = "Local (LocalStack Pro) only: provision the audit module (CloudTrail, GuardDuty, AWS Config). Off by default; Security Hub is not emulated."
+  type        = bool
+  default     = false
+}
+
+variable "alb_certificate_mode" {
+  description = "Certificate for the gateway ALB TLS listener: 'self-signed' (Terraform-managed, imported into ACM; documented SC-23 exception) or 'acm' (DNS-validated ACM certificate with a Route53 zone for alb_domain_name; removes the skip-verify exception). 'acm' requires a delegated domain in real AWS; under LocalStack Pro it validates locally."
+  type        = string
+  default     = "self-signed"
+
+  validation {
+    condition     = contains(["self-signed", "acm"], var.alb_certificate_mode)
+    error_message = "alb_certificate_mode must be 'self-signed' or 'acm'."
+  }
+}
+
+variable "alb_domain_name" {
+  description = "Domain name for the ALB certificate and Route53 alias when alb_certificate_mode = 'acm' (e.g. gateway.fsamp.example.com)."
+  type        = string
+  default     = null
+}
+
 variable "enable_waf" {
   description = "Enable WAF for API Gateway. Automatically enabled in prod"
   type        = bool

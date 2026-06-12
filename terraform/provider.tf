@@ -7,6 +7,9 @@ provider "aws" {
   skip_requesting_account_id  = local.is_local
   access_key                  = local.is_local ? "test" : null
   secret_key                  = local.is_local ? "test" : null
+  # Virtual-host bucket addressing (bucket.localhost) does not match
+  # LocalStack's routing; path-style keeps S3 calls on the plain endpoint.
+  s3_use_path_style = local.is_local
 
   dynamic "endpoints" {
     for_each = local.is_local ? [1] : []
@@ -28,6 +31,13 @@ provider "aws" {
       ecr            = var.localstack_endpoint
       ecs            = var.localstack_endpoint
       cognitoidp     = var.localstack_endpoint
+      ec2            = var.localstack_endpoint
+      elbv2          = var.localstack_endpoint
+      acm            = var.localstack_endpoint
+      route53        = var.localstack_endpoint
+      apigatewayv2   = var.localstack_endpoint
+      cloudfront     = var.localstack_endpoint
+      wafv2          = var.localstack_endpoint
     }
   }
 }

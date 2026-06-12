@@ -56,16 +56,34 @@ logs:
 	docker-compose logs -f localstack
 
 init-local:
-	cd terraform && terraform init -backend=false
+	AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url http://localhost:4566 --region us-west-2 \
+		s3api create-bucket --bucket fsamp-local-tf-state \
+		--create-bucket-configuration LocationConstraint=us-west-2 2>/dev/null || true
+	cd terraform && terraform init -reconfigure -backend-config=envs/local.s3.tfbackend
 
+# Low parallelism: LocalStack's CloudWatch emulation returns transient 500s
+# under heavy concurrent DescribeAlarms load.
 plan-local:
-	cd terraform && terraform plan -var-file=envs/local.tfvars
+	cd terraform && terraform plan -var-file=envs/local.tfvars -parallelism=4
 
 apply-local:
-	cd terraform && terraform apply -var-file=envs/local.tfvars
+	cd terraform && terraform apply -var-file=envs/local.tfvars -parallelism=4
 
 destroy-local:
 	cd terraform && terraform destroy -var-file=envs/local.tfvars
+
+# Seed e2e test users into the Terraform-managed Cognito pool (LocalStack).
+seed-local:
+	./localstack/seed-users.sh
+
+# LocalStack Pro as the primary infrastructure: start the emulator with the
+# imperative bootstrap disabled, provision everything with the same Terraform
+# modules as AWS environments, then seed test users.
+local-all:
+	FSAMP_TF_MANAGED=1 docker-compose up -d
+	$(MAKE) init-local
+	$(MAKE) apply-local
+	$(MAKE) seed-local
 
 init-dev:
 	cd terraform && terraform init -reconfigure \

@@ -60,20 +60,30 @@ output "gateway_alb_listener_arn" {
 
 output "processor_lambda_arn" {
   description = "ARN of the processor Lambda function"
-  value       = aws_lambda_function.processor.arn
+  value       = var.enable_lambdas ? aws_lambda_function.processor[0].arn : null
 }
 
 output "processor_lambda_name" {
   description = "Name of the processor Lambda function"
-  value       = aws_lambda_function.processor.function_name
+  value       = var.enable_lambdas ? aws_lambda_function.processor[0].function_name : null
 }
 
 output "outbox_publisher_lambda_arn" {
   description = "ARN of the outbox publisher Lambda function"
-  value       = aws_lambda_function.outbox_publisher.arn
+  value       = var.enable_lambdas ? aws_lambda_function.outbox_publisher[0].arn : null
 }
 
 output "outbox_publisher_lambda_name" {
   description = "Name of the outbox publisher Lambda function"
-  value       = aws_lambda_function.outbox_publisher.function_name
+  value       = var.enable_lambdas ? aws_lambda_function.outbox_publisher[0].function_name : null
+}
+
+output "gateway_endpoint_host" {
+  description = "Host the API Gateway integrations use to reach the ALB: the Route53 domain in acm mode, the ALB DNS name otherwise"
+  value       = local.use_acm_cert ? var.alb_domain_name : aws_lb.gateway.dns_name
+}
+
+output "alb_tls_verified" {
+  description = "True when the ALB presents a DNS-validated ACM certificate (integrations enforce verification)"
+  value       = local.use_acm_cert
 }

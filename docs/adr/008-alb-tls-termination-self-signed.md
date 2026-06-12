@@ -44,9 +44,13 @@ Constraints:
 
 ## Alternatives Considered
 
-- **Public ACM certificate + custom domain** — preferred end-state if a domain
-  is ever provisioned; removes the skip-verification exception. Rejected now
-  for lack of a domain.
+- **Public ACM certificate + custom domain** — preferred end-state; removes
+  the skip-verification exception. Implemented as the opt-in mode
+  `alb_certificate_mode = "acm"` (DNS-validated ACM certificate with a
+  Route53 zone and an alias record; integrations then enforce certificate
+  verification). Under LocalStack Pro it works locally; in real AWS it
+  activates once a delegated public domain is available. The default stays
+  `self-signed` until then.
 - **ACM Private CA** — full private chain of trust, but ~400 USD/month.
 - **Keep HTTP and document as accepted risk** — weakest option; leaves SC-8
   unmet on an application-data hop and keeps three Checkov skips alive.

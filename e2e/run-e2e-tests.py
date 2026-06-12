@@ -60,9 +60,15 @@ def _discover_cognito_ids() -> tuple[str, str]:
 
     client_id = None
     clients = cognito.list_user_pool_clients(UserPoolId=pool_id, MaxResults=10)
-    for client in clients.get("UserPoolClients", []):
-        client_id = client["ClientId"]
-        break
+    pool_clients = clients.get("UserPoolClients", [])
+    # Prefer the web client (no secret, password auth enabled locally) over
+    # the machine-to-machine service client created by the auth module.
+    for client in pool_clients:
+        if "web" in client.get("ClientName", "").lower():
+            client_id = client["ClientId"]
+            break
+    if not client_id and pool_clients:
+        client_id = pool_clients[0]["ClientId"]
 
     if not client_id:
         raise RuntimeError("Could not find FSAMP Cognito Client in LocalStack")
@@ -87,7 +93,7 @@ class TestConfig:
         "DYNAMODB_IDEMPOTENCY_TABLE_NAME",
         "fsamp-local-idempotency-keys",
     )
-    SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "fsamp-local-processing-queue")
+    SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "fsamp-local-file-processing")
 
     COGNITO_USER_POOL_ID: str = ""
     COGNITO_CLIENT_ID: str = ""
@@ -214,13 +220,28 @@ class CognitoAuth:
             log(f"Authentication failed for {username}: {e}", "ERROR")
             raise
 
+    def _authenticate_any(self, candidates: list[str], password: str) -> str:
+        """Try each sign-in identifier; the Terraform-managed pool uses email
+        usernames while the legacy init-aws.sh pool uses plain usernames."""
+        last_error: Exception | None = None
+        for username in candidates:
+            try:
+                return self.authenticate(username, password)
+            except Exception as e:  # noqa: BLE001 - retried with next candidate
+                last_error = e
+        raise last_error if last_error else RuntimeError("no sign-in candidates")
+
     def get_user_token(self) -> str:
         """Get token for standard test user."""
-        return self.authenticate(TestConfig.TEST_USER, TestConfig.TEST_PASSWORD)
+        return self._authenticate_any(
+            [TestConfig.TEST_USER, "e2e@test.local"], TestConfig.TEST_PASSWORD
+        )
 
     def get_admin_token(self) -> str:
         """Get token for admin test user."""
-        return self.authenticate(TestConfig.ADMIN_USER, TestConfig.ADMIN_PASSWORD)
+        return self._authenticate_any(
+            [TestConfig.ADMIN_USER, "admin@test.local"], TestConfig.ADMIN_PASSWORD
+        )
 
 
 _auth: CognitoAuth | None = None

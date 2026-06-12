@@ -47,3 +47,9 @@ variable "outbox_table_name" {
   type        = string
   default     = ""
 }
+
+variable "enable_alarms" {
+  description = "Create CloudWatch alarms. Disabled locally: LocalStack's alarm evaluator races its own API serializer under load, and alarm evidence belongs to AWS environments."
+  type        = bool
+  default     = true
+}

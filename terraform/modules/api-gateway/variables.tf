@@ -71,3 +71,9 @@ variable "alb_tls_enabled" {
   type        = bool
   default     = true
 }
+
+variable "alb_tls_verified" {
+  description = "The ALB certificate chain is verifiable (ACM DNS-validated certificate); integrations enforce certificate verification instead of the self-signed compensating control."
+  type        = bool
+  default     = false
+}
