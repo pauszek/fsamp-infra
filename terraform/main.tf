@@ -159,7 +159,7 @@ module "compute" {
 
 module "audit" {
   source = "./modules/audit"
-  count  = local.deploy_audit ? 1 : 0
+  count  = local.is_local ? 0 : 1
 
   environment         = var.environment
   name_prefix         = local.name_prefix
