@@ -38,6 +38,8 @@ provider "aws" {
       apigatewayv2   = var.localstack_endpoint
       cloudfront     = var.localstack_endpoint
       wafv2          = var.localstack_endpoint
+      cloudtrail     = var.localstack_endpoint
+      configservice  = var.localstack_endpoint
     }
   }
 }

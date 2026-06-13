@@ -159,16 +159,18 @@ module "compute" {
 
 module "audit" {
   source = "./modules/audit"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_audit ? 1 : 0
 
-  environment         = var.environment
-  name_prefix         = local.name_prefix
-  tags                = local.common_tags
-  kms_key_arn         = module.security.kms_key_arn
-  enable_cloudtrail   = var.enable_cloudtrail
-  enable_guardduty    = var.enable_guardduty
-  enable_security_hub = var.enable_security_hub
-  enable_aws_config   = local.enable_config_computed
+  environment       = var.environment
+  name_prefix       = local.name_prefix
+  tags              = local.common_tags
+  kms_key_arn       = module.security.kms_key_arn
+  enable_cloudtrail = var.enable_cloudtrail
+  enable_aws_config = local.enable_config_computed
+  # GuardDuty and Security Hub are not emulated by LocalStack, so they are
+  # forced off locally even when their flags are set.
+  enable_guardduty    = !local.is_local && var.enable_guardduty
+  enable_security_hub = !local.is_local && var.enable_security_hub
 
   depends_on = [module.security]
 }

@@ -154,6 +154,32 @@ resource "aws_sns_topic" "cloudtrail_alerts" {
   })
 }
 
+# CloudTrail rejects a trail whose SNS topic does not grant it Publish
+# (InsufficientSnsTopicPolicyException). The trail ARN is built as a string to
+# avoid a cycle (the trail references the topic name). aws:SourceArn scopes
+# publish to this trail only.
+resource "aws_sns_topic_policy" "cloudtrail_alerts" {
+  count = var.enable_cloudtrail ? 1 : 0
+
+  arn = aws_sns_topic.cloudtrail_alerts[0].arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AWSCloudTrailSNSPublish"
+      Effect    = "Allow"
+      Principal = { Service = "cloudtrail.amazonaws.com" }
+      Action    = "SNS:Publish"
+      Resource  = aws_sns_topic.cloudtrail_alerts[0].arn
+      Condition = {
+        StringEquals = {
+          "aws:SourceArn" = "arn:${data.aws_partition.current.partition}:cloudtrail:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:trail/${var.name_prefix}-trail"
+        }
+      }
+    }]
+  })
+}
+
 resource "aws_s3_bucket_policy" "cloudtrail_logs" {
   count  = var.enable_cloudtrail ? 1 : 0
   bucket = aws_s3_bucket.cloudtrail_logs[0].id
@@ -244,7 +270,8 @@ resource "aws_cloudtrail" "main" {
 
   depends_on = [
     aws_s3_bucket_policy.cloudtrail_logs,
-    aws_iam_role_policy.cloudtrail_cloudwatch
+    aws_iam_role_policy.cloudtrail_cloudwatch,
+    aws_sns_topic_policy.cloudtrail_alerts
   ]
 }
 resource "aws_guardduty_detector" "main" {

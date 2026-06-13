@@ -81,6 +81,12 @@ variable "local_enable_lambdas" {
   default     = false
 }
 
+variable "local_enable_audit" {
+  description = "Local (LocalStack Pro) only: provision the audit module. CloudTrail and AWS Config are emulated and created; GuardDuty and Security Hub are forced off (not emulated). Off by default to keep apply fast."
+  type        = bool
+  default     = false
+}
+
 
 variable "alb_certificate_mode" {
   description = "Certificate for the gateway ALB TLS listener: 'self-signed' (Terraform-managed, imported into ACM; documented SC-23 exception) or 'acm' (DNS-validated ACM certificate with a Route53 zone for alb_domain_name; removes the skip-verify exception). 'acm' requires a delegated domain in real AWS; under LocalStack Pro it validates locally."

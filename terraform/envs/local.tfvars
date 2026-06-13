@@ -13,6 +13,7 @@ localstack_endpoint = "http://localhost:4566"
 local_enable_core_stack = true
 local_enable_edge_stack = false
 local_enable_lambdas    = false
+local_enable_audit      = true
 
 tags = {
   Team = "development"
