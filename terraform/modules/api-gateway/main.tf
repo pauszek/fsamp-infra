@@ -65,14 +65,9 @@ resource "aws_api_gateway_request_validator" "headers_and_params" {
   validate_request_body       = false
   validate_request_parameters = true
 }
-# Scheme for VPC Link integrations. With TLS enabled the ALB presents either
-# a DNS-validated ACM certificate (alb_tls_verified = true, full chain
-# verification) or a self-signed certificate (no public domain / no ACM PCA
-# in budget). In the self-signed mode the integrations skip certificate
-# verification: transit is still encrypted with FIPS-validated TLS 1.2/1.3
-# (SC-8, SC-13) and endpoint authenticity is anchored by the VPC Link private
-# ENIs plus the ALB security group (443 only from the VPC CIDR) — a documented
-# compensating control for SC-23 (ADR-008).
+# Scheme for VPC Link integrations. TLS to the ALB is FIPS-validated either
+# way (SC-8/SC-13); verification is enforced only with the DNS-validated ACM
+# cert (alb_tls_verified) and skipped for the self-signed cert. See ADR-008.
 locals {
   alb_scheme = var.alb_tls_enabled ? "https" : "http"
 }

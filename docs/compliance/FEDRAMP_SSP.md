@@ -290,9 +290,9 @@ For full DR procedures, see [DISASTER_RECOVERY.md](../DISASTER_RECOVERY.md).
 | Limitation | FedRAMP Impact | Mitigation | Timeline |
 |-----------|---------------|------------|----------|
 | Single-region deployment | CP (no geographic redundancy) | Terraform rebuild in any US region; DynamoDB PITR | Future |
-| No custom domain / ACM cert | SC-8 (reliant on AWS-managed cert) | API Gateway default domain with TLS 1.2 | Future |
+| Self-signed internal ALB cert (default) | SC-8 (chain not verified on the VPC Link hop) | FIPS-TLS encrypted; VPC Link + SG isolation; `alb_certificate_mode=acm` removes it (ADR-008) | Available (acm mode) |
 | Lambda cold start | Availability (~1-2s delay) | Provisioned concurrency configurable per env | Configured |
-| FIPS endpoints US-only | SC-13 (FIPS disabled in non-US) | Region guard (`region.startsWith("us-")`) | By design |
+| FIPS endpoints us-west-2 only | SC-13 (FIPS disabled elsewhere) | Fail-closed region guard (rejects any region != us-west-2) | By design |
 | ACCP requires Corretto JVM | Vendor dependency | BC-FIPS as fallback provider | Accepted risk |
 
 ---

@@ -199,15 +199,10 @@ resource "aws_lb" "gateway" {
   depends_on = [aws_s3_bucket_policy.alb_logs]
 }
 
-# Self-signed certificate for the internal ALB HTTPS listener (SC-8, SC-13).
-# No public domain is in scope and ACM Private CA exceeds the project budget,
-# so a Terraform-managed self-signed certificate is imported into ACM. Transit
-# from API Gateway through the VPC Link is encrypted with FIPS-validated
-# TLS 1.2/1.3 ciphers; endpoint authenticity is anchored by the VPC Link
-# private ENIs and the ALB security group rather than a public chain of trust
-# (documented SC-23 exception, see the api-gateway integrations).
-# early_renewal_hours rotates the key pair on apply within 30 days of expiry
-# (SC-12 key management procedure).
+# Self-signed cert imported into ACM for the internal ALB HTTPS listener
+# (default mode; SC-8/SC-13). Rationale and the SC-23 compensating control:
+# ADR-008. early_renewal_hours rotates the key pair on apply ~30 days before
+# expiry (SC-12).
 resource "tls_private_key" "alb" {
   count = local.use_self_signed_cert ? 1 : 0
 

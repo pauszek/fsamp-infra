@@ -64,13 +64,15 @@ Rollback deploys the selected tag with Terraform and does not rebuild images. It
 
 ## Local Terraform
 
-LocalStack still uses local state:
+LocalStack Pro is provisioned by the same modules as AWS, with Terraform state
+in LocalStack S3 (lockfile locking). One target does it all:
 
 ```bash
-make init-local
-make plan-local
-make apply-local
+make local-all   # up (FSAMP_TF_MANAGED=1) + init-local + apply-local + seed-local
 ```
+
+The edge stack (ECS/ALB/API Gateway) and container Lambdas are opt-in via the
+`local_enable_*` flags in `terraform/envs/local.tfvars`. See ADR-001.
 
 Manual AWS Terraform commands should use the same backend naming as the workflow:
 
