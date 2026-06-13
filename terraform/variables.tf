@@ -76,7 +76,7 @@ variable "local_enable_edge_stack" {
 }
 
 variable "local_enable_lambdas" {
-  description = "Local (LocalStack Pro) only: create the container-image Lambdas (processor, outbox publisher). Requires images in the local ECR; the e2e flow runs the processor as a compose container instead."
+  description = "Local (LocalStack Pro) only: create the container-image Lambdas (processor, outbox publisher). They live in the compute module, so this takes effect only together with local_enable_edge_stack and needs images in the local ECR; the e2e flow runs the processor as a compose container instead."
   type        = bool
   default     = false
 }
