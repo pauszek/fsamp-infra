@@ -39,7 +39,7 @@ or security incidents.
 |---------|-----|-----|----------|-------|
 | Gateway (ECS) | N/A (stateless) | 15 min | Redeploy from GHCR image | Auto-scaling handles transient failures |
 | Processor (Lambda) | N/A (stateless) | 10 min | Redeploy from ECR image | SQS retries absorb cold-start window |
-| S3 Buckets | ≤ 1 hour | 30 min | Cross-region replication (CRR) | Versioning + MFA Delete enabled |
+| S3 Buckets | ≤ 1 hour for logical recovery | 30 min | Versioning; optional CRR exercise | MFA Delete reviewed as an AWS-account operational control |
 | DynamoDB | ≤ 1 hour (continuous) | 30 min | PITR + On-demand restore | 35-day continuous backup window |
 | SQS Queues | Message retention: 4 days | 5 min | Recreate via Terraform | Messages in-flight may be lost |
 | KMS Keys | N/A (AWS-managed) | Immediate | Multi-AZ by design | Key material never leaves HSM |
@@ -47,14 +47,17 @@ or security incidents.
 
 ## 3. DR Strategy: Pilot Light
 
-FSAMP uses a **Pilot Light** strategy — the minimum viable infrastructure runs
-continuously, and the full environment is brought up on demand during a DR event.
+FSAMP uses a **single-region baseline with Pilot Light recovery**. The active AWS
+deployment is pinned to `us-west-2`; optional cross-region replication can be
+enabled explicitly for a higher-assurance DR exercise, but it is disabled by
+default for the thesis/free-tier baseline.
 
 ### Active (always running)
 
-- S3 buckets with cross-region replication
+- S3 buckets with versioning and optional cross-region replication when
+  `enable_cross_region_replication=true`
 - DynamoDB tables with PITR enabled
-- KMS keys (multi-region capable)
+- Customer-managed regional KMS keys
 - Terraform state backend (versioned S3 + DynamoDB)
 - CloudTrail + GuardDuty (continuous monitoring)
 
@@ -108,9 +111,9 @@ continuously, and the full environment is brought up on demand during a DR event
 
 ```text
 Step 1: Verify prerequisites (30 min)
-  - Confirm Terraform state accessible (S3 backend in secondary region)
-  - Confirm container images available (GHCR/ECR cross-region)
-  - Confirm KMS key material available
+  - Confirm Terraform state accessible from the versioned `us-west-2` backend
+  - Confirm signed ECR image digests are available for the selected image tag
+  - Confirm KMS key policy and Terraform state can recreate required keys
 
 Step 2: Deploy infrastructure (60 min)
   cd fsamp-infra/terraform
@@ -125,7 +128,7 @@ Step 3: Verify services (30 min)
 
 Step 4: Restore data (60 min)
   - DynamoDB: PITR restore to new tables
-  - S3: Verify CRR replica or restore from versioned backup
+  - S3: Restore from version history; verify CRR replica only when the optional DR flag was enabled
   - Re-process DLQ messages if applicable
 
 Step 5: Validation (60 min)
@@ -160,7 +163,7 @@ Step 5: Validation (60 min)
 
 | Resource | Backup Method | Frequency | Retention | Encryption |
 |----------|--------------|-----------|-----------|------------|
-| S3 objects | Versioning + CRR | Continuous | 90 days (lifecycle) | SSE-KMS (FIPS) |
+| S3 objects | Versioning; optional CRR | Continuous | 90 days (lifecycle) | SSE-KMS (FIPS-oriented) |
 | DynamoDB | PITR | Continuous | 35 days | AWS-managed KMS |
 | Terraform state | S3 versioning | On every apply | 365 days | SSE-KMS |
 | Container images | GHCR + ECR | On every CI build | 90 days (lifecycle) | At rest |
@@ -214,7 +217,7 @@ Step 5: Validation (60 min)
 | FedRAMP Control | Description | Implementation |
 |-----------------|-------------|----------------|
 | CP-2 | Contingency Plan | This document |
-| CP-6 | Alternate Storage Site | S3 CRR, ECR cross-region |
+| CP-6 | Alternate Storage Site | Optional S3 CRR exercise; signed ECR images rebuildable from CI |
 | CP-7 | Alternate Processing Site | Multi-AZ ECS, Lambda |
 | CP-9 | Information System Backup | PITR, S3 versioning, Terraform state |
 | CP-10 | System Recovery & Reconstitution | Terraform apply from clean state |

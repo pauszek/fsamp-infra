@@ -384,6 +384,8 @@ resource "aws_cloudwatch_dashboard" "main" {
 }
 data "aws_region" "current" {}
 resource "aws_cloudwatch_metric_alarm" "processor_errors" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-processor-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -409,6 +411,8 @@ resource "aws_cloudwatch_metric_alarm" "processor_errors" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "outbox_publisher_errors" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-outbox-publisher-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -434,6 +438,8 @@ resource "aws_cloudwatch_metric_alarm" "outbox_publisher_errors" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-dlq-messages"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
@@ -461,6 +467,8 @@ resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
 # DLQ messages must be drained before SQS retention expires (default 14 days)
 # otherwise failed events vanish silently. (FedRAMP AU-2, CP-9)
 resource "aws_cloudwatch_metric_alarm" "dlq_message_age" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-dlq-message-age"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -487,6 +495,8 @@ resource "aws_cloudwatch_metric_alarm" "dlq_message_age" {
 # Outbox publisher DLQ alarm: any message landing here means a DynamoDB
 # Streams batch was permanently dropped after exhausting retries.
 resource "aws_cloudwatch_metric_alarm" "outbox_publisher_dlq_messages" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-outbox-publisher-dlq-messages"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
@@ -512,6 +522,8 @@ resource "aws_cloudwatch_metric_alarm" "outbox_publisher_dlq_messages" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "processor_latency" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-processor-high-latency"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
@@ -536,6 +548,8 @@ resource "aws_cloudwatch_metric_alarm" "processor_latency" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "processor_throttles" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-processor-throttles"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -560,6 +574,8 @@ resource "aws_cloudwatch_metric_alarm" "processor_throttles" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "dynamodb_throttles" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-dynamodb-throttles"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -584,6 +600,8 @@ resource "aws_cloudwatch_metric_alarm" "dynamodb_throttles" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "sqs_backlog" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-sqs-backlog"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
@@ -608,6 +626,8 @@ resource "aws_cloudwatch_metric_alarm" "sqs_backlog" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "sqs_message_age" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-sqs-message-age"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -632,7 +652,7 @@ resource "aws_cloudwatch_metric_alarm" "sqs_message_age" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "gateway_5xx_target" {
-  count = var.gateway_alb_target_group_full_name != "" && var.gateway_alb_full_name != "" ? 1 : 0
+  count = var.enable_alarms && var.gateway_alb_target_group_full_name != "" && var.gateway_alb_full_name != "" ? 1 : 0
 
   alarm_name          = "${var.name_prefix}-gateway-5xx"
   comparison_operator = "GreaterThanThreshold"
@@ -660,7 +680,7 @@ resource "aws_cloudwatch_metric_alarm" "gateway_5xx_target" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "gateway_5xx_alb" {
-  count = var.gateway_alb_full_name != "" ? 1 : 0
+  count = var.enable_alarms && var.gateway_alb_full_name != "" ? 1 : 0
 
   alarm_name          = "${var.name_prefix}-gateway-alb-5xx"
   comparison_operator = "GreaterThanThreshold"
@@ -689,7 +709,7 @@ resource "aws_cloudwatch_metric_alarm" "gateway_5xx_alb" {
 # Publish failures are emitted by the outbox publisher itself. DynamoDB
 # consumed capacity is not used as an event counter.
 resource "aws_cloudwatch_metric_alarm" "outbox_publish_failures" {
-  count = var.outbox_table_name != "" ? 1 : 0
+  count = var.enable_alarms && var.outbox_table_name != "" ? 1 : 0
 
   alarm_name          = "${var.name_prefix}-outbox-publish-failures"
   comparison_operator = "GreaterThanThreshold"
@@ -735,14 +755,16 @@ resource "aws_cloudwatch_metric_alarm" "outbox_publish_failures" {
 }
 
 resource "aws_cloudwatch_composite_alarm" "critical_health" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name = "${var.name_prefix}-critical-health"
 
   alarm_rule = join(" OR ", concat(
     [
-      "ALARM(${aws_cloudwatch_metric_alarm.dlq_messages.alarm_name})",
-      "ALARM(${aws_cloudwatch_metric_alarm.outbox_publisher_dlq_messages.alarm_name})",
-      "ALARM(${aws_cloudwatch_metric_alarm.processor_errors.alarm_name})",
-      "ALARM(${aws_cloudwatch_metric_alarm.outbox_publisher_errors.alarm_name})",
+      "ALARM(${aws_cloudwatch_metric_alarm.dlq_messages[0].alarm_name})",
+      "ALARM(${aws_cloudwatch_metric_alarm.outbox_publisher_dlq_messages[0].alarm_name})",
+      "ALARM(${aws_cloudwatch_metric_alarm.processor_errors[0].alarm_name})",
+      "ALARM(${aws_cloudwatch_metric_alarm.outbox_publisher_errors[0].alarm_name})",
     ],
     [for a in aws_cloudwatch_metric_alarm.gateway_5xx_target : "ALARM(${a.alarm_name})"],
     [for a in aws_cloudwatch_metric_alarm.gateway_5xx_alb : "ALARM(${a.alarm_name})"],

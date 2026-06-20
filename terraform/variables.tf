@@ -10,13 +10,13 @@ variable "environment" {
 }
 
 variable "aws_region" {
-  description = "Primary AWS deployment region. FSAMP deployments are intentionally restricted to us-west-2."
+  description = "Active AWS deployment region. FSAMP pins real AWS deployments to us-west-2 for the FIPS endpoint baseline and cost control."
   type        = string
   default     = "us-west-2"
 
   validation {
     condition     = var.aws_region == "us-west-2"
-    error_message = "FSAMP primary deployments are restricted to us-west-2."
+    error_message = "FSAMP active AWS deployments are pinned to us-west-2."
   }
 }
 
@@ -58,9 +58,50 @@ variable "enable_nat_gateway" {
   default     = false
 }
 variable "use_fips_endpoint" {
-  description = "Use AWS FIPS endpoints for the supported deployment region."
+  description = "Use AWS FIPS endpoints in the supported us-west-2 deployment region."
   type        = bool
   default     = true
+}
+
+variable "local_enable_core_stack" {
+  description = "Local (LocalStack Pro) only: provision the core stack (networking, Cognito, ECR) with the same Terraform modules as AWS environments."
+  type        = bool
+  default     = true
+}
+
+variable "local_enable_edge_stack" {
+  description = "Local (LocalStack Pro) only: provision the edge stack (ECS/ALB/API Gateway). Requires the core stack; container images should be pushed to the local ECR for ECS tasks to start."
+  type        = bool
+  default     = false
+}
+
+variable "local_enable_lambdas" {
+  description = "Local (LocalStack Pro) only: create the container-image Lambdas (processor, outbox publisher). They live in the compute module, so this takes effect only together with local_enable_edge_stack and needs images in the local ECR."
+  type        = bool
+  default     = false
+}
+
+variable "local_enable_audit" {
+  description = "Local (LocalStack Pro) only: provision the audit module. CloudTrail and AWS Config are emulated and created; GuardDuty and Security Hub are forced off (not emulated)."
+  type        = bool
+  default     = false
+}
+
+variable "alb_certificate_mode" {
+  description = "Certificate for the gateway ALB TLS listener: 'self-signed' (Terraform-managed, imported into ACM; documented SC-23 exception) or 'acm' (DNS-validated ACM certificate with a Route53 zone for alb_domain_name; removes the skip-verify exception)."
+  type        = string
+  default     = "self-signed"
+
+  validation {
+    condition     = contains(["self-signed", "acm"], var.alb_certificate_mode)
+    error_message = "alb_certificate_mode must be 'self-signed' or 'acm'."
+  }
+}
+
+variable "alb_domain_name" {
+  description = "Domain name for the ALB certificate and Route53 alias when alb_certificate_mode = 'acm' (e.g. gateway.fsamp.example.com)."
+  type        = string
+  default     = null
 }
 
 variable "enable_waf" {
@@ -88,9 +129,9 @@ variable "enable_private_endpoints" {
 }
 variable "gateway_image_tag" {
   description = <<-EOT
-    Docker image tag for the gateway ECS container image.
-    Set by CI/CD pipeline; defaults to 'latest' for initial Terraform apply.
-    Images are pushed to ECR by the build pipeline before deploy.
+    Docker image tag or immutable repo@sha256 digest for the gateway ECS
+    container image. Deploy workflows pass a digest; 'latest' is only a
+    bootstrap fallback for manual development plans.
   EOT
   type        = string
   default     = "latest"
@@ -109,9 +150,9 @@ variable "gateway_image_digest" {
 
 variable "processor_image_tag" {
   description = <<-EOT
-    Docker image tag for the processor Lambda container image.
-    Set by CI/CD pipeline; defaults to 'latest' for initial Terraform apply.
-    Images are pushed to ECR by the build pipeline before deploy.
+    Docker image tag or immutable repo@sha256 digest for the processor Lambda
+    container image. Deploy workflows pass a digest; 'latest' is only a
+    bootstrap fallback for manual development plans.
   EOT
   type        = string
   default     = "latest"
@@ -184,32 +225,36 @@ variable "localstack_endpoint" {
   default     = "http://localhost:4566"
 }
 
+variable "localstack_internal_endpoint" {
+  description = "LocalStack endpoint URL visible from containers managed by LocalStack (ECS tasks and Lambda containers). Used only for the local parity flow."
+  type        = string
+  default     = "http://localstack:4566"
+}
+
 variable "replica_region" {
   description = <<-EOT
-    Secondary US AWS region used for cross-region replication of CloudTrail
-    logs and tenant data buckets (FedRAMP CP-9, AU-9). Must be distinct from
-    var.aws_region. The replica provider is created unconditionally;
-    replication resources are gated by var.enable_cross_region_replication.
+    Optional secondary AWS region used only when cross-region replication is
+    explicitly enabled for a higher-assurance DR exercise. The active runtime
+    deployment remains pinned to var.aws_region (us-west-2). Leave the default
+    unchanged when CRR is disabled; set a distinct secondary region only for an
+    explicit DR validation run.
   EOT
   type        = string
-  default     = "us-east-1"
+  default     = "us-west-2"
 
   validation {
-    condition     = startswith(var.replica_region, "us-") && var.replica_region != "us-west-2"
-    error_message = "Replica region must be a US AWS region distinct from the primary us-west-2 region (e.g., us-east-1)."
+    condition     = can(regex("^[a-z]{2}-[a-z]+-[0-9]$", var.replica_region))
+    error_message = "Replica region must be a valid region code (e.g., us-west-2)"
   }
 }
 
 variable "enable_cross_region_replication" {
   description = <<-EOT
-    Enable cross-region replication for CloudTrail logs and S3 data buckets.
-    Required by FedRAMP Moderate baseline (CP-9 Information System Backup,
-    AU-9 Protection of Audit Information) for production-grade resilience.
-    Cost: roughly equal to one extra copy of replicated data plus
-    inter-region transfer fees. Recommended: enabled for staging and prod,
-    disabled for dev. When null, the value defaults to true for prod and
-    staging and false otherwise.
+    Enable optional cross-region replication for CloudTrail logs and selected
+    S3 data buckets. Disabled by default for the thesis/free-tier baseline so
+    the active platform creates resources only in us-west-2. Enable explicitly
+    for a DR validation run that needs a passive replica region.
   EOT
   type        = bool
-  default     = null
+  default     = false
 }

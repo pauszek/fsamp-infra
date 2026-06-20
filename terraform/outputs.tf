@@ -51,98 +51,109 @@ output "log_group_names" {
 }
 output "vpc_id" {
   description = "VPC ID (null for local environment)"
-  value       = local.is_local ? null : module.networking[0].vpc_id
+  value       = length(module.networking) > 0 ? module.networking[0].vpc_id : null
 }
 
 output "vpc_cidr" {
   description = "VPC CIDR block (null for local environment)"
-  value       = local.is_local ? null : module.networking[0].vpc_cidr
+  value       = length(module.networking) > 0 ? module.networking[0].vpc_cidr : null
 }
 
 output "public_subnet_ids" {
   description = "List of public subnet IDs (null for local environment)"
-  value       = local.is_local ? null : module.networking[0].public_subnet_ids
+  value       = length(module.networking) > 0 ? module.networking[0].public_subnet_ids : null
 }
 
 output "private_subnet_ids" {
   description = "List of private subnet IDs (null for local environment)"
-  value       = local.is_local ? null : module.networking[0].private_subnet_ids
+  value       = length(module.networking) > 0 ? module.networking[0].private_subnet_ids : null
 }
 output "ecs_cluster_name" {
   description = "ECS cluster name (null for local environment)"
-  value       = local.is_local ? null : module.compute[0].ecs_cluster_name
+  value       = length(module.compute) > 0 ? module.compute[0].ecs_cluster_name : null
 }
 
 output "ecs_cluster_arn" {
   description = "ECS cluster ARN (null for local environment)"
-  value       = local.is_local ? null : module.compute[0].ecs_cluster_arn
+  value       = length(module.compute) > 0 ? module.compute[0].ecs_cluster_arn : null
 }
 
 output "gateway_service_name" {
   description = "Gateway ECS service name (null for local environment)"
-  value       = local.is_local ? null : module.compute[0].gateway_service_name
+  value       = length(module.compute) > 0 ? module.compute[0].gateway_service_name : null
 }
 
 output "processor_ecs_service_name" {
   description = "Processor ECS service name (null for local environment)"
-  value       = local.is_local ? null : module.compute[0].processor_service_name
+  value       = length(module.compute) > 0 ? module.compute[0].processor_service_name : null
 }
 
 output "processor_lambda_name" {
   description = "Processor Lambda function name (null for local environment)"
-  value       = local.is_local ? null : module.compute[0].processor_lambda_name
+  value       = length(module.compute) > 0 ? module.compute[0].processor_lambda_name : null
 }
 
 output "processor_ecs_task_definition_arn" {
   description = "Processor ECS task definition ARN (null for local environment)"
-  value       = local.is_local ? null : module.compute[0].processor_task_definition_arn
+  value       = length(module.compute) > 0 ? module.compute[0].processor_task_definition_arn : null
 }
 
 output "processor_lambda_arn" {
   description = "Processor Lambda function ARN (null for local environment)"
-  value       = local.is_local ? null : module.compute[0].processor_lambda_arn
+  value       = length(module.compute) > 0 ? module.compute[0].processor_lambda_arn : null
 }
+
+output "outbox_publisher_lambda_name" {
+  description = "Outbox publisher Lambda function name (null until Lambda parity is enabled)"
+  value       = length(module.compute) > 0 ? module.compute[0].outbox_publisher_lambda_name : null
+}
+
+output "outbox_publisher_lambda_arn" {
+  description = "Outbox publisher Lambda function ARN (null until Lambda parity is enabled)"
+  value       = length(module.compute) > 0 ? module.compute[0].outbox_publisher_lambda_arn : null
+}
+
 output "ecr_repository_urls" {
   description = "Map of ECR repository URLs for docker push"
-  value       = local.is_local ? null : module.ecr[0].repository_urls
+  value       = length(module.ecr) > 0 ? module.ecr[0].repository_urls : null
 }
 
 output "ecr_repository_names" {
   description = "Map of ECR repository names"
-  value       = local.is_local ? null : module.ecr[0].repository_names
+  value       = length(module.ecr) > 0 ? module.ecr[0].repository_names : null
 }
 output "cognito_user_pool_id" {
   description = "Cognito User Pool ID (null for local environment)"
-  value       = local.is_local ? null : module.auth[0].user_pool_id
+  value       = length(module.auth) > 0 ? module.auth[0].user_pool_id : null
 }
 
 output "cognito_user_pool_arn" {
   description = "Cognito User Pool ARN (null for local environment)"
-  value       = local.is_local ? null : module.auth[0].user_pool_arn
+  value       = length(module.auth) > 0 ? module.auth[0].user_pool_arn : null
 }
 
 output "cognito_web_client_id" {
   description = "Cognito Web Client ID for application authentication"
-  value       = local.is_local ? null : module.auth[0].web_client_id
+  value       = length(module.auth) > 0 ? module.auth[0].web_client_id : null
 }
 
 output "cognito_domain_url" {
   description = "Cognito hosted UI domain URL"
-  value       = local.is_local ? null : module.auth[0].cognito_domain_url
+  value       = length(module.auth) > 0 ? module.auth[0].cognito_domain_url : null
 }
 output "api_gateway_endpoint" {
   description = "API Gateway invoke URL"
-  value       = local.is_local ? null : module.api_gateway[0].api_endpoint
+  value       = length(module.api_gateway) > 0 ? module.api_gateway[0].api_endpoint : null
 }
 
 output "api_gateway_id" {
   description = "API Gateway REST API ID"
-  value       = local.is_local ? null : module.api_gateway[0].api_id
+  value       = length(module.api_gateway) > 0 ? module.api_gateway[0].api_id : null
 }
 
 output "waf_web_acl_arn" {
   description = "WAF Web ACL ARN (null for local/dev environment)"
-  value       = local.is_local ? null : module.api_gateway[0].waf_web_acl_arn
+  value       = length(module.api_gateway) > 0 ? module.api_gateway[0].waf_web_acl_arn : null
 }
 output "environment_info" {
   description = "Summary of environment configuration"

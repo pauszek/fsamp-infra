@@ -50,13 +50,20 @@ resource "aws_api_gateway_resource" "health" {
   path_part   = "health"
 }
 resource "aws_api_gateway_authorizer" "cognito" {
-  count = var.cognito_user_pool_arn != null ? 1 : 0
+  count = var.enable_cognito_authorizer ? 1 : 0
 
   name            = "${var.name_prefix}-cognito-authorizer"
   rest_api_id     = aws_api_gateway_rest_api.main.id
   type            = "COGNITO_USER_POOLS"
   provider_arns   = [var.cognito_user_pool_arn]
   identity_source = "method.request.header.Authorization"
+
+  lifecycle {
+    precondition {
+      condition     = var.cognito_user_pool_arn != null
+      error_message = "cognito_user_pool_arn must be set when enable_cognito_authorizer is true."
+    }
+  }
 }
 
 resource "aws_api_gateway_request_validator" "headers_and_params" {
@@ -65,18 +72,16 @@ resource "aws_api_gateway_request_validator" "headers_and_params" {
   validate_request_body       = false
   validate_request_parameters = true
 }
-# Scheme for VPC Link integrations. With TLS enabled the ALB presents a
-# self-signed certificate (no public domain / no ACM PCA in budget), so the
-# integrations skip certificate verification: transit is still encrypted with
-# FIPS-validated TLS 1.2/1.3 (SC-8, SC-13) and endpoint authenticity is
-# anchored by the VPC Link private ENIs plus the ALB security group
-# (443 only from the VPC CIDR) — a documented compensating control for SC-23.
+
+# Scheme for VPC Link integrations. TLS to the ALB is FIPS-validated either
+# way (SC-8/SC-13); verification is enforced only with the DNS-validated ACM
+# cert (alb_tls_verified) and skipped for the self-signed cert. See ADR-008.
 locals {
   alb_scheme = var.alb_tls_enabled ? "https" : "http"
 }
 
 resource "aws_apigatewayv2_vpc_link" "main" {
-  count = var.alb_arn != null ? 1 : 0
+  count = var.enable_alb_integration ? 1 : 0
 
   name               = "${var.name_prefix}-vpc-link"
   security_group_ids = var.vpc_link_security_group_ids
@@ -87,23 +92,23 @@ resource "aws_apigatewayv2_vpc_link" "main" {
   })
 }
 resource "aws_api_gateway_method" "upload_post" {
-  count = var.alb_dns_name != null ? 1 : 0
+  count = var.enable_alb_integration ? 1 : 0
 
   rest_api_id          = aws_api_gateway_rest_api.main.id
   resource_id          = aws_api_gateway_resource.upload.id
   http_method          = "POST"
-  authorization        = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
-  authorizer_id        = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+  authorization        = var.enable_cognito_authorizer ? "COGNITO_USER_POOLS" : "NONE"
+  authorizer_id        = var.enable_cognito_authorizer ? aws_api_gateway_authorizer.cognito[0].id : null
   request_validator_id = aws_api_gateway_request_validator.headers_and_params.id
 
   request_parameters = {
     "method.request.header.X-Idempotency-Key" = false
-    "method.request.header.Content-Type"      = true
+    "method.request.header.Content-Type"      = false
   }
 }
 
 resource "aws_api_gateway_integration" "upload_post" {
-  count = var.alb_dns_name != null ? 1 : 0
+  count = var.enable_alb_integration ? 1 : 0
 
   rest_api_id             = aws_api_gateway_rest_api.main.id
   resource_id             = aws_api_gateway_resource.upload.id
@@ -119,8 +124,9 @@ resource "aws_api_gateway_integration" "upload_post" {
   dynamic "tls_config" {
     for_each = var.alb_tls_enabled ? [1] : []
     content {
-      # Self-signed ALB certificate; see the compensating-control note above.
-      insecure_skip_verification = true
+      # Verification is skipped only for the self-signed certificate mode;
+      # with an ACM DNS-validated certificate the chain is enforced.
+      insecure_skip_verification = !var.alb_tls_verified
     }
   }
 
@@ -131,7 +137,7 @@ resource "aws_api_gateway_integration" "upload_post" {
 }
 
 resource "aws_api_gateway_method_response" "upload_post_201" {
-  count = var.alb_dns_name != null ? 1 : 0
+  count = var.enable_alb_integration ? 1 : 0
 
   rest_api_id = aws_api_gateway_rest_api.main.id
   resource_id = aws_api_gateway_resource.upload.id
@@ -143,13 +149,13 @@ resource "aws_api_gateway_method_response" "upload_post_201" {
   }
 }
 resource "aws_api_gateway_method" "file_get" {
-  count = var.alb_dns_name != null ? 1 : 0
+  count = var.enable_alb_integration ? 1 : 0
 
   rest_api_id          = aws_api_gateway_rest_api.main.id
   resource_id          = aws_api_gateway_resource.file.id
   http_method          = "GET"
-  authorization        = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
-  authorizer_id        = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+  authorization        = var.enable_cognito_authorizer ? "COGNITO_USER_POOLS" : "NONE"
+  authorizer_id        = var.enable_cognito_authorizer ? aws_api_gateway_authorizer.cognito[0].id : null
   request_validator_id = aws_api_gateway_request_validator.headers_and_params.id
 
   request_parameters = {
@@ -158,7 +164,7 @@ resource "aws_api_gateway_method" "file_get" {
 }
 
 resource "aws_api_gateway_integration" "file_get" {
-  count = var.alb_dns_name != null ? 1 : 0
+  count = var.enable_alb_integration ? 1 : 0
 
   rest_api_id             = aws_api_gateway_rest_api.main.id
   resource_id             = aws_api_gateway_resource.file.id
@@ -174,8 +180,9 @@ resource "aws_api_gateway_integration" "file_get" {
   dynamic "tls_config" {
     for_each = var.alb_tls_enabled ? [1] : []
     content {
-      # Self-signed ALB certificate; see the compensating-control note above.
-      insecure_skip_verification = true
+      # Verification is skipped only for the self-signed certificate mode;
+      # with an ACM DNS-validated certificate the chain is enforced.
+      insecure_skip_verification = !var.alb_tls_verified
     }
   }
 
@@ -184,13 +191,13 @@ resource "aws_api_gateway_integration" "file_get" {
   }
 }
 resource "aws_api_gateway_method" "file_delete" {
-  count = var.alb_dns_name != null ? 1 : 0
+  count = var.enable_alb_integration ? 1 : 0
 
   rest_api_id          = aws_api_gateway_rest_api.main.id
   resource_id          = aws_api_gateway_resource.file.id
   http_method          = "DELETE"
-  authorization        = var.cognito_user_pool_arn != null ? "COGNITO_USER_POOLS" : "NONE"
-  authorizer_id        = var.cognito_user_pool_arn != null ? aws_api_gateway_authorizer.cognito[0].id : null
+  authorization        = var.enable_cognito_authorizer ? "COGNITO_USER_POOLS" : "NONE"
+  authorizer_id        = var.enable_cognito_authorizer ? aws_api_gateway_authorizer.cognito[0].id : null
   request_validator_id = aws_api_gateway_request_validator.headers_and_params.id
 
   request_parameters = {
@@ -199,7 +206,7 @@ resource "aws_api_gateway_method" "file_delete" {
 }
 
 resource "aws_api_gateway_integration" "file_delete" {
-  count = var.alb_dns_name != null ? 1 : 0
+  count = var.enable_alb_integration ? 1 : 0
 
   rest_api_id             = aws_api_gateway_rest_api.main.id
   resource_id             = aws_api_gateway_resource.file.id
@@ -215,8 +222,9 @@ resource "aws_api_gateway_integration" "file_delete" {
   dynamic "tls_config" {
     for_each = var.alb_tls_enabled ? [1] : []
     content {
-      # Self-signed ALB certificate; see the compensating-control note above.
-      insecure_skip_verification = true
+      # Verification is skipped only for the self-signed certificate mode;
+      # with an ACM DNS-validated certificate the chain is enforced.
+      insecure_skip_verification = !var.alb_tls_verified
     }
   }
 
@@ -268,6 +276,11 @@ resource "aws_api_gateway_integration_response" "health_get_200" {
       service = "fsamp-api"
     })
   }
+
+  depends_on = [
+    aws_api_gateway_integration.health_get,
+    aws_api_gateway_method_response.health_get_200,
+  ]
 }
 resource "aws_api_gateway_deployment" "main" {
   rest_api_id = aws_api_gateway_rest_api.main.id
@@ -280,12 +293,20 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_resource.health.id,
       aws_api_gateway_method.health_get.id,
       aws_api_gateway_integration.health_get.id,
+      aws_api_gateway_method_response.health_get_200.id,
+      aws_api_gateway_integration_response.health_get_200.id,
       aws_api_gateway_method.upload_post[*].id,
+      aws_api_gateway_method.upload_post[*].request_parameters,
       aws_api_gateway_integration.upload_post[*].id,
+      aws_api_gateway_integration.upload_post[*].request_parameters,
       aws_api_gateway_method.file_get[*].id,
+      aws_api_gateway_method.file_get[*].request_parameters,
       aws_api_gateway_integration.file_get[*].id,
+      aws_api_gateway_integration.file_get[*].request_parameters,
       aws_api_gateway_method.file_delete[*].id,
+      aws_api_gateway_method.file_delete[*].request_parameters,
       aws_api_gateway_integration.file_delete[*].id,
+      aws_api_gateway_integration.file_delete[*].request_parameters,
     ]))
   }
 
@@ -296,6 +317,8 @@ resource "aws_api_gateway_deployment" "main" {
   depends_on = [
     aws_api_gateway_method.health_get,
     aws_api_gateway_integration.health_get,
+    aws_api_gateway_method_response.health_get_200,
+    aws_api_gateway_integration_response.health_get_200,
     aws_api_gateway_method.upload_post,
     aws_api_gateway_integration.upload_post,
     aws_api_gateway_method.file_get,

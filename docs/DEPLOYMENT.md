@@ -2,6 +2,10 @@
 
 The AWS deployment path is GitHub Actions first. A local bootstrap is required only once, because an empty AWS account cannot be assumed by GitHub OIDC until the IAM provider and role exist.
 
+Active AWS deployments are pinned to `us-west-2`. LocalStack remains the local
+development target; other AWS regions are rejected by Terraform and deploy
+workflow guards.
+
 ## First-Time Bootstrap
 
 Run from `fsamp-infra` with AWS CLI credentials that can create IAM resources:
@@ -33,7 +37,7 @@ For a first AWS deploy, keep:
 | `gateway_ref` | `main` or a release tag |
 | `processor_ref` | `main` or a release tag |
 
-For a promotion, choose `action=promote`. The workflow creates the Terraform state bucket and lock table if missing, initializes Terraform, creates the security and ECR resources first, builds both service images, pushes them to ECR, applies the full infrastructure, and waits for ECS and Lambda readiness.
+For a promotion, choose `action=promote`. The workflow creates the Terraform state bucket and lock table if missing, initializes Terraform, creates the security and ECR resources first, builds both service images, pushes them to ECR, signs and verifies immutable image digests with cosign, applies the full infrastructure with `repo@sha256` references, and waits for ECS and Lambda readiness.
 
 ## Deployment Approvals
 
@@ -60,7 +64,7 @@ For `staging` and `prod`, enable required reviewers and prevent self-review wher
 
 Use `action=rollback` in the `Deploy` workflow. By default `rollback_image_tag=previous`, which reads `/fsamp/<environment>/deployment/previous_image_tag` from SSM Parameter Store. You can also pass an explicit immutable image tag.
 
-Rollback deploys the selected tag with Terraform and does not rebuild images. It still uses the target GitHub Environment, so rollback to `staging` or `prod` requires the same approval as a normal deployment.
+Rollback deploys the selected tag with Terraform and does not rebuild images. The selected tag must already exist in ECR and pass cosign signature verification. It still uses the target GitHub Environment, so rollback to `staging` or `prod` requires the same approval as a normal deployment.
 
 ## Local Terraform
 

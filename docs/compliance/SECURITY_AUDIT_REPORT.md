@@ -15,7 +15,7 @@ represent an ATO.
 |---|---|---|
 | Identity and access | Aligned | Cognito, OAuth2/JWT validation, scoped IAM, environment approvals |
 | Cryptography | Aligned | AWS KMS, FIPS-capable providers, FIPS endpoints outside local mode |
-| Data protection | Aligned | S3, DynamoDB, SQS, SNS, CloudWatch Logs encrypted with KMS where supported |
+| Data protection | Aligned | S3, DynamoDB, SQS, SNS, CloudWatch Logs encrypted with KMS in the `us-west-2` baseline |
 | Network security | Aligned | Private compute, VPC endpoints, security groups, WAF, TLS policies |
 | Audit and monitoring | Aligned | CloudTrail, GuardDuty, AWS Config, CloudWatch alarms, structured logs |
 | CI/CD integrity | Aligned | reusable workflows, SBOM, dependency scanning, image signing, Terraform scanning |
@@ -39,7 +39,7 @@ represent an ATO.
 | Item | Resolution |
 |---|---|
 | Audit services were optional by default | CloudTrail, GuardDuty, and AWS Config default to enabled for non-local environments |
-| Container images were unsigned | Docker build action signs pushed images with keyless cosign |
+| Container images were unsigned | Docker build action signs pushed images with keyless cosign; deploy verifies signatures and passes immutable `repo@sha256` image references to Terraform |
 | Processor S3 upload could fall back to SSE-S3 | Upload now requires a configured KMS key |
 | TLS termination was implicit | TLS architecture is documented with the edge and private-network trust boundaries |
 | Deployment was build-only | Infra workflow now supports dev auto-deploy, staging/prod approvals, and rollback |
@@ -48,7 +48,7 @@ represent an ATO.
 
 | Risk | Rationale | Follow-up |
 |---|---|---|
-| Cross-region replication is feature-flagged (default on for prod and staging only) | Cost-aware default for academic environments | Activate via `enable_cross_region_replication=true` for any tenant requiring multi-region durability |
+| Cross-region replication is optional and disabled by default | Keeps active AWS resources in `us-west-2` for the academic/free-tier baseline | Activate via `enable_cross_region_replication=true` for a DR exercise or tenant requiring passive-region durability |
 | Non-production token lifetime can be longer than prod | Developer ergonomics in dev/staging | Keep prod at shorter lifetime |
 | Python dependencies use minimum pins | CI scans and Dependabot reduce exposure | Add lockfile generation if reproducibility becomes a requirement |
 | LocalStack is not a compliance boundary | It is only a local integration test target | Keep production controls enforced in AWS profiles |

@@ -24,6 +24,12 @@ variable "cognito_user_pool_arn" {
   default     = null
 }
 
+variable "enable_cognito_authorizer" {
+  description = "Create and attach the Cognito User Pool authorizer for protected API methods."
+  type        = bool
+  default     = false
+}
+
 variable "enable_waf" {
   description = "Enable WAF for API Gateway"
   type        = bool
@@ -54,6 +60,12 @@ variable "vpc_link_security_group_ids" {
   default     = []
 }
 
+variable "enable_alb_integration" {
+  description = "Create API Gateway methods and VPC Link integrations for the internal ALB."
+  type        = bool
+  default     = false
+}
+
 variable "alb_arn" {
   description = "ARN of the internal ALB for the Gateway service"
   type        = string
@@ -70,4 +82,10 @@ variable "alb_tls_enabled" {
   description = "Use HTTPS for VPC Link integrations to the internal ALB (must match the compute module's alb_tls_enabled)."
   type        = bool
   default     = true
+}
+
+variable "alb_tls_verified" {
+  description = "The ALB certificate chain is verifiable (ACM DNS-validated certificate); integrations enforce certificate verification instead of the self-signed compensating control."
+  type        = bool
+  default     = false
 }

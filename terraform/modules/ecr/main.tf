@@ -45,6 +45,8 @@ resource "aws_ecr_repository" "repos" {
 # the FSAMP project owns the entire registry inside its dedicated AWS
 # account boundary.
 resource "aws_ecr_registry_scanning_configuration" "enhanced" {
+  count = var.enable_registry_scanning ? 1 : 0
+
   scan_type = "ENHANCED"
 
   rule {

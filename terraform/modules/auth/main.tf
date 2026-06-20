@@ -141,10 +141,18 @@ resource "aws_cognito_user_pool_client" "web" {
   # natural expiration.
   enable_token_revocation = true
 
-  explicit_auth_flows = [
-    "ALLOW_USER_SRP_AUTH",
-    "ALLOW_REFRESH_TOKEN_AUTH"
-  ]
+  explicit_auth_flows = concat(
+    [
+      "ALLOW_USER_SRP_AUTH",
+      "ALLOW_REFRESH_TOKEN_AUTH",
+    ],
+    # Local e2e authenticates with USER_PASSWORD_AUTH against LocalStack;
+    # AWS environments keep the SRP-only posture (IA-5).
+    var.enable_password_auth_flow ? [
+      "ALLOW_USER_PASSWORD_AUTH",
+      "ALLOW_ADMIN_USER_PASSWORD_AUTH",
+    ] : []
+  )
 
   read_attributes = [
     "email",
