@@ -278,6 +278,17 @@ resource "aws_securityhub_standards_subscription" "aws_foundational" {
 
   depends_on = [aws_securityhub_account.main]
 }
+
+# NIST SP 800-53 Rev. 5 standard: Security Hub maps findings directly to
+# 800-53 control IDs, providing continuous-monitoring evidence for the
+# FedRAMP-aligned control baseline (CA-7, RA-5, CA-2).
+resource "aws_securityhub_standards_subscription" "nist_800_53" {
+  count = var.enable_security_hub ? 1 : 0
+
+  standards_arn = "arn:${data.aws_partition.current.partition}:securityhub:${data.aws_region.current.region}::standards/nist-800-53/v/5.0.0"
+
+  depends_on = [aws_securityhub_account.main]
+}
 resource "aws_s3_bucket" "config_logs" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -548,6 +559,126 @@ resource "aws_config_config_rule" "dynamodb_encryption" {
 
   tags = merge(var.tags, {
     Compliance = "NIST-SC-28"
+  })
+
+  depends_on = [aws_config_configuration_recorder.main]
+}
+
+resource "aws_config_config_rule" "alb_drop_invalid_headers" {
+  count = var.enable_aws_config ? 1 : 0
+
+  name = "${var.name_prefix}-alb-drop-invalid-headers"
+
+  source {
+    owner             = "AWS"
+    source_identifier = "ALB_HTTP_DROP_INVALID_HEADER_ENABLED"
+  }
+
+  tags = merge(var.tags, {
+    Compliance = "NIST-SC-8"
+  })
+
+  depends_on = [aws_config_configuration_recorder.main]
+}
+
+# Proves the gateway ALB FIPS TLS listener carries an ACM certificate.
+resource "aws_config_config_rule" "elbv2_acm_certificate" {
+  count = var.enable_aws_config ? 1 : 0
+
+  name = "${var.name_prefix}-elbv2-acm-certificate-required"
+
+  source {
+    owner             = "AWS"
+    source_identifier = "ELBV2_ACM_CERTIFICATE_REQUIRED"
+  }
+
+  tags = merge(var.tags, {
+    Compliance = "NIST-SC-8-SC-13"
+  })
+
+  depends_on = [aws_config_configuration_recorder.main]
+}
+
+resource "aws_config_config_rule" "cloudwatch_log_group_encrypted" {
+  count = var.enable_aws_config ? 1 : 0
+
+  name = "${var.name_prefix}-cloudwatch-log-group-encrypted"
+
+  source {
+    owner             = "AWS"
+    source_identifier = "CLOUDWATCH_LOG_GROUP_ENCRYPTED"
+  }
+
+  tags = merge(var.tags, {
+    Compliance = "NIST-AU-9"
+  })
+
+  depends_on = [aws_config_configuration_recorder.main]
+}
+
+resource "aws_config_config_rule" "lambda_inside_vpc" {
+  count = var.enable_aws_config ? 1 : 0
+
+  name = "${var.name_prefix}-lambda-inside-vpc"
+
+  source {
+    owner             = "AWS"
+    source_identifier = "LAMBDA_INSIDE_VPC"
+  }
+
+  tags = merge(var.tags, {
+    Compliance = "NIST-SC-7"
+  })
+
+  depends_on = [aws_config_configuration_recorder.main]
+}
+
+resource "aws_config_config_rule" "lambda_public_access" {
+  count = var.enable_aws_config ? 1 : 0
+
+  name = "${var.name_prefix}-lambda-public-access-prohibited"
+
+  source {
+    owner             = "AWS"
+    source_identifier = "LAMBDA_FUNCTION_PUBLIC_ACCESS_PROHIBITED"
+  }
+
+  tags = merge(var.tags, {
+    Compliance = "NIST-AC-3"
+  })
+
+  depends_on = [aws_config_configuration_recorder.main]
+}
+
+resource "aws_config_config_rule" "cloudtrail_encryption" {
+  count = var.enable_aws_config ? 1 : 0
+
+  name = "${var.name_prefix}-cloudtrail-encryption-enabled"
+
+  source {
+    owner             = "AWS"
+    source_identifier = "CLOUD_TRAIL_ENCRYPTION_ENABLED"
+  }
+
+  tags = merge(var.tags, {
+    Compliance = "NIST-AU-9"
+  })
+
+  depends_on = [aws_config_configuration_recorder.main]
+}
+
+resource "aws_config_config_rule" "cloudtrail_log_file_validation" {
+  count = var.enable_aws_config ? 1 : 0
+
+  name = "${var.name_prefix}-cloudtrail-log-file-validation"
+
+  source {
+    owner             = "AWS"
+    source_identifier = "CLOUD_TRAIL_LOG_FILE_VALIDATION_ENABLED"
+  }
+
+  tags = merge(var.tags, {
+    Compliance = "NIST-AU-9"
   })
 
   depends_on = [aws_config_configuration_recorder.main]
