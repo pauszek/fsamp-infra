@@ -61,6 +61,108 @@ resource "aws_ecs_cluster_capacity_providers" "main" {
     capacity_provider = "FARGATE"
   }
 }
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+
+# ELB access-log delivery account for us-west-2 (region available before
+# August 2022, so log delivery uses the regional ELB account, not the
+# logdelivery.elasticloadbalancing.amazonaws.com service principal).
+locals {
+  elb_log_delivery_account = "797873946194"
+}
+
+resource "aws_s3_bucket" "alb_logs" {
+  bucket        = "${var.name_prefix}-alb-logs"
+  force_destroy = var.environment != "prod"
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-alb-logs"
+    Purpose = "Gateway ALB access logs (AU-2, AU-3, AU-12)"
+  })
+}
+
+# ALB access-log delivery does not support SSE-KMS; SSE-S3 (AES-256) is the
+# strongest server-side encryption AWS allows here - documented SC-28
+# exception (data at rest is still AES-256 encrypted).
+resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+
+  rule {
+    id     = "alb-logs-lifecycle"
+    status = "Enabled"
+    filter {}
+
+    transition {
+      days          = 90
+      storage_class = "STANDARD_IA"
+    }
+
+    expiration {
+      days = var.environment == "prod" ? 2555 : 365
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ELBAccessLogDelivery"
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:${data.aws_partition.current.partition}:iam::${local.elb_log_delivery_account}:root"
+        }
+        Action   = "s3:PutObject"
+        Resource = "${aws_s3_bucket.alb_logs.arn}/alb/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
+      },
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.alb_logs.arn,
+          "${aws_s3_bucket.alb_logs.arn}/*"
+        ]
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.alb_logs]
+}
+
 resource "aws_lb" "gateway" {
   name               = "${var.name_prefix}-gateway-alb"
   internal           = true
@@ -71,10 +173,19 @@ resource "aws_lb" "gateway" {
   enable_deletion_protection = var.environment == "prod"
   drop_invalid_header_fields = true
 
+  access_logs {
+    bucket  = aws_s3_bucket.alb_logs.id
+    prefix  = "alb"
+    enabled = true
+  }
+
   tags = merge(var.tags, {
     Name    = "${var.name_prefix}-gateway-alb"
     Service = "gateway"
   })
+
+  # ELB validates write access to the log bucket when access_logs is enabled.
+  depends_on = [aws_s3_bucket_policy.alb_logs]
 }
 
 # Self-signed certificate for the internal ALB HTTPS listener (SC-8, SC-13).
