@@ -19,6 +19,8 @@ skip-check:
   - CKV2_AWS_1   # NACLs are attached via subnet_ids on aws_network_acl; Checkov relation check false positive
   - CKV_AWS_231  # NACL ephemeral response ranges are intentional; no explicit RDP rule exists
   - CKV2_AWS_3   # Organization-wide GuardDuty delegation is outside single-account thesis/free-tier scope
+  - CKV2_AWS_38  # Optional Route53 zone exists only for ACM-mode validation; DNSSEC/KSK is outside the us-west-2-only thesis baseline
+  - CKV2_AWS_39  # Optional Route53 zone query logging is excluded from the default self-signed/local parity path to avoid extra global DNS evidence cost
 
 framework:
   - terraform
