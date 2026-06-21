@@ -8,6 +8,6 @@ on:
 
 jobs:
   call-terraform:
-    uses: pauszek/fsamp-code-ci/.github/workflows/build-terraform.yml@v0.0.74
+    uses: pauszek/fsamp-code-ci/.github/workflows/build-terraform.yml@v0.0.75
     secrets:
       GABRBA_SECRET: ${{ secrets.GABRBA_SECRET }}
