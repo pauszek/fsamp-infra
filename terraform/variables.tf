@@ -10,13 +10,13 @@ variable "environment" {
 }
 
 variable "aws_region" {
-  description = "AWS region. us-west-2 recommended for FIPS 140-3 endpoint support"
+  description = "Primary AWS deployment region. FSAMP deployments are intentionally restricted to us-west-2."
   type        = string
   default     = "us-west-2"
 
   validation {
-    condition     = can(regex("^[a-z]{2}-[a-z]+-[0-9]$", var.aws_region))
-    error_message = "AWS region must be a valid region code (e.g., us-west-2)"
+    condition     = var.aws_region == "us-west-2"
+    error_message = "FSAMP primary deployments are restricted to us-west-2."
   }
 }
 
@@ -58,7 +58,7 @@ variable "enable_nat_gateway" {
   default     = false
 }
 variable "use_fips_endpoint" {
-  description = "Use AWS FIPS endpoints where the selected region supports them (us-* regions)"
+  description = "Use AWS FIPS endpoints for the supported deployment region."
   type        = bool
   default     = true
 }
@@ -96,6 +96,17 @@ variable "gateway_image_tag" {
   default     = "latest"
 }
 
+variable "gateway_image_digest" {
+  description = "Optional immutable digest for the gateway ECS container image (sha256:...). When set, Terraform deploys repository@digest instead of repository:tag."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.gateway_image_digest == "" || can(regex("^sha256:[a-f0-9]{64}$", var.gateway_image_digest))
+    error_message = "gateway_image_digest must be empty or a sha256 digest in the form sha256:<64 lowercase hex characters>."
+  }
+}
+
 variable "processor_image_tag" {
   description = <<-EOT
     Docker image tag for the processor Lambda container image.
@@ -104,6 +115,17 @@ variable "processor_image_tag" {
   EOT
   type        = string
   default     = "latest"
+}
+
+variable "processor_image_digest" {
+  description = "Optional immutable digest for the processor Lambda container image (sha256:...). When set, Terraform deploys repository@digest instead of repository:tag."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.processor_image_digest == "" || can(regex("^sha256:[a-f0-9]{64}$", var.processor_image_digest))
+    error_message = "processor_image_digest must be empty or a sha256 digest in the form sha256:<64 lowercase hex characters>."
+  }
 }
 variable "enable_cloudtrail" {
   description = <<-EOT
@@ -164,18 +186,17 @@ variable "localstack_endpoint" {
 
 variable "replica_region" {
   description = <<-EOT
-    Secondary AWS region used for cross-region replication of CloudTrail
-    logs and tenant data buckets (FedRAMP CP-9, AU-9). Should be a
-    FIPS-capable region distinct from var.aws_region. The replica provider
-    is created unconditionally; replication resources are gated by
-    var.enable_cross_region_replication.
+    Secondary US AWS region used for cross-region replication of CloudTrail
+    logs and tenant data buckets (FedRAMP CP-9, AU-9). Must be distinct from
+    var.aws_region. The replica provider is created unconditionally;
+    replication resources are gated by var.enable_cross_region_replication.
   EOT
   type        = string
   default     = "us-east-1"
 
   validation {
-    condition     = can(regex("^[a-z]{2}-[a-z]+-[0-9]$", var.replica_region))
-    error_message = "Replica region must be a valid region code (e.g., us-east-1)"
+    condition     = startswith(var.replica_region, "us-") && var.replica_region != "us-west-2"
+    error_message = "Replica region must be a US AWS region distinct from the primary us-west-2 region (e.g., us-east-1)."
   }
 }
 
