@@ -102,7 +102,7 @@ Note: Processor runs in both ECS Fargate and Lambda as production-capable modes;
 |-------------------|--------------|---------------|
 | **Confidentiality** | Moderate | Files may contain sensitive business data; protected by KMS encryption |
 | **Integrity** | Moderate | File checksums (SHA-256) and CloudTrail log file validation ensure integrity |
-| **Availability** | Low | Single-region deployment; Pilot Light DR strategy with 4-hour RTO |
+| **Availability** | Low | Active AWS deployment pinned to `us-west-2`; Pilot Light recovery with 4-hour RTO |
 
 Overall categorization: **MODERATE**
 
@@ -192,7 +192,7 @@ control family:
 | **AC** | Access Control | Aligned | AC-2, AC-3, AC-4, AC-6, AC-12, AC-17 |
 | **AU** | Audit and Accountability | Aligned | AU-2, AU-3, AU-4, AU-6, AU-9, AU-12 |
 | **CM** | Configuration Management | Aligned | CM-2, CM-3, CM-6, CM-7, CM-8 |
-| **CP** | Contingency Planning | Partially Aligned | CP-9, CP-10 (DR plan exists, multi-region pending) |
+| **CP** | Contingency Planning | Partially Aligned | CP-9, CP-10 (single-region baseline; optional CRR exercise for passive-region evidence) |
 | **IA** | Identification and Authentication | Aligned | IA-2, IA-5, IA-7 |
 | **IR** | Incident Response | Aligned | IR-4, IR-5, IR-6 |
 | **MP** | Media Protection | Aligned | MP-5 (encryption in transit) |
@@ -211,7 +211,7 @@ control family:
 
 | Service | Purpose | FedRAMP Control |
 |---------|---------|-----------------|
-| **CloudTrail** | API audit logging (multi-region) | AU-2, AU-3, AU-12 |
+| **CloudTrail** | API audit logging in the active `us-west-2` account/region | AU-2, AU-3, AU-12 |
 | **GuardDuty** | Threat detection (S3, CloudTrail, DNS) | SI-4, IR-4 |
 | **AWS Config** | Configuration compliance (5 rules) | CM-2, CM-6 |
 | **VPC Flow Logs** | Network monitoring | AU-12, SC-7 |
@@ -278,8 +278,8 @@ control family:
 | **RPO** (Recovery Point Objective) | 24 hours (DynamoDB PITR) |
 | **RTO** (Recovery Time Objective) | 4 hours (Pilot Light strategy) |
 | **Backup strategy** | DynamoDB Point-in-Time Recovery, S3 versioning, Terraform state in S3 |
-| **DR strategy** | Pilot Light — infrastructure defined in Terraform, can be rebuilt in any US region |
-| **Key recovery** | KMS keys with multi-region option, manual key policy |
+| **DR strategy** | Pilot Light — infrastructure defined in Terraform and rebuilt in the pinned `us-west-2` baseline; optional CRR can be enabled for passive-region exercises |
+| **Key recovery** | Customer-managed regional KMS keys recreated from Terraform and key policy |
 
 For full DR procedures, see [DISASTER_RECOVERY.md](../DISASTER_RECOVERY.md).
 
@@ -289,10 +289,10 @@ For full DR procedures, see [DISASTER_RECOVERY.md](../DISASTER_RECOVERY.md).
 
 | Limitation | FedRAMP Impact | Mitigation | Timeline |
 |-----------|---------------|------------|----------|
-| Single-region deployment | CP (no geographic redundancy) | Terraform rebuild in any US region; DynamoDB PITR | Future |
-| No custom domain / ACM cert | SC-8 (reliant on AWS-managed cert) | API Gateway default domain with TLS 1.2 | Future |
+| Single-region active deployment | CP (limited geographic redundancy by default) | Terraform rebuild in `us-west-2`; DynamoDB PITR; optional CRR module for passive-region DR exercises | Accepted baseline |
+| Self-signed internal ALB cert (default) | SC-8 (chain not verified on the VPC Link hop) | FIPS-TLS encrypted; VPC Link + SG isolation; `alb_certificate_mode=acm` removes it (ADR-008) | Available (acm mode) |
 | Lambda cold start | Availability (~1-2s delay) | Provisioned concurrency configurable per env | Configured |
-| FIPS endpoints US-only | SC-13 (FIPS disabled in non-US) | Region guard (`region.startsWith("us-")`) | By design |
+| FIPS endpoints us-west-2 only | SC-13 boundary clarity | Fail-closed region guard rejects any active AWS deployment region other than `us-west-2`; LocalStack/custom endpoints are explicitly non-compliance targets | By design |
 | ACCP requires Corretto JVM | Vendor dependency | BC-FIPS as fallback provider | Accepted risk |
 
 ---

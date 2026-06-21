@@ -6,7 +6,7 @@ The FSAMP platform is designed for a **FIPS 140-3-oriented** posture and alignme
 
 | Standard | Status | Scope |
 |----------|--------|-------|
-| FIPS 140-3-oriented posture | Aligned | ACCP, BC-FIPS, AWS KMS, OpenSSL FIPS provider, and FIPS endpoints where supported |
+| FIPS 140-3-oriented posture | Aligned | ACCP, BC-FIPS, AWS KMS, OpenSSL FIPS provider, and FIPS endpoints in the `us-west-2` baseline |
 | FedRAMP Moderate | Aligned | AC, AU, CM, IA, SC, SI control families aligned; see ADR-004 |
 | NIST SP 800-53 Rev. 5 | Referenced | Technical controls mapped in Terraform modules |
 

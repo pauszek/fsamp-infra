@@ -7,14 +7,18 @@ services:
       - "4510-4559:4510-4559"
     environment:
       - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
+      - FSAMP_TF_MANAGED=${FSAMP_TF_MANAGED:-0}
       - AWS_DEFAULT_REGION=${AWS_REGION:-us-west-2}
+      - LOCALSTACK_HOST=${LOCALSTACK_HOST:-localhost.localstack.cloud:4566}
+      - DNS_SERVER=${LOCALSTACK_DNS_SERVER:-8.8.8.8}
 
-      - SERVICES=s3,sqs,sns,dynamodb,kms,lambda,iam,sts,cloudwatch,logs,events,secretsmanager,ssm,apigateway,cognito-idp,ecs,ecr,cloudtrail,config,guardduty
+      - SERVICES=s3,sqs,sns,dynamodb,kms,lambda,iam,sts,cloudwatch,logs,events,secretsmanager,ssm,apigateway,apigatewayv2,cognito-idp,ecs,ecr,ec2,elbv2,acm,route53,cloudtrail,config,guardduty,cloudfront,wafv2,application-autoscaling
       - EAGER_SERVICE_LOADING=1
 
       - ENFORCE_IAM=1
       - IAM_SOFT_MODE=0
       - LAMBDA_EXECUTOR=docker
+      - LAMBDA_DOCKER_NETWORK=fsamp-network
       - DOCKER_HOST=unix:///var/run/docker.sock
 
       - PERSISTENCE=${PERSISTENCE:-1}

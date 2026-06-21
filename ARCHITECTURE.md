@@ -55,7 +55,7 @@ Supporting services:
 | Identity | Cognito, OAuth2 scopes, RBAC groups, MFA in production |
 | Network | Private compute, VPC endpoints, security groups, WAF, TLS-only service policies |
 | Data at rest | KMS encryption for S3, DynamoDB, SQS, SNS, CloudWatch Logs, and state storage |
-| Data in transit | TLS 1.2+, FIPS endpoints where supported, private AWS service access |
+| Data in transit | TLS 1.2+, FIPS endpoints in the `us-west-2` baseline, private AWS service access |
 | Runtime crypto | ACCP/BC-FIPS in gateway, OpenSSL FIPS provider in processor containers |
 | Audit | CloudTrail log validation, GuardDuty, AWS Config, VPC Flow Logs, structured app logs |
 | CI/CD | OIDC-based AWS access, SBOM, dependency scanning, IaC scanning, signed container images |

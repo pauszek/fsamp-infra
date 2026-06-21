@@ -12,6 +12,17 @@ terraform {
     }
   }
 }
+locals {
+  use_self_signed_cert = var.alb_tls_enabled && var.alb_certificate_mode == "self-signed"
+  use_acm_cert         = var.alb_tls_enabled && var.alb_certificate_mode == "acm"
+
+  alb_certificate_arn = (
+    local.use_acm_cert
+    ? aws_acm_certificate_validation.alb_acm[0].certificate_arn
+    : (local.use_self_signed_cert ? aws_acm_certificate.alb_internal[0].arn : null)
+  )
+}
+
 resource "aws_cloudwatch_log_group" "ecs" {
   name              = var.log_group_name
   retention_in_days = var.log_retention_days
@@ -77,7 +88,7 @@ resource "aws_s3_bucket" "alb_logs" {
 
   tags = merge(var.tags, {
     Name    = "${var.name_prefix}-alb-logs"
-    Purpose = "Gateway ALB access logs (AU-2, AU-3, AU-12)"
+    Purpose = "Gateway ALB access logs AU-2 AU-3 AU-12"
   })
 }
 
@@ -188,24 +199,19 @@ resource "aws_lb" "gateway" {
   depends_on = [aws_s3_bucket_policy.alb_logs]
 }
 
-# Self-signed certificate for the internal ALB HTTPS listener (SC-8, SC-13).
-# No public domain is in scope and ACM Private CA exceeds the project budget,
-# so a Terraform-managed self-signed certificate is imported into ACM. Transit
-# from API Gateway through the VPC Link is encrypted with FIPS-validated
-# TLS 1.2/1.3 ciphers; endpoint authenticity is anchored by the VPC Link
-# private ENIs and the ALB security group rather than a public chain of trust
-# (documented SC-23 exception, see the api-gateway integrations).
-# early_renewal_hours rotates the key pair on apply within 30 days of expiry
-# (SC-12 key management procedure).
+# Self-signed cert imported into ACM for the internal ALB HTTPS listener
+# (default mode; SC-8/SC-13). Rationale and the SC-23 compensating control:
+# ADR-008. early_renewal_hours rotates the key pair on apply ~30 days before
+# expiry (SC-12).
 resource "tls_private_key" "alb" {
-  count = var.alb_tls_enabled ? 1 : 0
+  count = local.use_self_signed_cert ? 1 : 0
 
   algorithm = "RSA"
   rsa_bits  = 2048
 }
 
 resource "tls_self_signed_cert" "alb" {
-  count = var.alb_tls_enabled ? 1 : 0
+  count = local.use_self_signed_cert ? 1 : 0
 
   private_key_pem = tls_private_key.alb[0].private_key_pem
 
@@ -227,7 +233,7 @@ resource "tls_self_signed_cert" "alb" {
 }
 
 resource "aws_acm_certificate" "alb_internal" {
-  count = var.alb_tls_enabled ? 1 : 0
+  count = local.use_self_signed_cert ? 1 : 0
 
   private_key      = tls_private_key.alb[0].private_key_pem
   certificate_body = tls_self_signed_cert.alb[0].cert_pem
@@ -266,6 +272,86 @@ resource "aws_lb_target_group" "gateway" {
   })
 }
 
+# DNS-validated ACM certificate (alb_certificate_mode = "acm"): removes the
+# self-signed SC-23 exception entirely - the certificate chain is verifiable
+# and the API Gateway integrations enforce verification. Requires a publicly
+# delegated domain in real AWS; under LocalStack Pro validation succeeds
+# locally without delegation.
+resource "aws_route53_zone" "alb" {
+  count = local.use_acm_cert ? 1 : 0
+
+  name = var.alb_domain_name
+
+  lifecycle {
+    precondition {
+      condition     = var.alb_domain_name != null
+      error_message = "alb_domain_name must be set when alb_certificate_mode = \"acm\"."
+    }
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-alb-zone"
+    Service = "gateway"
+  })
+}
+
+resource "aws_acm_certificate" "alb_acm" {
+  count = local.use_acm_cert ? 1 : 0
+
+  domain_name       = var.alb_domain_name
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-gateway-alb-acm"
+    Service = "gateway"
+  })
+}
+
+resource "aws_route53_record" "alb_cert_validation" {
+  for_each = local.use_acm_cert ? {
+    for dvo in aws_acm_certificate.alb_acm[0].domain_validation_options :
+    dvo.domain_name => {
+      name   = dvo.resource_record_name
+      type   = dvo.resource_record_type
+      record = dvo.resource_record_value
+    }
+  } : {}
+
+  zone_id         = aws_route53_zone.alb[0].zone_id
+  name            = each.value.name
+  type            = each.value.type
+  records         = [each.value.record]
+  ttl             = 60
+  allow_overwrite = true
+}
+
+resource "aws_acm_certificate_validation" "alb_acm" {
+  count = local.use_acm_cert ? 1 : 0
+
+  certificate_arn         = aws_acm_certificate.alb_acm[0].arn
+  validation_record_fqdns = [for r in aws_route53_record.alb_cert_validation : r.fqdn]
+}
+
+# The domain resolves to the internal ALB inside the VPC (and inside
+# LocalStack); API Gateway integrations address the ALB by this name.
+resource "aws_route53_record" "alb_alias" {
+  count = local.use_acm_cert ? 1 : 0
+
+  zone_id = aws_route53_zone.alb[0].zone_id
+  name    = var.alb_domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.gateway.dns_name
+    zone_id                = aws_lb.gateway.zone_id
+    evaluate_target_health = false
+  }
+}
+
 # HTTPS with the AWS FIPS TLS policy: only FIPS 140-3 validated (AWS-LC)
 # TLS 1.2/1.3 cipher suites are negotiated on this listener.
 resource "aws_lb_listener" "gateway" {
@@ -273,7 +359,7 @@ resource "aws_lb_listener" "gateway" {
   port              = var.alb_tls_enabled ? 443 : 80
   protocol          = var.alb_tls_enabled ? "HTTPS" : "HTTP"
   ssl_policy        = var.alb_tls_enabled ? "ELBSecurityPolicy-TLS13-1-2-FIPS-2023-04" : null
-  certificate_arn   = var.alb_tls_enabled ? aws_acm_certificate.alb_internal[0].arn : null
+  certificate_arn   = local.alb_certificate_arn
 
   default_action {
     type             = "forward"
@@ -372,7 +458,22 @@ resource "aws_ecs_service" "gateway" {
   depends_on = [aws_lb_listener.gateway]
 }
 locals {
-  gateway_env_vars = {
+  localstack_cognito_issuer_endpoint = replace(var.localstack_internal_endpoint, "://localstack:", "://localhost.localstack.cloud:")
+
+  local_aws_endpoint_env = var.environment == "local" && var.localstack_internal_endpoint != "" ? {
+    AWS_ENDPOINT_URL      = var.localstack_internal_endpoint
+    AWS_ACCESS_KEY_ID     = "test"
+    AWS_SECRET_ACCESS_KEY = "test"
+  } : {}
+
+  local_gateway_endpoint_env = var.environment == "local" && var.localstack_internal_endpoint != "" ? {
+    AWS_S3_ENDPOINT       = var.localstack_internal_endpoint
+    AWS_SNS_ENDPOINT      = var.localstack_internal_endpoint
+    COGNITO_ISSUER_URI    = "${local.localstack_cognito_issuer_endpoint}/${var.cognito_user_pool_id}"
+    COGNITO_JWKS_ENDPOINT = "${var.localstack_internal_endpoint}/${var.cognito_user_pool_id}/.well-known/jwks.json"
+  } : {}
+
+  gateway_env_vars = merge({
     SPRING_PROFILES_ACTIVE = var.environment
     AWS_REGION             = var.aws_region
     AWS_FIPS_ENDPOINTS     = var.environment == "local" ? "false" : tostring(var.use_fips_endpoint)
@@ -391,6 +492,7 @@ locals {
 
     SNS_FILE_EVENTS_TOPIC_ARN     = var.file_events_topic_arn
     AWS_SNS_FILE_EVENTS_TOPIC_ARN = var.file_events_topic_arn
+    SNS_TOPIC_ARN                 = var.file_events_topic_arn
 
     DYNAMODB_TABLE_NAME                      = var.dynamodb_table_name
     AWS_DYNAMODB_TABLE_NAME                  = var.dynamodb_table_name
@@ -400,9 +502,9 @@ locals {
     AWS_DYNAMODB_IDEMPOTENCY_TABLE_NAME      = var.idempotency_table_name
     DIRECT_PUBLISH_AFTER_OUTBOX              = "false"
     AWS_DYNAMODB_DIRECT_PUBLISH_AFTER_OUTBOX = "false"
-  }
+  }, local.local_aws_endpoint_env, local.local_gateway_endpoint_env)
 
-  processor_env_vars = {
+  processor_env_vars = merge({
     ENVIRONMENT                  = var.environment
     AWS_REGION                   = var.aws_region
     LOG_LEVEL                    = var.environment == "prod" ? "INFO" : "DEBUG"
@@ -419,21 +521,23 @@ locals {
     DYNAMODB_TABLE_NAME = var.dynamodb_table_name
     OUTBOX_TABLE_NAME   = var.outbox_table_name
     KMS_KEY_ID          = var.kms_key_arn
-  }
+  }, local.local_aws_endpoint_env)
 
-  outbox_publisher_env_vars = {
+  outbox_publisher_env_vars = merge({
     ENVIRONMENT                  = var.environment
     AWS_REGION                   = var.aws_region
     POWERTOOLS_SERVICE_NAME      = "outbox-publisher"
     POWERTOOLS_METRICS_NAMESPACE = "FSAMP/OutboxPublisher"
     POWERTOOLS_LOG_LEVEL         = var.environment == "prod" ? "INFO" : "DEBUG"
     SNS_TOPIC_ARN                = var.sns_topic_arn
+    FILE_EVENTS_TOPIC_ARN        = var.file_events_topic_arn
+    PROCESSING_EVENTS_TOPIC_ARN  = var.sns_topic_arn
     OUTBOX_TABLE_NAME            = var.outbox_table_name
     MAX_RETRY_COUNT              = "3"
     PUBLISH_CLAIM_TTL_SECONDS    = "300"
     USE_FIPS_ENDPOINT            = var.environment == "local" ? "false" : tostring(var.use_fips_endpoint)
     FIPS_REQUIRED                = var.environment == "local" ? "false" : "true"
-  }
+  }, local.local_aws_endpoint_env)
 
   processor_ecs_env_list = [
     for k, v in local.processor_env_vars : {
@@ -530,6 +634,8 @@ resource "aws_lambda_function" "processor" {
   #   - Inspector enhanced continuous scanning (FedRAMP RA-5) covers the
   #     image after deployment.
   # checkov:skip=CKV_AWS_272: Container Lambdas use cosign + ECR immutable tags + Inspector enhanced scanning instead.
+  count = var.enable_lambdas ? 1 : 0
+
   function_name = "${var.name_prefix}-processor"
   role          = var.lambda_role_arn
   timeout       = var.processor_timeout
@@ -572,6 +678,8 @@ resource "aws_lambda_function" "processor" {
 }
 
 resource "aws_cloudwatch_log_group" "processor" {
+  count = var.enable_lambdas ? 1 : 0
+
   name              = "/aws/lambda/${var.name_prefix}-processor"
   retention_in_days = 365
   kms_key_id        = var.kms_key_arn
@@ -579,8 +687,10 @@ resource "aws_cloudwatch_log_group" "processor" {
   tags = var.tags
 }
 resource "aws_lambda_event_source_mapping" "sqs_trigger" {
+  count = var.enable_lambdas ? 1 : 0
+
   event_source_arn                   = var.sqs_queue_arn
-  function_name                      = aws_lambda_function.processor.arn
+  function_name                      = aws_lambda_function.processor[0].arn
   batch_size                         = 10
   maximum_batching_window_in_seconds = 5
 
@@ -595,6 +705,8 @@ resource "aws_lambda_function" "outbox_publisher" {
   # See processor function above for the supply-chain rationale; the same
   # constraints apply to all container-image Lambdas in the platform.
   # checkov:skip=CKV_AWS_272: Container Lambdas use cosign + ECR immutable tags + Inspector enhanced scanning instead.
+  count = var.enable_lambdas ? 1 : 0
+
   function_name = "${var.name_prefix}-outbox-publisher"
   role          = var.lambda_role_arn
   timeout       = 60
@@ -638,6 +750,8 @@ resource "aws_lambda_function" "outbox_publisher" {
 }
 
 resource "aws_cloudwatch_log_group" "outbox_publisher" {
+  count = var.enable_lambdas ? 1 : 0
+
   name              = "/aws/lambda/${var.name_prefix}-outbox-publisher"
   retention_in_days = 365
   kms_key_id        = var.kms_key_arn
@@ -645,10 +759,10 @@ resource "aws_cloudwatch_log_group" "outbox_publisher" {
   tags = var.tags
 }
 resource "aws_lambda_event_source_mapping" "outbox_stream" {
-  count = var.outbox_stream_arn != "" ? 1 : 0
+  count = var.enable_lambdas ? 1 : 0
 
   event_source_arn  = var.outbox_stream_arn
-  function_name     = aws_lambda_function.outbox_publisher.arn
+  function_name     = aws_lambda_function.outbox_publisher[0].arn
   batch_size        = 100
   starting_position = "LATEST"
 
@@ -673,6 +787,11 @@ resource "aws_lambda_event_source_mapping" "outbox_stream" {
   }
 
   lifecycle {
+    precondition {
+      condition     = var.outbox_stream_arn != ""
+      error_message = "outbox_stream_arn must be set when Lambdas are enabled."
+    }
+
     precondition {
       condition     = var.outbox_publisher_dlq_arn != ""
       error_message = "outbox_publisher_dlq_arn must be set when outbox_stream_arn enables the outbox stream mapping."

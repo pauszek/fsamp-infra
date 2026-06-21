@@ -42,3 +42,9 @@ variable "refresh_token_validity_days" {
   type        = number
   default     = 30
 }
+
+variable "enable_password_auth_flow" {
+  description = "Allow USER_PASSWORD and ADMIN_USER_PASSWORD auth flows on the web client (local e2e only; AWS environments stay SRP-only)."
+  type        = bool
+  default     = false
+}

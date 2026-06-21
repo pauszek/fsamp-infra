@@ -29,3 +29,9 @@ variable "dlq_max_receive_count" {
   type        = number
   default     = 3
 }
+
+variable "enable_alarms" {
+  description = "Create CloudWatch alarms for the DLQ. Disabled locally (see observability module note)."
+  type        = bool
+  default     = true
+}

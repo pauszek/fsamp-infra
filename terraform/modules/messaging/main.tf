@@ -245,8 +245,14 @@ resource "aws_sns_topic_subscription" "file_events_to_processing" {
   endpoint  = aws_sqs_queue.file_processing.arn
 
   raw_message_delivery = true
+
+  filter_policy = jsonencode({
+    eventType = ["FILE_UPLOADED"]
+  })
 }
 resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
+  count = var.enable_alarms ? 1 : 0
+
   alarm_name          = "${var.name_prefix}-dlq-messages"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1

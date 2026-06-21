@@ -10,7 +10,7 @@ module "security" {
 
 module "networking" {
   source = "./modules/networking"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_core ? 1 : 0
 
   environment              = var.environment
   name_prefix              = local.name_prefix
@@ -36,10 +36,11 @@ module "storage" {
 module "messaging" {
   source = "./modules/messaging"
 
-  environment = var.environment
-  name_prefix = local.name_prefix
-  kms_key_id  = module.security.kms_key_id
-  tags        = local.common_tags
+  environment   = var.environment
+  name_prefix   = local.name_prefix
+  kms_key_id    = module.security.kms_key_id
+  tags          = local.common_tags
+  enable_alarms = !local.is_local
 
   depends_on = [module.security]
 }
@@ -52,15 +53,16 @@ module "observability" {
   tags               = local.common_tags
   log_retention_days = local.log_retention_days
   kms_key_arn        = module.security.kms_key_arn
+  enable_alarms      = !local.is_local
 
   outbox_table_name                  = module.storage.dynamodb_table_names.outbox
-  gateway_alb_full_name              = local.is_local ? "" : module.compute[0].gateway_alb_arn_suffix
-  gateway_alb_target_group_full_name = local.is_local ? "" : module.compute[0].gateway_alb_target_group_arn_suffix
+  gateway_alb_full_name              = length(module.compute) > 0 ? module.compute[0].gateway_alb_arn_suffix : ""
+  gateway_alb_target_group_full_name = length(module.compute) > 0 ? module.compute[0].gateway_alb_target_group_arn_suffix : ""
 }
 
 module "auth" {
   source = "./modules/auth"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_core ? 1 : 0
 
   environment = var.environment
   name_prefix = local.name_prefix
@@ -71,62 +73,91 @@ module "auth" {
 
   access_token_validity_minutes = var.environment == "prod" ? 30 : 60
   refresh_token_validity_days   = var.environment == "prod" ? 7 : 30
+
+  # Local e2e logs in with USER_PASSWORD_AUTH; AWS environments stay SRP-only.
+  enable_password_auth_flow = local.is_local
 }
 
 module "api_gateway" {
   source = "./modules/api-gateway"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_edge ? 1 : 0
 
   environment                 = var.environment
   name_prefix                 = local.name_prefix
   tags                        = local.common_tags
   kms_key_arn                 = module.security.kms_key_arn
   cognito_user_pool_arn       = module.auth[0].user_pool_arn
+  enable_cognito_authorizer   = true
   enable_waf                  = local.enable_waf_computed
   private_subnet_ids          = module.networking[0].private_subnet_ids
   vpc_link_security_group_ids = [module.networking[0].alb_security_group_id]
+  enable_alb_integration      = true
   alb_arn                     = module.compute[0].gateway_alb_arn
-  alb_dns_name                = module.compute[0].gateway_alb_dns_name
+  alb_dns_name                = module.compute[0].gateway_endpoint_host
+  alb_tls_verified            = module.compute[0].alb_tls_verified
 
   depends_on = [module.auth, module.compute]
 }
 
 module "ecr" {
   source = "./modules/ecr"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_core ? 1 : 0
 
-  environment = var.environment
-  name_prefix = local.name_prefix
-  kms_key_arn = module.security.kms_key_arn
-  tags        = local.common_tags
+  environment              = var.environment
+  name_prefix              = local.name_prefix
+  kms_key_arn              = module.security.kms_key_arn
+  tags                     = local.common_tags
+  enable_registry_scanning = !local.is_local
 
   depends_on = [module.security]
 }
 
+data "aws_ecr_image" "gateway" {
+  count = local.deploy_edge && !startswith(var.gateway_image_tag, "sha256:") && !can(regex("@sha256:", var.gateway_image_tag)) ? 1 : 0
+
+  repository_name = module.ecr[0].repository_names["gateway"]
+  image_tag       = var.gateway_image_tag
+
+  depends_on = [module.ecr]
+}
+
+data "aws_ecr_image" "processor" {
+  count = local.deploy_edge && !startswith(var.processor_image_tag, "sha256:") && !can(regex("@sha256:", var.processor_image_tag)) ? 1 : 0
+
+  repository_name = module.ecr[0].repository_names["processor"]
+  image_tag       = var.processor_image_tag
+
+  depends_on = [module.ecr]
+}
+
 module "compute" {
   source = "./modules/compute"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_edge ? 1 : 0
 
-  environment               = var.environment
-  name_prefix               = local.name_prefix
-  tags                      = local.common_tags
-  aws_region                = var.aws_region
-  use_fips_endpoint         = var.use_fips_endpoint
-  kms_key_arn               = module.security.kms_key_arn
-  ecs_task_role_arn         = module.security.ecs_task_role_arn
-  ecs_execution_role_arn    = module.security.ecs_execution_role_arn
-  lambda_role_arn           = module.security.lambda_role_arn
-  log_group_name            = "/ecs/${local.name_prefix}"
-  log_retention_days        = local.log_retention_days
-  sqs_queue_arn             = module.messaging.queue_arns.file_processing
-  dlq_arn                   = module.messaging.queue_arns.dlq
-  vpc_id                    = module.networking[0].vpc_id
-  subnet_ids                = module.networking[0].private_subnet_ids
-  security_group_id         = module.networking[0].ecs_security_group_id
-  lambda_security_group_id  = module.networking[0].lambda_security_group_id
-  alb_security_group_id     = module.networking[0].alb_security_group_id
-  enable_container_insights = var.enable_container_insights
-  enable_processor_ecs      = var.enable_processor_ecs
+  environment                  = var.environment
+  name_prefix                  = local.name_prefix
+  tags                         = local.common_tags
+  aws_region                   = var.aws_region
+  use_fips_endpoint            = var.use_fips_endpoint
+  kms_key_arn                  = module.security.kms_key_arn
+  ecs_task_role_arn            = module.security.ecs_task_role_arn
+  ecs_execution_role_arn       = module.security.ecs_execution_role_arn
+  lambda_role_arn              = module.security.lambda_role_arn
+  log_group_name               = "/ecs/${local.name_prefix}"
+  log_retention_days           = local.log_retention_days
+  sqs_queue_arn                = module.messaging.queue_arns.file_processing
+  dlq_arn                      = module.messaging.queue_arns.dlq
+  vpc_id                       = module.networking[0].vpc_id
+  subnet_ids                   = module.networking[0].private_subnet_ids
+  security_group_id            = module.networking[0].ecs_security_group_id
+  lambda_security_group_id     = module.networking[0].lambda_security_group_id
+  alb_security_group_id        = module.networking[0].alb_security_group_id
+  enable_container_insights    = var.enable_container_insights
+  enable_processor_ecs         = var.enable_processor_ecs
+  enable_lambdas               = !local.is_local || var.local_enable_lambdas
+  alb_certificate_mode         = var.alb_certificate_mode
+  alb_domain_name              = var.alb_domain_name
+  localstack_internal_endpoint = local.is_local ? var.localstack_internal_endpoint : ""
 
   sqs_queue_url          = module.messaging.queue_urls.file_processing
   sns_topic_arn          = module.messaging.topic_arns.processing_events
@@ -152,38 +183,53 @@ module "compute" {
   outbox_stream_arn        = module.storage.outbox_stream_arn
   outbox_publisher_dlq_arn = module.messaging.queue_arns.outbox_publisher_dlq
 
-  depends_on = [module.security, module.networking, module.messaging, module.ecr]
+  depends_on = [module.security, module.networking, module.messaging, module.ecr, data.aws_ecr_image.gateway, data.aws_ecr_image.processor]
 }
 
 module "audit" {
   source = "./modules/audit"
-  count  = local.is_local ? 0 : 1
+  count  = local.deploy_audit ? 1 : 0
 
-  environment         = var.environment
-  name_prefix         = local.name_prefix
-  tags                = local.common_tags
-  kms_key_arn         = module.security.kms_key_arn
-  enable_cloudtrail   = var.enable_cloudtrail
-  enable_guardduty    = var.enable_guardduty
-  enable_security_hub = var.enable_security_hub
-  enable_aws_config   = local.enable_config_computed
+  environment       = var.environment
+  name_prefix       = local.name_prefix
+  tags              = local.common_tags
+  kms_key_arn       = module.security.kms_key_arn
+  enable_cloudtrail = var.enable_cloudtrail
+  enable_aws_config = local.enable_config_computed
+  # GuardDuty and Security Hub are not emulated by LocalStack, so they are
+  # forced off locally even when their flags are set.
+  enable_guardduty    = !local.is_local && var.enable_guardduty
+  enable_security_hub = !local.is_local && var.enable_security_hub
 
   depends_on = [module.security]
 }
 
-# Cross-region replication for tenant data buckets and audit logs.
-# Feature-flagged via local.enable_crr_computed (default: prod and staging).
+resource "terraform_data" "replica_region_guard" {
+  count = local.enable_crr_computed ? 1 : 0
+  input = var.replica_region
+
+  lifecycle {
+    precondition {
+      condition     = var.replica_region != var.aws_region
+      error_message = "replica_region must be distinct from aws_region when enable_cross_region_replication=true."
+    }
+  }
+}
+
+# Optional cross-region replication for tenant data buckets and audit logs.
+# Disabled by default so the thesis/free-tier baseline creates active resources
+# only in us-west-2; enable explicitly for a DR validation run.
 # Uses the aws.replica provider configured in provider.tf.
 module "replication" {
   source = "./modules/replication"
-  count  = local.is_local ? 0 : 1
+  count  = !local.is_local && local.enable_crr_computed ? 1 : 0
 
   providers = {
     aws         = aws
     aws.replica = aws.replica
   }
 
-  enabled     = local.enable_crr_computed
+  enabled     = true
   environment = var.environment
   name_prefix = local.name_prefix
   tags        = local.common_tags
@@ -201,5 +247,5 @@ module "replication" {
     } : {}
   )
 
-  depends_on = [module.storage, module.audit]
+  depends_on = [module.storage, module.audit, terraform_data.replica_region_guard]
 }

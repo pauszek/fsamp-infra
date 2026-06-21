@@ -78,7 +78,8 @@ The container runs plain HTTP. This is intentional:
 
 ### 4. Service-to-AWS (FIPS 140-3 Endpoints)
 
-All AWS SDK calls from Gateway and Processor use **AWS FIPS endpoints where supported**:
+All non-local AWS SDK calls from Gateway and Processor are pinned to the
+`us-west-2` deployment baseline and use AWS FIPS endpoints there:
 
 | Service | FIPS Endpoint Pattern | Enabled |
 |---------|-----------------------|---------|

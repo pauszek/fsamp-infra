@@ -8,12 +8,14 @@ services:
     environment:
       LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN}
       AWS_DEFAULT_REGION: us-west-2
-      SERVICES: s3,sqs,sns,dynamodb,kms,cognito-idp,iam,sts,cloudwatch,logs
+      SERVICES: s3,sqs,sns,dynamodb,kms,cognito-idp,iam,sts,lambda,ecr,events,cloudwatch,logs,cloudtrail,guardduty,config
       PERSISTENCE: 0
       DEBUG: ${LOCALSTACK_DEBUG:-0}
+      ENABLE_AUDIT_SERVICES: ${ENABLE_AUDIT_SERVICES:-0}
       ENFORCE_IAM: 1
       DOCKER_HOST: unix:///var/run/docker.sock
       LOCALSTACK_HOST: localstack:4566
+      LAMBDA_DOCKER_NETWORK: fsamp-e2e-network
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ../localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
@@ -41,6 +43,7 @@ services:
       AWS_SNS_ENDPOINT: http://localstack:4566
       S3_BUCKET_NAME: fsamp-local-files
       SNS_TOPIC_ARN: arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
+      DIRECT_PUBLISH_AFTER_OUTBOX: ${DIRECT_PUBLISH_AFTER_OUTBOX:-true}
       COGNITO_REGION: us-west-2
       CONFIG_FILE: /config/fsamp-config.env
       CONFIG_WAIT_TIMEOUT: 120

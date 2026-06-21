@@ -92,9 +92,15 @@ variable "aws_region" {
 }
 
 variable "use_fips_endpoint" {
-  description = "Use AWS FIPS endpoints where supported (us-* regions only)"
+  description = "Use AWS FIPS endpoints in the us-west-2 deployment baseline"
   type        = bool
   default     = true
+}
+
+variable "localstack_internal_endpoint" {
+  description = "LocalStack endpoint URL visible from LocalStack-managed ECS/Lambda containers. Empty outside local parity runs."
+  type        = string
+  default     = ""
 }
 
 variable "gateway_image" {
@@ -241,4 +247,27 @@ variable "outbox_publisher_dlq_arn" {
   description = "ARN of the SQS queue that receives outbox publisher batches that exhaust their retry budget. Required by the transactional outbox at-least-once guarantee."
   type        = string
   default     = ""
+}
+
+variable "enable_lambdas" {
+  description = "Create the processor and outbox-publisher container Lambdas. Disable locally until images exist in the local ECR."
+  type        = bool
+  default     = true
+}
+
+variable "alb_certificate_mode" {
+  description = "Certificate for the ALB TLS listener: 'self-signed' (Terraform-managed, imported into ACM; documented SC-23 exception) or 'acm' (DNS-validated ACM certificate with a Route53 zone for alb_domain_name)."
+  type        = string
+  default     = "self-signed"
+
+  validation {
+    condition     = contains(["self-signed", "acm"], var.alb_certificate_mode)
+    error_message = "alb_certificate_mode must be 'self-signed' or 'acm'."
+  }
+}
+
+variable "alb_domain_name" {
+  description = "Domain for the ALB certificate and Route53 alias when alb_certificate_mode = 'acm'."
+  type        = string
+  default     = null
 }

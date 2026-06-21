@@ -8,6 +8,8 @@
 Infrastructure as Code for the FSAMP event-driven microservices platform on AWS.
 The project is FedRAMP Moderate-aligned and FIPS 140-3-oriented, without claiming
 formal FedRAMP authorization.
+Active AWS deployments are pinned to `us-west-2`; LocalStack Pro is the primary
+local target, and optional cross-region replication is disabled by default.
 
 ## What This Repo Owns
 
@@ -41,14 +43,18 @@ Prerequisites:
 - AWS CLI v2
 - LocalStack Pro token for full local emulation
 
-LocalStack:
+LocalStack Pro is the primary runtime environment: the same Terraform modules
+provision it, Terraform state lives in LocalStack S3 with lockfile locking,
+and test users are seeded after apply (see ADR-001 revision).
 
 ```bash
 export LOCALSTACK_AUTH_TOKEN=your-token
-make up
-make init-local
-make apply-local
+make local-parity    # Terraform + local ECR images + ECS/API Gateway/Lambda parity
 ```
+
+`make local-core` remains available for lightweight Terraform work without the
+edge stack. The imperative bootstrap (`localstack/init-aws.sh`) runs only when
+`FSAMP_TF_MANAGED` is unset, which is now the fast compose/e2e fallback path.
 
 AWS bootstrap:
 
@@ -89,17 +95,21 @@ scripts/
 
 ```bash
 make help
+make local-parity
+make local-core
 make up
 make down
 make init-local
 make plan-local
 make apply-local
+make seed-local
 make init-dev
 make plan-dev
 ```
 
-AWS applies should normally be done through GitHub Actions so approvals, image
-tags, and rollback metadata stay consistent.
+AWS applies should normally be done through GitHub Actions so approvals, signed
+image digests, immutable Terraform image references, and rollback metadata stay
+consistent.
 
 ## Security and Compliance Notes
 

@@ -1,4 +1,4 @@
-.PHONY: help init plan apply destroy fmt validate lint security clean
+.PHONY: help init plan apply destroy fmt validate lint security clean up down logs init-local plan-local apply-local destroy-local seed-local local-core local-parity-up wait-localstack local-parity-bootstrap local-parity-images local-parity-apply local-demo-env local-parity local-all init-dev plan-dev apply-dev destroy-dev init-staging plan-staging apply-staging init-prod plan-prod apply-prod
 
 ENV ?= local
 AWS_REGION ?= us-west-2
@@ -6,6 +6,13 @@ AWS_ACCOUNT_ID ?= $(shell aws sts get-caller-identity --query Account --output t
 STATE_BUCKET ?= fsamp-$(ENV)-$(AWS_ACCOUNT_ID)-$(AWS_REGION)-tfstate
 LOCK_TABLE ?= fsamp-$(ENV)-terraform-locks
 STATE_KEY ?= $(ENV)/terraform.tfstate
+DOCKER_COMPOSE ?= docker compose
+LOCALSTACK_ENDPOINT ?= http://localhost:4566
+LOCAL_PARITY_IMAGE_TAG ?= local-parity
+GATEWAY_DIR ?= ../fsamp-gateway
+PROCESSOR_DIR ?= ../fsamp-processor
+DEMO_ENV_PATH ?= ../fsamp-demo-flow/.env.local
+LOCAL_PARITY_VARS = -var-file=envs/local.tfvars -var="local_enable_edge_stack=true" -var="local_enable_lambdas=true" -var="gateway_image_tag=$(LOCAL_PARITY_IMAGE_TAG)" -var="processor_image_tag=$(LOCAL_PARITY_IMAGE_TAG)"
 
 init-dev plan-dev apply-dev destroy-dev: ENV=dev
 init-staging plan-staging apply-staging: ENV=staging
@@ -30,6 +37,8 @@ help:
 	@echo ""
 	@echo "Applying:"
 	@echo "  apply-local    Apply to LocalStack"
+	@echo "  local-core     Apply the lightweight Terraform-managed LocalStack core"
+	@echo "  local-parity   Build/push images and apply ECS/API Gateway/Lambda parity stack"
 	@echo "  apply-dev      Apply to AWS dev"
 	@echo "  apply-staging  Apply to AWS staging"
 	@echo "  apply-prod     Apply to AWS prod (requires approval)"
@@ -47,25 +56,83 @@ help:
 	@echo "  logs           View LocalStack logs"
 
 up:
-	docker-compose up -d
+	$(DOCKER_COMPOSE) up -d
 
 down:
-	docker-compose down
+	$(DOCKER_COMPOSE) down
 
 logs:
-	docker-compose logs -f localstack
+	$(DOCKER_COMPOSE) logs -f localstack
 
 init-local:
-	cd terraform && terraform init -backend=false
+	AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test aws --endpoint-url $(LOCALSTACK_ENDPOINT) --region $(AWS_REGION) \
+		s3api create-bucket --bucket fsamp-local-tf-state \
+		--create-bucket-configuration LocationConstraint=$(AWS_REGION) 2>/dev/null || true
+	cd terraform && terraform init -reconfigure -backend-config=envs/local.s3.tfbackend
 
+# Low parallelism: LocalStack's CloudWatch emulation returns transient 500s
+# under heavy concurrent DescribeAlarms load.
 plan-local:
-	cd terraform && terraform plan -var-file=envs/local.tfvars
+	cd terraform && terraform plan -var-file=envs/local.tfvars -parallelism=4
 
 apply-local:
-	cd terraform && terraform apply -var-file=envs/local.tfvars
+	cd terraform && terraform apply -var-file=envs/local.tfvars -parallelism=4
 
 destroy-local:
 	cd terraform && terraform destroy -var-file=envs/local.tfvars
+
+# Seed e2e test users into the Terraform-managed Cognito pool (LocalStack).
+seed-local:
+	./localstack/seed-users.sh
+
+# Lightweight LocalStack core for quick Terraform development. This creates
+# the Terraform-managed core resources but intentionally skips ECS/API Gateway
+# and Lambda container-image resources.
+local-core:
+	FSAMP_TF_MANAGED=1 $(DOCKER_COMPOSE) up -d localstack
+	$(MAKE) wait-localstack
+	$(MAKE) init-local
+	$(MAKE) apply-local
+	$(MAKE) seed-local
+
+local-parity-up:
+	FSAMP_TF_MANAGED=1 $(DOCKER_COMPOSE) up -d localstack
+
+wait-localstack:
+	@set -euo pipefail; \
+	echo "Waiting for LocalStack at $(LOCALSTACK_ENDPOINT)..."; \
+	for i in {1..90}; do \
+		if curl -fsS "$(LOCALSTACK_ENDPOINT)/_localstack/health" >/dev/null; then \
+			echo "LocalStack is ready"; \
+			exit 0; \
+		fi; \
+		sleep 2; \
+	done; \
+	echo "LocalStack did not become healthy"; \
+	exit 1
+
+local-parity-bootstrap:
+	cd terraform && terraform apply -var-file=envs/local.tfvars \
+		-target=module.security -target=module.ecr -auto-approve -parallelism=4
+
+local-parity-images:
+	GATEWAY_DIR="$(GATEWAY_DIR)" PROCESSOR_DIR="$(PROCESSOR_DIR)" \
+		LOCALSTACK_ENDPOINT="$(LOCALSTACK_ENDPOINT)" AWS_REGION="$(AWS_REGION)" \
+		LOCAL_PARITY_IMAGE_TAG="$(LOCAL_PARITY_IMAGE_TAG)" \
+		./scripts/localstack-push-images.sh
+
+local-parity-apply:
+	cd terraform && terraform apply $(LOCAL_PARITY_VARS) -auto-approve -parallelism=4
+
+local-demo-env:
+	LOCALSTACK_ENDPOINT="$(LOCALSTACK_ENDPOINT)" AWS_REGION="$(AWS_REGION)" \
+		./scripts/write-demo-env.sh "$(DEMO_ENV_PATH)"
+
+# Full LocalStack Pro parity stack: API Gateway -> ALB -> ECS gateway ->
+# DynamoDB Streams -> outbox-publisher Lambda -> SNS -> SQS -> processor Lambda.
+local-parity: local-parity-up wait-localstack init-local local-parity-bootstrap local-parity-images local-parity-apply seed-local local-demo-env
+
+local-all: local-parity
 
 init-dev:
 	cd terraform && terraform init -reconfigure \
