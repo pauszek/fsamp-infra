@@ -26,7 +26,9 @@ on:
       aws_region:
         description: AWS region
         required: true
-        type: string
+        type: choice
+        options:
+          - us-west-2
         default: us-west-2
       bootstrap_state:
         description: Create the S3 state bucket and DynamoDB lock table if missing
@@ -140,6 +142,12 @@ jobs:
           short_sha="${GITHUB_SHA::7}"
           action="${INPUT_ACTION:-deploy-dev}"
           aws_region="${INPUT_AWS_REGION:-${PAYLOAD_AWS_REGION:-us-west-2}}"
+
+          if [[ "${aws_region}" != "us-west-2" ]]; then
+            echo "::error::FSAMP deployments are restricted to us-west-2. Requested: ${aws_region}"
+            exit 1
+          fi
+
           case "${INPUT_BOOTSTRAP_STATE}" in
             true|false)
               bootstrap_state="${INPUT_BOOTSTRAP_STATE}"
