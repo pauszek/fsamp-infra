@@ -18,6 +18,8 @@ An ADR is a document that captures an important architectural decision made alon
 | [006](006-multi-repository-architecture.md) | Multi-Repository Architecture | Accepted | 2026-05 |
 | [007](007-transactional-outbox-pattern.md) | Transactional Outbox Pattern | Accepted | 2026-05 |
 | [008](008-alb-tls-termination-self-signed.md) | FIPS TLS on API GW -> ALB with a self-signed certificate | Accepted | 2026-06 |
+| [009](009-targeted-config-rules-over-conformance-pack.md) | Targeted AWS Config rules over the FedRAMP conformance pack | Accepted | 2026-06 |
+| [010](010-manual-event-models-over-codegen.md) | Manual event models with contract-test gates over codegen | Accepted | 2026-06 |
 
 ## Template
 

@@ -11,7 +11,6 @@ skip-check:
   - CKV_AWS_59   # Public /health is intentional for load balancer/API health checks; business routes use Cognito
   - CKV_AWS_120  # API Gateway response caching is out of scope/costly for upload APIs
   - CKV_AWS_225  # API method caching intentionally disabled for dynamic upload/status flows
-  - CKV_AWS_91   # Private internal ALB access logs are documented as a production add-on to avoid dev storage cost
   - CKV_AWS_378  # TLS terminates at the ALB FIPS listener; ALB->task HTTP:8080 stays on private-subnet ENIs governed by SGs (SC-7)
   - CKV2_AWS_51  # Client certificate auth not used; API auth uses Cognito JWT + WAF for thesis scope
   - CKV2_AWS_77  # WAF includes AWSManagedRulesKnownBadInputsRuleSet; Checkov does not detect this module shape
