@@ -58,6 +58,12 @@ variable "alb_security_group_id" {
   type        = string
 }
 
+variable "alb_tls_enabled" {
+  description = "Terminate TLS with the AWS FIPS security policy on the internal gateway ALB listener (SC-8/SC-13). Rollback lever only; keep enabled in all AWS environments."
+  type        = bool
+  default     = true
+}
+
 variable "log_group_name" {
   description = "CloudWatch log group name for ECS"
   type        = string

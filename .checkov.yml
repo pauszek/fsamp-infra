@@ -12,10 +12,7 @@ skip-check:
   - CKV_AWS_120  # API Gateway response caching is out of scope/costly for upload APIs
   - CKV_AWS_225  # API method caching intentionally disabled for dynamic upload/status flows
   - CKV_AWS_91   # Private internal ALB access logs are documented as a production add-on to avoid dev storage cost
-  - CKV_AWS_2    # Internal ALB uses HTTP behind API Gateway VPC Link; public edge remains API Gateway/WAF/Cognito
-  - CKV_AWS_103  # TLS policy is not applicable to the private HTTP listener used only through VPC Link
-  - CKV_AWS_378  # Target group HTTP is private east-west traffic; FIPS/TLS enforcement is at AWS APIs/public edge
-  - CKV2_AWS_20  # Private ALB is not internet-facing and is reached only by API Gateway VPC Link
+  - CKV_AWS_378  # TLS terminates at the ALB FIPS listener; ALB->task HTTP:8080 stays on private-subnet ENIs governed by SGs (SC-7)
   - CKV2_AWS_51  # Client certificate auth not used; API auth uses Cognito JWT + WAF for thesis scope
   - CKV2_AWS_77  # WAF includes AWSManagedRulesKnownBadInputsRuleSet; Checkov does not detect this module shape
   - CKV2_AWS_5   # Security groups are attached through cross-module ECS/Lambda/ALB references; Checkov false positive

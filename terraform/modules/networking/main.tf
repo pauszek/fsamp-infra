@@ -168,18 +168,20 @@ resource "aws_security_group" "alb" {
     cidr_blocks = [var.vpc_cidr]
   }
 
-  ingress {
-    description = "HTTP from VPC Link/private clients"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
-  }
-
   egress {
     description = "Gateway traffic to ECS tasks"
     from_port   = 8080
     to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  # The API Gateway VPC Link ENIs share this security group, so they need
+  # egress to reach the ALB FIPS TLS listener on 443.
+  egress {
+    description = "VPC Link ENIs to the ALB TLS listener"
+    from_port   = 443
+    to_port     = 443
     protocol    = "tcp"
     cidr_blocks = [var.vpc_cidr]
   }

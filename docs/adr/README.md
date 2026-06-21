@@ -17,6 +17,7 @@ An ADR is a document that captures an important architectural decision made alon
 | [005](005-vpc-endpoints-over-nat.md) | VPC Endpoints over NAT Gateway | Accepted | 2026-05 |
 | [006](006-multi-repository-architecture.md) | Multi-Repository Architecture | Accepted | 2026-05 |
 | [007](007-transactional-outbox-pattern.md) | Transactional Outbox Pattern | Accepted | 2026-05 |
+| [008](008-alb-tls-termination-self-signed.md) | FIPS TLS on API GW -> ALB with a self-signed certificate | Accepted | 2026-06 |
 
 ## Template
 

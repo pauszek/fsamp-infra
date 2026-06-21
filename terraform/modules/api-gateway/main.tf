@@ -65,6 +65,16 @@ resource "aws_api_gateway_request_validator" "headers_and_params" {
   validate_request_body       = false
   validate_request_parameters = true
 }
+# Scheme for VPC Link integrations. With TLS enabled the ALB presents a
+# self-signed certificate (no public domain / no ACM PCA in budget), so the
+# integrations skip certificate verification: transit is still encrypted with
+# FIPS-validated TLS 1.2/1.3 (SC-8, SC-13) and endpoint authenticity is
+# anchored by the VPC Link private ENIs plus the ALB security group
+# (443 only from the VPC CIDR) — a documented compensating control for SC-23.
+locals {
+  alb_scheme = var.alb_tls_enabled ? "https" : "http"
+}
+
 resource "aws_apigatewayv2_vpc_link" "main" {
   count = var.alb_arn != null ? 1 : 0
 
@@ -100,11 +110,19 @@ resource "aws_api_gateway_integration" "upload_post" {
   http_method             = aws_api_gateway_method.upload_post[0].http_method
   type                    = "HTTP_PROXY"
   integration_http_method = "POST"
-  uri                     = "http://${var.alb_dns_name}/api/v1/files/upload"
+  uri                     = "${local.alb_scheme}://${var.alb_dns_name}/api/v1/files/upload"
   connection_type         = "VPC_LINK"
   connection_id           = aws_apigatewayv2_vpc_link.main[0].id
   integration_target      = var.alb_arn
   timeout_milliseconds    = 29000
+
+  dynamic "tls_config" {
+    for_each = var.alb_tls_enabled ? [1] : []
+    content {
+      # Self-signed ALB certificate; see the compensating-control note above.
+      insecure_skip_verification = true
+    }
+  }
 
   request_parameters = {
     "integration.request.header.X-Idempotency-Key" = "method.request.header.X-Idempotency-Key"
@@ -147,11 +165,19 @@ resource "aws_api_gateway_integration" "file_get" {
   http_method             = aws_api_gateway_method.file_get[0].http_method
   type                    = "HTTP_PROXY"
   integration_http_method = "GET"
-  uri                     = "http://${var.alb_dns_name}/api/v1/files/{fileId}"
+  uri                     = "${local.alb_scheme}://${var.alb_dns_name}/api/v1/files/{fileId}"
   connection_type         = "VPC_LINK"
   connection_id           = aws_apigatewayv2_vpc_link.main[0].id
   integration_target      = var.alb_arn
   timeout_milliseconds    = 29000
+
+  dynamic "tls_config" {
+    for_each = var.alb_tls_enabled ? [1] : []
+    content {
+      # Self-signed ALB certificate; see the compensating-control note above.
+      insecure_skip_verification = true
+    }
+  }
 
   request_parameters = {
     "integration.request.path.fileId" = "method.request.path.fileId"
@@ -180,11 +206,19 @@ resource "aws_api_gateway_integration" "file_delete" {
   http_method             = aws_api_gateway_method.file_delete[0].http_method
   type                    = "HTTP_PROXY"
   integration_http_method = "DELETE"
-  uri                     = "http://${var.alb_dns_name}/api/v1/files/{fileId}"
+  uri                     = "${local.alb_scheme}://${var.alb_dns_name}/api/v1/files/{fileId}"
   connection_type         = "VPC_LINK"
   connection_id           = aws_apigatewayv2_vpc_link.main[0].id
   integration_target      = var.alb_arn
   timeout_milliseconds    = 29000
+
+  dynamic "tls_config" {
+    for_each = var.alb_tls_enabled ? [1] : []
+    content {
+      # Self-signed ALB certificate; see the compensating-control note above.
+      insecure_skip_verification = true
+    }
+  }
 
   request_parameters = {
     "integration.request.path.fileId" = "method.request.path.fileId"
