@@ -42,7 +42,7 @@ cd ../fsamp-infra
 make local-parity
 ```
 
-This mirrors the AWS eventing contract: `DynamoDB Streams -> outbox-publisher Lambda -> SNS -> SQS -> processor Lambda`. LocalStack Pro can validate that integration behavior locally, but the final FedRAMP-aligned evidence still has to come from real `us-west-2` AWS service outputs.
+This mirrors the AWS eventing contract: `DynamoDB Streams -> outbox-publisher Lambda -> SNS -> SQS -> processor Lambda`. LocalStack Pro is the primary repeatable evidence path for the thesis demo; a short-lived real `us-west-2` AWS run can supplement it with CloudTrail, IAM and managed-service outputs, but is not required to prove the local runtime parity flow.
 
 ## Security Model
 
@@ -143,7 +143,7 @@ For each upload, the console shows:
 - Processor Lambda mapping, metadata, result outbox record and filtered CloudWatch/Docker logs
 - LocalStack CloudWatch/Logs health, plus optional CloudTrail/GuardDuty/Config status
 
-LocalStack is an API-level integration proof. For final FedRAMP-aligned evidence, repeat the same checklist in real `us-west-2` AWS using CloudWatch, CloudTrail, AWS Config, KMS, ECS/Lambda and DynamoDB outputs.
+LocalStack Pro is the primary API-level integration proof for the thesis evidence set. A real `us-west-2` AWS run remains a useful optional follow-up for CloudWatch, CloudTrail, AWS Config, KMS, ECS/Lambda and DynamoDB managed-service outputs, but it is not a prerequisite for the LocalStack parity demonstration.
 
 ## Manual Testing
 
