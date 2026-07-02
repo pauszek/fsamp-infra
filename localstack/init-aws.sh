@@ -6,6 +6,11 @@ ACCOUNT_ID="000000000000"
 ENDPOINT="http://localhost:4566"
 CONFIG_FILE="/tmp/localstack-config/fsamp-config.env"
 
+if [[ "${FSAMP_TF_MANAGED:-0}" == "1" ]]; then
+    echo "Skipping legacy LocalStack bootstrap; Terraform manages FSAMP resources."
+    exit 0
+fi
+
 export AWS_ACCESS_KEY_ID="test"
 export AWS_SECRET_ACCESS_KEY="test"
 export AWS_DEFAULT_REGION="$REGION"

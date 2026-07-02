@@ -761,6 +761,7 @@ resource "aws_cloudwatch_log_group" "outbox_publisher" {
 resource "aws_lambda_event_source_mapping" "outbox_stream" {
   count = var.enable_lambdas ? 1 : 0
 
+  # tflint-ignore: aws_lambda_event_source_mapping_invalid_event_source_arn
   event_source_arn  = var.outbox_stream_arn
   function_name     = aws_lambda_function.outbox_publisher[0].arn
   batch_size        = 100
