@@ -1,4 +1,4 @@
-.PHONY: help init plan apply destroy fmt validate lint security clean up down logs init-local plan-local apply-local destroy-local seed-local local-core local-parity-up wait-localstack local-parity-bootstrap local-parity-images local-parity-apply local-demo-env local-parity local-all init-dev plan-dev apply-dev destroy-dev init-staging plan-staging apply-staging init-prod plan-prod apply-prod
+.PHONY: help init plan apply destroy fmt validate lint security clean up down logs init-local plan-local apply-local destroy-local seed-local local-core local-parity-up wait-localstack local-parity-bootstrap local-parity-images local-parity-apply local-demo-env local-parity-down local-parity-reset local-parity local-all init-dev plan-dev apply-dev destroy-dev init-staging plan-staging apply-staging init-prod plan-prod apply-prod
 
 ENV ?= local
 AWS_REGION ?= us-west-2
@@ -39,6 +39,10 @@ help:
 	@echo "  apply-local    Apply to LocalStack"
 	@echo "  local-core     Apply the lightweight Terraform-managed LocalStack core"
 	@echo "  local-parity   Build/push images and apply ECS/API Gateway/Lambda parity stack"
+	@echo "  local-parity-down"
+	@echo "                 Stop LocalStack parity containers and free the Docker network"
+	@echo "  local-parity-reset"
+	@echo "                 Stop LocalStack parity stack and remove its volume/network"
 	@echo "  apply-dev      Apply to AWS dev"
 	@echo "  apply-staging  Apply to AWS staging"
 	@echo "  apply-prod     Apply to AWS prod (requires approval)"
@@ -127,6 +131,26 @@ local-parity-apply:
 local-demo-env:
 	LOCALSTACK_ENDPOINT="$(LOCALSTACK_ENDPOINT)" AWS_REGION="$(AWS_REGION)" \
 		./scripts/write-demo-env.sh "$(DEMO_ENV_PATH)"
+
+local-parity-down:
+	@$(DOCKER_COMPOSE) down --remove-orphans || true
+	@containers="$$(docker ps -aq --filter network=fsamp-network 2>/dev/null || true)"; \
+	if [ -n "$$containers" ]; then \
+		echo "Removing containers still attached to fsamp-network: $$containers"; \
+		docker rm -f $$containers >/dev/null; \
+	fi
+	@$(DOCKER_COMPOSE) down --remove-orphans || true
+	@docker network rm fsamp-network >/dev/null 2>&1 || true
+
+local-parity-reset:
+	@$(DOCKER_COMPOSE) down -v --remove-orphans || true
+	@containers="$$(docker ps -aq --filter network=fsamp-network 2>/dev/null || true)"; \
+	if [ -n "$$containers" ]; then \
+		echo "Removing containers still attached to fsamp-network: $$containers"; \
+		docker rm -f $$containers >/dev/null; \
+	fi
+	@docker network rm fsamp-network >/dev/null 2>&1 || true
+	@docker volume rm fsamp-localstack-data >/dev/null 2>&1 || true
 
 # Full LocalStack Pro parity stack: API Gateway -> ALB -> ECS gateway ->
 # DynamoDB Streams -> outbox-publisher Lambda -> SNS -> SQS -> processor Lambda.
