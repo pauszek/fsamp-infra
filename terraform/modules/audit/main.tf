@@ -79,6 +79,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail_logs" {
       days = var.environment == "prod" ? 2555 : 365
     }
 
+    noncurrent_version_expiration {
+      noncurrent_days = var.environment == "prod" ? 2555 : 365
+    }
+
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
     }
@@ -197,6 +201,12 @@ resource "aws_s3_bucket_policy" "cloudtrail_logs" {
         }
         Action   = "s3:GetBucketAcl"
         Resource = aws_s3_bucket.cloudtrail_logs[0].arn
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+            "aws:SourceArn"     = "arn:${data.aws_partition.current.partition}:cloudtrail:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:trail/${var.name_prefix}-trail"
+          }
+        }
       },
       {
         Sid    = "AWSCloudTrailWrite"
@@ -208,7 +218,9 @@ resource "aws_s3_bucket_policy" "cloudtrail_logs" {
         Resource = "${aws_s3_bucket.cloudtrail_logs[0].arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
         Condition = {
           StringEquals = {
-            "s3:x-amz-acl" = "bucket-owner-full-control"
+            "s3:x-amz-acl"      = "bucket-owner-full-control"
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+            "aws:SourceArn"     = "arn:${data.aws_partition.current.partition}:cloudtrail:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:trail/${var.name_prefix}-trail"
           }
         }
       },
@@ -253,14 +265,15 @@ resource "aws_cloudtrail" "main" {
 
     data_resource {
       type   = "AWS::S3::Object"
-      values = ["arn:${data.aws_partition.current.partition}:s3"]
+      values = [for bucket_arn in var.data_bucket_arns : "${bucket_arn}/"]
     }
 
     data_resource {
       type = "AWS::Lambda::Function"
       values = [
         "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:${var.name_prefix}-processor",
-        "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:${var.name_prefix}-outbox-publisher"
+        "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:${var.name_prefix}-outbox-publisher",
+        "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:${var.name_prefix}-outbox-retry"
       ]
     }
   }
@@ -318,6 +331,55 @@ resource "aws_securityhub_standards_subscription" "nist_800_53" {
 
   depends_on = [aws_securityhub_account.main]
 }
+
+resource "aws_cloudwatch_event_rule" "security_findings" {
+  count = var.alert_topic_arn != "" && (var.enable_guardduty || var.enable_security_hub) ? 1 : 0
+
+  name        = "${var.name_prefix}-security-findings"
+  description = "Route GuardDuty and Security Hub findings to the staffed operations topic"
+
+  event_pattern = jsonencode({
+    source = compact([
+      var.enable_guardduty ? "aws.guardduty" : "",
+      var.enable_security_hub ? "aws.securityhub" : ""
+    ])
+  })
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_event_target" "security_findings" {
+  count = length(aws_cloudwatch_event_rule.security_findings)
+
+  rule = aws_cloudwatch_event_rule.security_findings[0].name
+  arn  = var.alert_topic_arn
+}
+
+resource "aws_cloudwatch_event_rule" "config_noncompliance" {
+  count = var.alert_topic_arn != "" && var.enable_aws_config ? 1 : 0
+
+  name        = "${var.name_prefix}-config-noncompliance"
+  description = "Route AWS Config non-compliant evaluations to operations"
+
+  event_pattern = jsonencode({
+    source        = ["aws.config"]
+    "detail-type" = ["Config Rules Compliance Change"]
+    detail = {
+      newEvaluationResult = {
+        complianceType = ["NON_COMPLIANT"]
+      }
+    }
+  })
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_event_target" "config_noncompliance" {
+  count = length(aws_cloudwatch_event_rule.config_noncompliance)
+
+  rule = aws_cloudwatch_event_rule.config_noncompliance[0].name
+  arn  = var.alert_topic_arn
+}
 resource "aws_s3_bucket" "config_logs" {
   count = var.enable_aws_config ? 1 : 0
 
@@ -328,6 +390,15 @@ resource "aws_s3_bucket" "config_logs" {
     Name    = "${var.name_prefix}-config-logs"
     Purpose = "AWS Config delivery channel"
   })
+}
+
+resource "aws_s3_bucket_versioning" "config_logs" {
+  count  = var.enable_aws_config ? 1 : 0
+  bucket = aws_s3_bucket.config_logs[0].id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "config_logs" {
@@ -371,6 +442,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "config_logs" {
       days = var.environment == "prod" ? 2555 : 365
     }
 
+    noncurrent_version_expiration {
+      noncurrent_days = var.environment == "prod" ? 2555 : 365
+    }
+
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
     }
@@ -392,6 +467,11 @@ resource "aws_s3_bucket_policy" "config_logs" {
         }
         Action   = "s3:GetBucketAcl"
         Resource = aws_s3_bucket.config_logs[0].arn
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
       },
       {
         Sid    = "AWSConfigBucketDelivery"
@@ -403,7 +483,8 @@ resource "aws_s3_bucket_policy" "config_logs" {
         Resource = "${aws_s3_bucket.config_logs[0].arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/Config/*"
         Condition = {
           StringEquals = {
-            "s3:x-amz-acl" = "bucket-owner-full-control"
+            "s3:x-amz-acl"      = "bucket-owner-full-control"
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
           }
         }
       },

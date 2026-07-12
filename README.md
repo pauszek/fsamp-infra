@@ -133,6 +133,6 @@ consistent.
 ## Cost Notes
 
 The default design chooses cost-aware AWS primitives where practical: ECS Fargate
-instead of EKS, VPC endpoints instead of NAT for AWS service access, Fargate Spot
-for non-production, and S3 Bucket Keys for lower KMS request volume. Actual cost
+instead of EKS, VPC endpoints for supported AWS service traffic, and S3 Bucket
+Keys for lower KMS request volume. Actual cost
 depends on traffic, logs, image storage, audit-service flags, and region.

@@ -30,8 +30,31 @@ variable "dlq_max_receive_count" {
   default     = 3
 }
 
-variable "enable_alarms" {
-  description = "Create CloudWatch alarms for the DLQ. Disabled locally (see observability module note)."
-  type        = bool
-  default     = true
+variable "processor_timeout_seconds" {
+  description = "Processor Lambda timeout used to derive an SQS visibility timeout of at least six times the function timeout plus the batch window."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.processor_timeout_seconds >= 1 && var.processor_timeout_seconds <= 7199
+    error_message = "processor_timeout_seconds must keep the derived SQS visibility timeout within the AWS limit."
+  }
+}
+
+variable "alarm_notification_endpoint" {
+  description = "Email or HTTPS endpoint subscribed to the central operations topic."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "alarm_notification_protocol" {
+  description = "SNS protocol for the central operations subscription."
+  type        = string
+  default     = "email"
+
+  validation {
+    condition     = contains(["email", "https"], var.alarm_notification_protocol)
+    error_message = "alarm_notification_protocol must be email or https."
+  }
 }

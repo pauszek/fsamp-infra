@@ -92,6 +92,14 @@ resource "aws_s3_bucket" "alb_logs" {
   })
 }
 
+resource "aws_s3_bucket_versioning" "alb_logs" {
+  bucket = aws_s3_bucket.alb_logs.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 # ALB access-log delivery does not support SSE-KMS; SSE-S3 (AES-256) is the
 # strongest server-side encryption AWS allows here - documented SC-28
 # exception (data at rest is still AES-256 encrypted).
@@ -130,6 +138,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
 
     expiration {
       days = var.environment == "prod" ? 2555 : 365
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.environment == "prod" ? 2555 : 365
     }
 
     abort_incomplete_multipart_upload {
@@ -371,6 +383,73 @@ resource "aws_lb_listener" "gateway" {
     Service = "gateway"
   })
 }
+
+# REST API private integrations include the API Gateway stage in the backend
+# path. Rewrite only the routes exposed by this API so the Spring application
+# receives its canonical paths without touching multipart request bodies.
+resource "aws_lb_listener_rule" "gateway_files_path" {
+  listener_arn = aws_lb_listener.gateway.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.gateway.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/*/files", "/*/files/*"]
+    }
+  }
+
+  transform {
+    type = "url-rewrite"
+
+    url_rewrite_config {
+      rewrite {
+        regex   = "^/[^/]+/(files(?:/.*)?)$"
+        replace = "/api/v1/$1"
+      }
+    }
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-gateway-files-path"
+    Service = "gateway"
+  })
+}
+
+resource "aws_lb_listener_rule" "gateway_health_path" {
+  listener_arn = aws_lb_listener.gateway.arn
+  priority     = 20
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.gateway.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/*/health"]
+    }
+  }
+
+  transform {
+    type = "url-rewrite"
+
+    url_rewrite_config {
+      rewrite {
+        regex   = "^/[^/]+/health$"
+        replace = "/actuator/health"
+      }
+    }
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-gateway-health-path"
+    Service = "gateway"
+  })
+}
 resource "aws_ecs_task_definition" "gateway" {
   family                   = "${var.name_prefix}-gateway"
   network_mode             = "awsvpc"
@@ -378,12 +457,33 @@ resource "aws_ecs_task_definition" "gateway" {
   cpu                      = var.gateway_cpu
   memory                   = var.gateway_memory
   execution_role_arn       = var.ecs_execution_role_arn
-  task_role_arn            = var.ecs_task_role_arn
+  task_role_arn            = var.gateway_task_role_arn
+
+  volume {
+    name = "gateway-tmp"
+  }
 
   container_definitions = jsonencode([
     {
       name  = "gateway"
       image = var.gateway_image
+      user  = "1001:1001"
+
+      essential              = true
+      readonlyRootFilesystem = true
+
+      linuxParameters = {
+        initProcessEnabled = true
+        capabilities = {
+          drop = ["ALL"]
+        }
+      }
+
+      mountPoints = [{
+        sourceVolume  = "gateway-tmp"
+        containerPath = "/tmp"
+        readOnly      = false
+      }]
 
       portMappings = [
         {
@@ -481,6 +581,12 @@ locals {
     FIPS_APPROVED_ONLY     = "true"
     FSAMP_FIPS_ENABLED     = var.environment == "local" ? "false" : "true"
 
+    # API Gateway REST APIs have a fixed 10 MiB payload ceiling. Leave room
+    # for multipart boundaries and metadata so accepted files are routable.
+    SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE    = "9MB"
+    SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE = "10MB"
+    FSAMP_SECURITY_MAX_FILE_SIZE_BYTES        = "9437184"
+
     COGNITO_USER_POOL_ID = var.cognito_user_pool_id
     COGNITO_CLIENT_ID    = var.cognito_client_id
 
@@ -562,12 +668,33 @@ resource "aws_ecs_task_definition" "processor" {
   cpu                      = var.processor_ecs_cpu
   memory                   = var.processor_ecs_memory
   execution_role_arn       = var.ecs_execution_role_arn
-  task_role_arn            = var.ecs_task_role_arn
+  task_role_arn            = var.processor_task_role_arn
+
+  volume {
+    name = "processor-tmp"
+  }
 
   container_definitions = jsonencode([
     {
       name  = "processor"
       image = var.processor_image
+      user  = "1000:1000"
+
+      essential              = true
+      readonlyRootFilesystem = true
+
+      linuxParameters = {
+        initProcessEnabled = true
+        capabilities = {
+          drop = ["ALL"]
+        }
+      }
+
+      mountPoints = [{
+        sourceVolume  = "processor-tmp"
+        containerPath = "/tmp"
+        readOnly      = false
+      }]
 
       environment = local.processor_ecs_env_list
 
@@ -637,7 +764,7 @@ resource "aws_lambda_function" "processor" {
   count = var.enable_lambdas ? 1 : 0
 
   function_name = "${var.name_prefix}-processor"
-  role          = var.lambda_role_arn
+  role          = var.processor_lambda_role_arn
   timeout       = var.processor_timeout
   memory_size   = var.processor_memory
 
@@ -708,7 +835,7 @@ resource "aws_lambda_function" "outbox_publisher" {
   count = var.enable_lambdas ? 1 : 0
 
   function_name = "${var.name_prefix}-outbox-publisher"
-  role          = var.lambda_role_arn
+  role          = var.outbox_lambda_role_arn
   timeout       = 60
   memory_size   = 256
 
@@ -758,6 +885,91 @@ resource "aws_cloudwatch_log_group" "outbox_publisher" {
 
   tags = var.tags
 }
+
+resource "aws_lambda_function" "outbox_retry" {
+  # checkov:skip=CKV_AWS_272: Container Lambdas use cosign + ECR immutable tags + Inspector enhanced scanning instead.
+  count = var.enable_lambdas ? 1 : 0
+
+  function_name = "${var.name_prefix}-outbox-retry"
+  role          = var.retry_lambda_role_arn
+  timeout       = 300
+  memory_size   = 256
+
+  package_type = "Image"
+  image_uri    = var.outbox_publisher_image != "" ? var.outbox_publisher_image : var.processor_image
+
+  architectures = ["arm64"]
+
+  image_config {
+    command = ["processor.outbox_publisher.retry_handler"]
+  }
+
+  environment {
+    variables = merge(local.outbox_publisher_env_vars, {
+      POWERTOOLS_SERVICE_NAME = "outbox-retry"
+      OUTBOX_SHARD_COUNT      = "16"
+    })
+  }
+
+  kms_key_arn = var.kms_key_arn
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  reserved_concurrent_executions = 1
+
+  vpc_config {
+    subnet_ids         = var.subnet_ids
+    security_group_ids = [var.lambda_security_group_id]
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-outbox-retry"
+    Service = "outbox-retry"
+    Pattern = "transactional-outbox-reconciliation"
+  })
+
+  depends_on = [aws_cloudwatch_log_group.outbox_retry]
+}
+
+resource "aws_cloudwatch_log_group" "outbox_retry" {
+  count = var.enable_lambdas ? 1 : 0
+
+  name              = "/aws/lambda/${var.name_prefix}-outbox-retry"
+  retention_in_days = 365
+  kms_key_id        = var.kms_key_arn
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_event_rule" "outbox_retry" {
+  count = var.enable_lambdas ? 1 : 0
+
+  name                = "${var.name_prefix}-outbox-retry"
+  description         = "Reconcile pending, failed, and expired publishing claims across all 16 outbox shards"
+  schedule_expression = "rate(5 minutes)"
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_event_target" "outbox_retry" {
+  count = var.enable_lambdas ? 1 : 0
+
+  rule = aws_cloudwatch_event_rule.outbox_retry[0].name
+  arn  = aws_lambda_function.outbox_retry[0].arn
+}
+
+resource "aws_lambda_permission" "outbox_retry_events" {
+  count = var.enable_lambdas ? 1 : 0
+
+  statement_id  = "AllowEventBridgeOutboxRetry"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.outbox_retry[0].function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.outbox_retry[0].arn
+}
+
 resource "aws_lambda_event_source_mapping" "outbox_stream" {
   count = var.enable_lambdas ? 1 : 0
 
@@ -765,13 +977,13 @@ resource "aws_lambda_event_source_mapping" "outbox_stream" {
   event_source_arn  = var.outbox_stream_arn
   function_name     = aws_lambda_function.outbox_publisher[0].arn
   batch_size        = 100
-  starting_position = "LATEST"
+  starting_position = "TRIM_HORIZON"
 
   function_response_types = ["ReportBatchItemFailures"]
 
-  maximum_record_age_in_seconds = 86400
+  maximum_record_age_in_seconds = 604800
 
-  maximum_retry_attempts = 3
+  maximum_retry_attempts = 10
 
   bisect_batch_on_function_error = true
 

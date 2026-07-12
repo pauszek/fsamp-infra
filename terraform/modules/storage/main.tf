@@ -88,6 +88,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "files" {
       storage_class   = "STANDARD_IA"
     }
 
+    noncurrent_version_expiration {
+      noncurrent_days = var.environment == "prod" ? 2555 : 365
+    }
+
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
     }
@@ -105,6 +109,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "quarantine" {
 
     expiration {
       days = 30
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
     }
 
     abort_incomplete_multipart_upload {
@@ -128,6 +136,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "processed" {
 
     expiration {
       days = var.environment == "prod" ? 2555 : 365
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.environment == "prod" ? 2555 : 365
     }
 
     abort_incomplete_multipart_upload {
@@ -200,6 +212,7 @@ resource "aws_s3_bucket_versioning" "access_logs" {
   }
 }
 
+#trivy:ignore:AVD-AWS-0132 -- S3 server-access-log destinations require SSE-S3 rather than SSE-KMS.
 resource "aws_s3_bucket_server_side_encryption_configuration" "access_logs" {
   bucket = aws_s3_bucket.access_logs.id
 
@@ -234,6 +247,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "access_logs" {
 
     expiration {
       days = var.environment == "prod" ? 365 : 90
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.environment == "prod" ? 365 : 90
     }
 
     abort_incomplete_multipart_upload {

@@ -31,12 +31,56 @@ resource "aws_sns_topic" "processing_events" {
 }
 
 resource "aws_sns_topic" "dlq_alerts" {
-  name              = "${var.name_prefix}-dlq-alerts"
+  name              = "${var.name_prefix}-operations-alerts"
   kms_master_key_id = var.kms_key_id
 
   tags = merge(var.tags, {
-    Name    = "${var.name_prefix}-dlq-alerts"
-    Purpose = "Dead letter queue alerts"
+    Name    = "${var.name_prefix}-operations-alerts"
+    Purpose = "Central operations and security alerts"
+  })
+}
+
+resource "aws_sns_topic_subscription" "operations_alerts" {
+  count = var.alarm_notification_endpoint != "" ? 1 : 0
+
+  topic_arn = aws_sns_topic.dlq_alerts.arn
+  protocol  = var.alarm_notification_protocol
+  endpoint  = var.alarm_notification_endpoint
+}
+
+resource "aws_sns_topic_policy" "operations_alerts" {
+  arn = aws_sns_topic.dlq_alerts.arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowMonitoringServices"
+        Effect = "Allow"
+        Principal = {
+          Service = ["cloudwatch.amazonaws.com", "events.amazonaws.com"]
+        }
+        Action   = "sns:Publish"
+        Resource = aws_sns_topic.dlq_alerts.arn
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
+      },
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "sns:Publish"
+        Resource  = aws_sns_topic.dlq_alerts.arn
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
   })
 }
 resource "aws_sqs_queue" "dlq" {
@@ -68,7 +112,7 @@ resource "aws_sqs_queue" "outbox_publisher_dlq" {
 
 resource "aws_sqs_queue" "file_processing" {
   name                       = "${var.name_prefix}-file-processing"
-  visibility_timeout_seconds = 300
+  visibility_timeout_seconds = var.processor_timeout_seconds * 6 + 5
   message_retention_seconds  = var.message_retention_seconds
   kms_master_key_id          = var.kms_key_id
 
@@ -178,6 +222,28 @@ resource "aws_sqs_queue_policy" "analysis_results" {
     ]
   })
 }
+
+resource "aws_sqs_queue_policy" "outbox_publisher_dlq" {
+  queue_url = aws_sqs_queue.outbox_publisher_dlq.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "sqs:*"
+        Resource  = aws_sqs_queue.outbox_publisher_dlq.arn
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+}
 resource "aws_sns_topic_policy" "file_events" {
   arn = aws_sns_topic.file_events.arn
 
@@ -249,25 +315,4 @@ resource "aws_sns_topic_subscription" "file_events_to_processing" {
   filter_policy = jsonencode({
     eventType = ["FILE_UPLOADED"]
   })
-}
-resource "aws_cloudwatch_metric_alarm" "dlq_messages" {
-  count = var.enable_alarms ? 1 : 0
-
-  alarm_name          = "${var.name_prefix}-dlq-messages"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "ApproximateNumberOfMessagesVisible"
-  namespace           = "AWS/SQS"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 0
-  alarm_description   = "Alert when messages appear in DLQ"
-
-  dimensions = {
-    QueueName = aws_sqs_queue.dlq.name
-  }
-
-  alarm_actions = [aws_sns_topic.dlq_alerts.arn]
-
-  tags = var.tags
 }

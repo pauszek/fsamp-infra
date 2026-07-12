@@ -12,6 +12,9 @@ resource "aws_api_gateway_rest_api" "main" {
   name        = "${var.name_prefix}-api"
   description = "FSAMP REST API - ${var.environment}"
 
+  # Preserve multipart bytes when proxying uploads to the private ALB.
+  binary_media_types = ["multipart/form-data"]
+
   endpoint_configuration {
     types = ["REGIONAL"]
   }
@@ -241,46 +244,23 @@ resource "aws_api_gateway_method" "health_get" {
 }
 
 resource "aws_api_gateway_integration" "health_get" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.health.id
-  http_method = aws_api_gateway_method.health_get.http_method
-  type        = "MOCK"
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.health.id
+  http_method             = aws_api_gateway_method.health_get.http_method
+  type                    = "HTTP_PROXY"
+  integration_http_method = "GET"
+  uri                     = "${local.alb_scheme}://${var.alb_dns_name}/actuator/health"
+  connection_type         = "VPC_LINK"
+  connection_id           = aws_apigatewayv2_vpc_link.main[0].id
+  integration_target      = var.alb_arn
+  timeout_milliseconds    = 5000
 
-  request_templates = {
-    "application/json" = jsonencode({
-      statusCode = 200
-    })
+  dynamic "tls_config" {
+    for_each = var.alb_tls_enabled ? [1] : []
+    content {
+      insecure_skip_verification = !var.alb_tls_verified
+    }
   }
-}
-
-resource "aws_api_gateway_method_response" "health_get_200" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.health.id
-  http_method = aws_api_gateway_method.health_get.http_method
-  status_code = "200"
-
-  response_models = {
-    "application/json" = "Empty"
-  }
-}
-
-resource "aws_api_gateway_integration_response" "health_get_200" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.health.id
-  http_method = aws_api_gateway_method.health_get.http_method
-  status_code = aws_api_gateway_method_response.health_get_200.status_code
-
-  response_templates = {
-    "application/json" = jsonencode({
-      status  = "healthy"
-      service = "fsamp-api"
-    })
-  }
-
-  depends_on = [
-    aws_api_gateway_integration.health_get,
-    aws_api_gateway_method_response.health_get_200,
-  ]
 }
 resource "aws_api_gateway_deployment" "main" {
   rest_api_id = aws_api_gateway_rest_api.main.id
@@ -293,8 +273,6 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_resource.health.id,
       aws_api_gateway_method.health_get.id,
       aws_api_gateway_integration.health_get.id,
-      aws_api_gateway_method_response.health_get_200.id,
-      aws_api_gateway_integration_response.health_get_200.id,
       aws_api_gateway_method.upload_post[*].id,
       aws_api_gateway_method.upload_post[*].request_parameters,
       aws_api_gateway_integration.upload_post[*].id,
@@ -317,8 +295,6 @@ resource "aws_api_gateway_deployment" "main" {
   depends_on = [
     aws_api_gateway_method.health_get,
     aws_api_gateway_integration.health_get,
-    aws_api_gateway_method_response.health_get_200,
-    aws_api_gateway_integration_response.health_get_200,
     aws_api_gateway_method.upload_post,
     aws_api_gateway_integration.upload_post,
     aws_api_gateway_method.file_get,

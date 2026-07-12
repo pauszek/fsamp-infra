@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import hashlib
+import json
 import os
 import sys
 import time
@@ -88,6 +89,14 @@ class TestConfig:
         "fsamp-local-idempotency-keys",
     )
     SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "fsamp-local-processing-queue")
+    FILE_EVENTS_AUDIT_QUEUE_NAME = os.getenv(
+        "FILE_EVENTS_AUDIT_QUEUE_NAME", "fsamp-local-file-events-audit"
+    )
+    PROCESSING_EVENTS_AUDIT_QUEUE_NAME = os.getenv(
+        "PROCESSING_EVENTS_AUDIT_QUEUE_NAME",
+        "fsamp-local-processing-events-audit",
+    )
+    EVENT_SCHEMA_VERSION = "1.2.0"
 
     COGNITO_USER_POOL_ID: str = ""
     COGNITO_CLIENT_ID: str = ""
@@ -99,7 +108,7 @@ class TestConfig:
     ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "E2eAdminPass123!")
 
     UPLOAD_TIMEOUT = 30
-    PROCESSING_TIMEOUT = 60
+    PROCESSING_TIMEOUT = 120
     HEALTH_CHECK_TIMEOUT = 120
 
     @classmethod
@@ -161,6 +170,115 @@ def get_sqs_client():
         aws_access_key_id=TestConfig.AWS_ACCESS_KEY_ID,
         aws_secret_access_key=TestConfig.AWS_SECRET_ACCESS_KEY,
         config=get_boto_config(),
+    )
+
+
+def _string(item: dict[str, Any], attribute: str) -> str:
+    """Read a DynamoDB string attribute without hiding a missing contract field."""
+    return item.get(attribute, {}).get("S", "")
+
+
+def _canonical_message(body: str) -> dict[str, Any]:
+    """Read either an SNS raw-delivery body or a standard SNS envelope."""
+    parsed = json.loads(body)
+    if isinstance(parsed, dict) and isinstance(parsed.get("Message"), str):
+        parsed = json.loads(parsed["Message"])
+    if not isinstance(parsed, dict):
+        raise ValueError("event body is not a JSON object")
+    return parsed
+
+
+def _queue_url(queue_name: str) -> str:
+    return get_sqs_client().get_queue_url(QueueName=queue_name)["QueueUrl"]
+
+
+def _receive_event(queue_name: str, file_id: str, event_type: str) -> dict[str, Any]:
+    """Consume an exact event from an audit subscription, ignoring unrelated traffic."""
+    sqs = get_sqs_client()
+    queue_url = _queue_url(queue_name)
+    deadline = time.time() + TestConfig.PROCESSING_TIMEOUT
+    parse_errors: list[str] = []
+
+    while time.time() < deadline:
+        response = sqs.receive_message(
+            QueueUrl=queue_url,
+            MaxNumberOfMessages=10,
+            WaitTimeSeconds=2,
+            VisibilityTimeout=10,
+        )
+        for message in response.get("Messages", []):
+            try:
+                event = _canonical_message(message["Body"])
+            except (json.JSONDecodeError, ValueError) as exc:
+                parse_errors.append(str(exc))
+                event = {}
+
+            sqs.delete_message(
+                QueueUrl=queue_url,
+                ReceiptHandle=message["ReceiptHandle"],
+            )
+            if event.get("fileId") == file_id and event.get("eventType") == event_type:
+                return event
+
+    suffix = f"; parse errors: {parse_errors[-3:]}" if parse_errors else ""
+    raise TimeoutError(
+        f"{event_type} for {file_id} was not delivered to {queue_name}{suffix}"
+    )
+
+
+def _published_outbox_event(
+    dynamodb: Any, file_id: str, event_type: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Find an exact published outbox row across the 16 recovery shards."""
+    deadline = time.time() + TestConfig.PROCESSING_TIMEOUT
+    last_seen: list[str] = []
+
+    while time.time() < deadline:
+        for shard in (f"{value:02x}" for value in range(16)):
+            response = dynamodb.query(
+                TableName=TestConfig.OUTBOX_TABLE_NAME,
+                IndexName="GSI1",
+                KeyConditionExpression="GSI1PK = :status",
+                ExpressionAttributeValues={
+                    ":status": {"S": f"STATUS#PUBLISHED#{shard}"}
+                },
+            )
+            for item in response.get("Items", []):
+                last_seen.append(
+                    f"{_string(item, 'aggregateId')}:{_string(item, 'eventType')}"
+                )
+                if (
+                    _string(item, "aggregateId") == file_id
+                    and _string(item, "eventType") == event_type
+                ):
+                    payload = json.loads(_string(item, "payload"))
+                    if not isinstance(payload, dict):
+                        raise ValueError("outbox payload is not a JSON object")
+                    expected_partition = (
+                        f"OUTBOX#{_string(item, 'aggregateType')}#{file_id}"
+                    )
+                    if _string(item, "PK") != expected_partition:
+                        raise AssertionError(
+                            "outbox PK does not include aggregate identity"
+                        )
+                    if _string(item, "outboxPartition") != expected_partition:
+                        raise AssertionError("outboxPartition does not match PK")
+                    if _string(item, "outboxShard") != shard:
+                        raise AssertionError(
+                            "outbox shard does not match its published GSI key"
+                        )
+                    if _string(item, "GSI1PK") != f"STATUS#PUBLISHED#{shard}":
+                        raise AssertionError("published outbox GSI key is invalid")
+                    if not _string(item, "publishedAt"):
+                        raise AssertionError("published outbox row has no publishedAt")
+                    if _string(item, "SK") != f"EVENT#{_string(item, 'eventId')}":
+                        raise AssertionError("outbox SK does not match eventId")
+                    return item, payload
+        time.sleep(2)
+
+    raise TimeoutError(
+        f"published {event_type} outbox row for {file_id} not found; "
+        f"last rows: {last_seen[-10:]}"
     )
 
 
@@ -344,7 +462,19 @@ def test_localstack_resources() -> TestResult:
 
         queues = sqs.list_queues()
         queue_urls = queues.get("QueueUrls", [])
-        result.details["sqs_queues"] = [q.split("/")[-1] for q in queue_urls]
+        queue_names = {q.rsplit("/", 1)[-1] for q in queue_urls}
+        result.details["sqs_queues"] = sorted(queue_names)
+
+        required_queues = {
+            TestConfig.SQS_QUEUE_NAME,
+            TestConfig.FILE_EVENTS_AUDIT_QUEUE_NAME,
+            TestConfig.PROCESSING_EVENTS_AUDIT_QUEUE_NAME,
+        }
+        missing_queues = sorted(required_queues - queue_names)
+        if missing_queues:
+            result.error = f"SQS queues not found: {missing_queues}"
+            result.duration = time.time() - start
+            return result
 
         pools = cognito.list_user_pools(MaxResults=10)
         pool_names = [p["Name"] for p in pools.get("UserPools", [])]
@@ -463,22 +593,9 @@ def test_authenticated_file_upload() -> TestResult:
 
 
 def test_full_processing_flow() -> TestResult:
-    """
-    Test the complete FSAMP file processing flow:
-
-    Gateway -> S3 -> SNS -> SQS -> Processor -> DynamoDB
-
-    Steps:
-    1. Upload file via Gateway (with JWT auth)
-    2. Verify file stored in S3
-    3. Verify SNS/SQS message (processor consumes)
-    4. Wait for Processor to complete (with polling)
-    5. Verify metadata in DynamoDB
-    """
+    """Verify the complete authenticated, encrypted, asynchronous file lifecycle."""
     result = TestResult("full_processing_flow")
     start = time.time()
-    max_wait_time = TestConfig.PROCESSING_TIMEOUT
-    poll_interval = 2  # seconds
 
     try:
         auth = get_auth()
@@ -507,175 +624,169 @@ def test_full_processing_flow() -> TestResult:
         result.details["1_upload_status"] = response.status_code
 
         if response.status_code not in (200, 201, 202):
-            result.error = (
-                f"Upload failed: {response.status_code} - {response.text[:200]}"
+            raise AssertionError(
+                f"upload failed: {response.status_code} - {response.text[:200]}"
             )
-            result.duration = time.time() - start
-            return result
 
-        try:
-            upload_response = response.json()
-            result.details["1_upload_response"] = upload_response
-            uploaded_file_id = (
-                upload_response.get("fileId")
-                or upload_response.get("file_id")
-                or upload_response.get("id")
-            )
-            s3_key = upload_response.get("s3Key") or upload_response.get("key")
-        except Exception:
-            uploaded_file_id = None
-            s3_key = None
-            result.details["1_upload_raw"] = response.text[:200]
-
+        upload_response = response.json()
+        result.details["1_upload_response"] = upload_response
+        uploaded_file_id = upload_response.get("fileId")
+        if not uploaded_file_id:
+            raise AssertionError("upload response has no canonical fileId")
         log(f"  -> Upload successful, fileId: {uploaded_file_id}")
 
-        s3 = get_s3_client()
-
-        objects = s3.list_objects_v2(Bucket=TestConfig.S3_BUCKET_NAME, MaxKeys=100)
-
-        object_keys = [obj["Key"] for obj in objects.get("Contents", [])]
-        result.details["2_s3_objects_count"] = len(object_keys)
-
-        file_found_in_s3 = False
-        for key in object_keys:
-            if (uploaded_file_id and uploaded_file_id in key) or (
-                s3_key and s3_key == key
-            ):
-                file_found_in_s3 = True
-                result.details["2_s3_file_key"] = key
-                head = s3.head_object(Bucket=TestConfig.S3_BUCKET_NAME, Key=key)
-                result.details["2_s3_sse"] = head.get("ServerSideEncryption", "unknown")
-                result.details["2_s3_kms_key"] = head.get("SSEKMSKeyId", "unknown")
-                break
-
-        if file_found_in_s3:
-            log(f"  -> File found in S3: {result.details.get('2_s3_file_key')}")
-        else:
-            result.details["2_s3_sample_keys"] = object_keys[:5]
-
         dynamodb = get_dynamodb_client()
-        outbox_found = False
-        if uploaded_file_id:
-            try:
-                outbox_response = dynamodb.query(
-                    TableName=TestConfig.OUTBOX_TABLE_NAME,
-                    KeyConditionExpression="PK = :pk",
-                    ExpressionAttributeValues={":pk": {"S": "OUTBOX#FileUpload"}},
-                    ScanIndexForward=False,
-                    Limit=10,
-                )
-                for item in outbox_response.get("Items", []):
-                    aggregate_id = item.get("aggregateId", {}).get("S", "")
-                    payload = item.get("payload", {}).get("S", "")
-                    if aggregate_id == uploaded_file_id or uploaded_file_id in payload:
-                        outbox_found = True
-                        result.details["3_outbox_event"] = "found"
-                        result.details["3_outbox_status"] = item.get("status", {}).get(
-                            "S", "unknown"
-                        )
-                        result.details["3_outbox_event_type"] = item.get(
-                            "eventType", {}
-                        ).get("S", "unknown")
-                        break
-                if not outbox_found:
-                    result.details["3_outbox_event"] = "not found"
-            except Exception as outbox_err:
-                result.details["3_outbox_error"] = str(outbox_err)[:100]
-
-        log(f"  -> Waiting for Processor (max {max_wait_time}s)...")
-
-        processing_complete = False
-        waited = 0
-
-        while waited < max_wait_time:
-            time.sleep(poll_interval)
-            waited += poll_interval
-
-            try:
-                if uploaded_file_id:
-                    item_response = dynamodb.query(
-                        TableName=TestConfig.DYNAMODB_TABLE_NAME,
-                        KeyConditionExpression="PK = :pk",
-                        ExpressionAttributeValues={
-                            ":pk": {"S": f"FILE#{uploaded_file_id}"}
-                        },
-                        ScanIndexForward=False,
-                        Limit=1,
-                    )
-
-                    if item_response.get("Items"):
-                        processing_complete = True
-                        result.details["4_dynamodb_record"] = "found"
-                        result.details["4_processing_time"] = f"{waited}s"
-
-                        item = item_response["Items"][0]
-                        result.details["4_file_status"] = item.get("status", {}).get(
-                            "S", "unknown"
-                        )
-                        result.details["4_processed_at"] = item.get(
-                            "processedAt", {}
-                        ).get("S", "unknown")
-                        log(f"  -> DynamoDB record found after {waited}s")
-                        break
-
-            except Exception as db_err:
-                result.details["4_dynamodb_error"] = str(db_err)[:100]
-
-            if processing_complete:
+        metadata: dict[str, Any] = {}
+        deadline = time.time() + TestConfig.PROCESSING_TIMEOUT
+        while time.time() < deadline:
+            metadata_response = dynamodb.get_item(
+                TableName=TestConfig.DYNAMODB_TABLE_NAME,
+                Key={
+                    "PK": {"S": f"FILE#{uploaded_file_id}"},
+                    "SK": {"S": "METADATA"},
+                },
+                ConsistentRead=True,
+            )
+            candidate = metadata_response.get("Item", {})
+            if _string(candidate, "status") == "COMPLETED":
+                metadata = candidate
                 break
+            time.sleep(2)
 
-            if waited % 10 == 0:
-                log(f"  -> Still waiting... ({waited}s/{max_wait_time}s)")
+        if not metadata:
+            raise TimeoutError(
+                f"current metadata for {uploaded_file_id} did not reach COMPLETED"
+            )
+        if _string(metadata, "entityType") != "FILE_METADATA":
+            raise AssertionError("current metadata entityType is not FILE_METADATA")
+        if _string(metadata, "fileId") != uploaded_file_id:
+            raise AssertionError(
+                "current metadata fileId does not match upload response"
+            )
+        if not _string(metadata, "processedAt"):
+            raise AssertionError("COMPLETED metadata has no processedAt")
+        result.details["2_metadata"] = {
+            "PK": _string(metadata, "PK"),
+            "SK": _string(metadata, "SK"),
+            "status": _string(metadata, "status"),
+            "processedAt": _string(metadata, "processedAt"),
+        }
 
-        sqs = get_sqs_client()
-        try:
-            queue_url = f"{TestConfig.AWS_ENDPOINT_URL}/000000000000/{TestConfig.SQS_QUEUE_NAME}"
-            queue_attrs = sqs.get_queue_attributes(
-                QueueUrl=queue_url,
-                AttributeNames=[
-                    "ApproximateNumberOfMessages",
-                    "ApproximateNumberOfMessagesNotVisible",
-                ],
+        object_key = _string(metadata, "objectKey")
+        bucket_name = _string(metadata, "bucketName")
+        if bucket_name != TestConfig.S3_BUCKET_NAME or not object_key:
+            raise AssertionError("metadata does not identify the uploaded S3 object")
+
+        s3 = get_s3_client()
+        head = s3.head_object(Bucket=bucket_name, Key=object_key)
+        encryption = s3.get_bucket_encryption(Bucket=bucket_name)
+        configured_kms_key = encryption["ServerSideEncryptionConfiguration"]["Rules"][
+            0
+        ]["ApplyServerSideEncryptionByDefault"].get("KMSMasterKeyID", "")
+        object_kms_key = head.get("SSEKMSKeyId", "")
+        if head.get("ServerSideEncryption") != "aws:kms":
+            raise AssertionError("uploaded object is not encrypted with SSE-KMS")
+        if not configured_kms_key or not object_kms_key:
+            raise AssertionError("SSE-KMS key identity is missing")
+        if not (
+            configured_kms_key == object_kms_key
+            or object_kms_key.endswith(f"/{configured_kms_key}")
+            or configured_kms_key.endswith(f"/{object_kms_key}")
+        ):
+            raise AssertionError(
+                "object KMS key does not match bucket encryption policy"
+            )
+        result.details["3_s3"] = {
+            "key": object_key,
+            "sse": head["ServerSideEncryption"],
+            "kmsKeyId": object_kms_key,
+        }
+
+        gateway_outbox, uploaded_payload = _published_outbox_event(
+            dynamodb, uploaded_file_id, "FILE_UPLOADED"
+        )
+        result_outbox, result_payload = _published_outbox_event(
+            dynamodb, uploaded_file_id, "ANALYSIS_COMPLETED"
+        )
+        for name, row, payload, event_type in (
+            ("gateway", gateway_outbox, uploaded_payload, "FILE_UPLOADED"),
+            ("processor", result_outbox, result_payload, "ANALYSIS_COMPLETED"),
+        ):
+            if payload.get("schemaVersion") != TestConfig.EVENT_SCHEMA_VERSION:
+                raise AssertionError(f"{name} outbox payload schema is not 1.2.0")
+            if payload.get("eventType") != event_type:
+                raise AssertionError(f"{name} outbox payload eventType is invalid")
+            if payload.get("fileId") != uploaded_file_id:
+                raise AssertionError(f"{name} outbox payload fileId is invalid")
+            if payload.get("eventId") != _string(row, "eventId"):
+                raise AssertionError(f"{name} outbox eventId does not match payload")
+        if not isinstance(result_payload.get("processingResult"), dict):
+            raise AssertionError("ANALYSIS_COMPLETED has no processingResult")
+        result.details["4_outbox"] = {
+            "gateway": _string(gateway_outbox, "PK"),
+            "processor": _string(result_outbox, "PK"),
+            "schemaVersion": result_payload["schemaVersion"],
+            "status": _string(result_outbox, "status"),
+        }
+
+        uploaded_message = _receive_event(
+            TestConfig.FILE_EVENTS_AUDIT_QUEUE_NAME,
+            uploaded_file_id,
+            "FILE_UPLOADED",
+        )
+        result_message = _receive_event(
+            TestConfig.PROCESSING_EVENTS_AUDIT_QUEUE_NAME,
+            uploaded_file_id,
+            "ANALYSIS_COMPLETED",
+        )
+        for message, expected_event_id in (
+            (uploaded_message, _string(gateway_outbox, "eventId")),
+            (result_message, _string(result_outbox, "eventId")),
+        ):
+            if message.get("schemaVersion") != TestConfig.EVENT_SCHEMA_VERSION:
+                raise AssertionError("SNS/SQS message schema is not 1.2.0")
+            if message.get("eventId") != expected_event_id:
+                raise AssertionError("SNS/SQS message does not match its outbox row")
+        result.details["5_messaging"] = {
+            "fileEventsQueue": TestConfig.FILE_EVENTS_AUDIT_QUEUE_NAME,
+            "processingEventsQueue": TestConfig.PROCESSING_EVENTS_AUDIT_QUEUE_NAME,
+        }
+
+        get_response = requests.get(
+            f"{TestConfig.GATEWAY_URL}/api/v1/files/{uploaded_file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=TestConfig.UPLOAD_TIMEOUT,
+        )
+        if get_response.status_code != 200:
+            raise AssertionError(
+                f"authenticated GET failed: {get_response.status_code} "
+                f"{get_response.text[:200]}"
+            )
+        gateway_metadata = get_response.json()
+        if gateway_metadata.get("fileId") != uploaded_file_id:
+            raise AssertionError("gateway GET returned another file")
+        if gateway_metadata.get("status") != "COMPLETED":
+            raise AssertionError("gateway GET did not expose COMPLETED state")
+
+        admin_token = auth.get_admin_token()
+        delete_response = requests.delete(
+            f"{TestConfig.GATEWAY_URL}/api/v1/files/{uploaded_file_id}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            timeout=TestConfig.UPLOAD_TIMEOUT,
+        )
+        if delete_response.status_code != 204:
+            raise AssertionError(
+                f"authenticated DELETE failed: {delete_response.status_code} "
+                f"{delete_response.text[:200]}"
             )
 
-            attrs = queue_attrs.get("Attributes", {})
-            messages_available = int(attrs.get("ApproximateNumberOfMessages", "0"))
-            messages_in_flight = int(
-                attrs.get("ApproximateNumberOfMessagesNotVisible", "0")
-            )
-
-            result.details["5_sqs_messages_available"] = messages_available
-            result.details["5_sqs_messages_in_flight"] = messages_in_flight
-
-            if messages_available == 0:
-                result.details["5_sqs_status"] = "queue drained (processor consuming)"
-            else:
-                result.details["5_sqs_status"] = (
-                    f"{messages_available} messages pending"
-                )
-
-        except Exception as sqs_err:
-            result.details["5_sqs_error"] = str(sqs_err)[:100]
-
-        if file_found_in_s3 and outbox_found and processing_complete:
-            result.passed = True
-            result.details["6_flow_complete"] = True
-            result.details["6_verdict"] = (
-                "Full flow verified: Gateway -> S3 -> Outbox -> SNS/SQS -> Processor -> DynamoDB"
-            )
-            log("  -> OK Full processing flow verified!")
-        else:
-            missing = []
-            if not file_found_in_s3:
-                missing.append("S3 object")
-            if not outbox_found:
-                missing.append("Gateway outbox event")
-            if not processing_complete:
-                missing.append("Processor DynamoDB update")
-            result.error = "Full flow incomplete: " + ", ".join(missing)
-            result.details["6_flow_complete"] = False
-            result.details["6_verdict"] = result.error
-            log(f"  -> FAIL {result.error}")
+        result.details["6_gateway_api"] = {"GET": 200, "DELETE": 204}
+        result.details["7_verdict"] = (
+            "Gateway -> SSE-KMS S3 -> published outbox -> SNS/SQS -> processor "
+            "-> current metadata -> GET/DELETE verified"
+        )
+        result.passed = True
+        log("  -> OK Full processing flow verified!")
 
     except Exception as e:
         result.error = str(e)
@@ -857,7 +968,9 @@ def test_iam_roles_exist() -> TestResult:
     return result
 
 
-def run_all_tests(verbose: bool = False) -> list[TestResult]:
+def run_all_tests(
+    verbose: bool = False, selected_test: str | None = None
+) -> list[TestResult]:
     """Run all E2E tests."""
     results = []
 
@@ -908,6 +1021,16 @@ def run_all_tests(verbose: bool = False) -> list[TestResult]:
         test_full_processing_flow,
     ]
 
+    if selected_test:
+        normalized = selected_test.removeprefix("test_")
+        tests = [
+            test_fn
+            for test_fn in tests
+            if test_fn.__name__.removeprefix("test_") == normalized
+        ]
+        if not tests:
+            raise ValueError(f"unknown test: {selected_test}")
+
     for test_fn in tests:
         log(f"Running: {test_fn.__name__}")
         result = test_fn()
@@ -955,7 +1078,13 @@ def main():
     parser.add_argument("--test", "-t", help="Run specific test")
     args = parser.parse_args()
 
-    results = run_all_tests(verbose=args.verbose)
+    try:
+        results = run_all_tests(
+            verbose=args.verbose,
+            selected_test=args.test,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     exit_code = print_summary(results)
     sys.exit(exit_code)
 

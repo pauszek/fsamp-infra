@@ -8,27 +8,6 @@ terraform {
     }
   }
 }
-resource "aws_cloudwatch_log_group" "lambda" {
-  name              = "/aws/lambda/${var.name_prefix}"
-  retention_in_days = var.log_retention_days
-  kms_key_id        = var.kms_key_arn
-
-  tags = merge(var.tags, {
-    Name        = "/aws/lambda/${var.name_prefix}"
-    Environment = var.environment
-  })
-}
-
-resource "aws_cloudwatch_log_group" "api_gateway" {
-  name              = "/aws/apigateway/${var.name_prefix}"
-  retention_in_days = var.log_retention_days
-  kms_key_id        = var.kms_key_arn
-
-  tags = merge(var.tags, {
-    Name        = "/aws/apigateway/${var.name_prefix}"
-    Environment = var.environment
-  })
-}
 resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = "${var.name_prefix}-dashboard"
 
@@ -281,8 +260,10 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "📢 SNS Topic - Messages"
           region = data.aws_region.current.region
           metrics = [
-            ["AWS/SNS", "NumberOfMessagesPublished", "TopicName", "${var.name_prefix}-events", { "stat" : "Sum", "color" : "#2ca02c" }],
-            [".", "NumberOfNotificationsFailed", ".", ".", { "stat" : "Sum", "color" : "#d62728" }]
+            ["AWS/SNS", "NumberOfMessagesPublished", "TopicName", "${var.name_prefix}-file-events", { "stat" : "Sum", "color" : "#2ca02c", "label" : "File events published" }],
+            [".", "NumberOfNotificationsFailed", ".", ".", { "stat" : "Sum", "color" : "#d62728", "label" : "File event failures" }],
+            ["AWS/SNS", "NumberOfMessagesPublished", "TopicName", "${var.name_prefix}-processing-events", { "stat" : "Sum", "color" : "#1f77b4", "label" : "Processing events published" }],
+            [".", "NumberOfNotificationsFailed", ".", ".", { "stat" : "Sum", "color" : "#ff7f0e", "label" : "Processing event failures" }]
           ]
           period = 60
           view   = "timeSeries"
@@ -318,7 +299,7 @@ resource "aws_cloudwatch_dashboard" "main" {
           region = data.aws_region.current.region
           metrics = [
             [{
-              expression = "100 - 100 * errors / MAX([errors + invocations, 1])"
+              expression = "100 * (invocations - errors) / MAX([invocations, 1])"
               label      = "Success %"
               id         = "e1"
               color      = "#2ca02c"
@@ -338,10 +319,10 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 6
         height = 4
         properties = {
-          title  = "Total Files Today"
+          title  = "Files Processed Today"
           region = data.aws_region.current.region
           metrics = [
-            ["AWS/Lambda", "Invocations", "FunctionName", "${var.name_prefix}-processor", { "stat" : "Sum", "color" : "#1f77b4" }]
+            ["FSAMP/Processor", "FilesProcessed", { "stat" : "Sum", "color" : "#1f77b4" }]
           ]
           period = 86400
           view   = "singleValue"

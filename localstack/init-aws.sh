@@ -61,13 +61,22 @@ awslocal s3api put-bucket-encryption \
     }'
 
 echo "  OK S3 bucket created: fsamp-local-files"
-echo "Creating SNS topic..."
-SNS_TOPIC_ARN=$(awslocal sns create-topic \
+echo "Creating SNS topics..."
+FILE_EVENTS_TOPIC_ARN=$(awslocal sns create-topic \
     --name "fsamp-local-file-events" \
     --query 'TopicArn' \
     --output text)
 
-echo "  OK SNS topic created: $SNS_TOPIC_ARN"
+PROCESSING_EVENTS_TOPIC_ARN=$(awslocal sns create-topic \
+    --name "fsamp-local-processing-events" \
+    --query 'TopicArn' \
+    --output text)
+
+# Backward-compatible name consumed by the gateway local profile.
+SNS_TOPIC_ARN="$FILE_EVENTS_TOPIC_ARN"
+
+echo "  OK file events topic created: $FILE_EVENTS_TOPIC_ARN"
+echo "  OK processing events topic created: $PROCESSING_EVENTS_TOPIC_ARN"
 echo "Creating SQS queues..."
 
 DLQ_URL=$(awslocal sqs create-queue \
@@ -84,7 +93,7 @@ DLQ_ARN=$(awslocal sqs get-queue-attributes \
 QUEUE_URL=$(awslocal sqs create-queue \
     --queue-name "fsamp-local-processing-queue" \
     --attributes '{
-        "VisibilityTimeout": "300",
+        "VisibilityTimeout": "1805",
         "MessageRetentionPeriod": "1209600",
         "RedrivePolicy": "{\"deadLetterTargetArn\":\"'"$DLQ_ARN"'\",\"maxReceiveCount\":\"3\"}"
     }' \
@@ -97,6 +106,30 @@ QUEUE_ARN=$(awslocal sqs get-queue-attributes \
     --query 'Attributes.QueueArn' \
     --output text)
 
+FILE_EVENTS_AUDIT_QUEUE_URL=$(awslocal sqs create-queue \
+    --queue-name "fsamp-local-file-events-audit" \
+    --attributes '{"MessageRetentionPeriod":"1209600"}' \
+    --query 'QueueUrl' \
+    --output text)
+
+FILE_EVENTS_AUDIT_QUEUE_ARN=$(awslocal sqs get-queue-attributes \
+    --queue-url "$FILE_EVENTS_AUDIT_QUEUE_URL" \
+    --attribute-names QueueArn \
+    --query 'Attributes.QueueArn' \
+    --output text)
+
+PROCESSING_EVENTS_AUDIT_QUEUE_URL=$(awslocal sqs create-queue \
+    --queue-name "fsamp-local-processing-events-audit" \
+    --attributes '{"MessageRetentionPeriod":"1209600"}' \
+    --query 'QueueUrl' \
+    --output text)
+
+PROCESSING_EVENTS_AUDIT_QUEUE_ARN=$(awslocal sqs get-queue-attributes \
+    --queue-url "$PROCESSING_EVENTS_AUDIT_QUEUE_URL" \
+    --attribute-names QueueArn \
+    --query 'Attributes.QueueArn' \
+    --output text)
+
 echo "  OK SQS queue created: $QUEUE_URL"
 echo "  OK SQS DLQ created: $DLQ_URL"
 echo "Creating SNS -> SQS subscription..."
@@ -104,16 +137,40 @@ echo "Creating SNS -> SQS subscription..."
 awslocal sqs set-queue-attributes \
     --queue-url "$QUEUE_URL" \
     --attributes '{
-        "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"sns.amazonaws.com\"},\"Action\":\"sqs:SendMessage\",\"Resource\":\"'"$QUEUE_ARN"'\",\"Condition\":{\"ArnEquals\":{\"aws:SourceArn\":\"'"$SNS_TOPIC_ARN"'\"}}}]}"
+        "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"sns.amazonaws.com\"},\"Action\":\"sqs:SendMessage\",\"Resource\":\"'"$QUEUE_ARN"'\",\"Condition\":{\"ArnEquals\":{\"aws:SourceArn\":\"'"$FILE_EVENTS_TOPIC_ARN"'\"}}}]}"
     }'
 
 awslocal sns subscribe \
-    --topic-arn "$SNS_TOPIC_ARN" \
+    --topic-arn "$FILE_EVENTS_TOPIC_ARN" \
     --protocol sqs \
     --notification-endpoint "$QUEUE_ARN" \
     --attributes '{"RawMessageDelivery": "true"}'
 
-echo "  OK SNS -> SQS subscription created"
+awslocal sqs set-queue-attributes \
+    --queue-url "$FILE_EVENTS_AUDIT_QUEUE_URL" \
+    --attributes '{
+        "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"sns.amazonaws.com\"},\"Action\":\"sqs:SendMessage\",\"Resource\":\"'"$FILE_EVENTS_AUDIT_QUEUE_ARN"'\",\"Condition\":{\"ArnEquals\":{\"aws:SourceArn\":\"'"$FILE_EVENTS_TOPIC_ARN"'\"}}}]}"
+    }'
+
+awslocal sns subscribe \
+    --topic-arn "$FILE_EVENTS_TOPIC_ARN" \
+    --protocol sqs \
+    --notification-endpoint "$FILE_EVENTS_AUDIT_QUEUE_ARN" \
+    --attributes '{"RawMessageDelivery": "true"}'
+
+awslocal sqs set-queue-attributes \
+    --queue-url "$PROCESSING_EVENTS_AUDIT_QUEUE_URL" \
+    --attributes '{
+        "Policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"sns.amazonaws.com\"},\"Action\":\"sqs:SendMessage\",\"Resource\":\"'"$PROCESSING_EVENTS_AUDIT_QUEUE_ARN"'\",\"Condition\":{\"ArnEquals\":{\"aws:SourceArn\":\"'"$PROCESSING_EVENTS_TOPIC_ARN"'\"}}}]}"
+    }'
+
+awslocal sns subscribe \
+    --topic-arn "$PROCESSING_EVENTS_TOPIC_ARN" \
+    --protocol sqs \
+    --notification-endpoint "$PROCESSING_EVENTS_AUDIT_QUEUE_ARN" \
+    --attributes '{"RawMessageDelivery": "true"}'
+
+echo "  OK SNS -> SQS subscriptions created"
 echo "Creating DynamoDB table..."
 awslocal dynamodb create-table \
     --table-name "fsamp-local-file-metadata" \
@@ -232,7 +289,8 @@ awslocal cognito-idp create-resource-server \
     --name "FSAMP API" \
     --scopes '[
         {"ScopeName": "files.read", "ScopeDescription": "Read files"},
-        {"ScopeName": "files.write", "ScopeDescription": "Write files"}
+        {"ScopeName": "files.write", "ScopeDescription": "Write files"},
+        {"ScopeName": "files.delete", "ScopeDescription": "Delete files"}
     ]'
 
 echo "  OK Resource server created with scopes"
@@ -310,7 +368,7 @@ awslocal iam put-role-policy \
             {
                 "Sid": "S3Access",
                 "Effect": "Allow",
-                "Action": ["s3:PutObject", "s3:GetObject", "s3:HeadObject", "s3:ListBucket"],
+                "Action": ["s3:PutObject", "s3:GetObject", "s3:HeadObject", "s3:DeleteObject", "s3:ListBucket"],
                 "Resource": [
                     "arn:aws:s3:::fsamp-local-files",
                     "arn:aws:s3:::fsamp-local-files/*"
@@ -320,7 +378,7 @@ awslocal iam put-role-policy \
                 "Sid": "SNSPublish",
                 "Effect": "Allow",
                 "Action": ["sns:Publish"],
-                "Resource": "arn:aws:sns:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-file-events"
+                "Resource": "arn:aws:sns:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-processing-events"
             },
             {
                 "Sid": "DynamoDBAccess",
@@ -370,15 +428,15 @@ awslocal iam put-role-policy \
                 "Resource": "arn:aws:sqs:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-processing-queue"
             },
             {
-                "Sid": "S3ReadOnly",
+                "Sid": "S3SourceAccess",
                 "Effect": "Allow",
-                "Action": ["s3:GetObject", "s3:HeadObject"],
+                "Action": ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
                 "Resource": "arn:aws:s3:::fsamp-local-files/*"
             },
             {
                 "Sid": "DynamoDBWrite",
                 "Effect": "Allow",
-                "Action": ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem", "dynamodb:Query", "dynamodb:DeleteItem", "dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:ListStreams"],
+                "Action": ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem", "dynamodb:Query", "dynamodb:DeleteItem", "dynamodb:TransactWriteItems", "dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:ListStreams"],
                 "Resource": [
                     "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-file-metadata",
                     "arn:aws:dynamodb:'"$REGION"':'"$ACCOUNT_ID"':table/fsamp-local-file-metadata/*",
@@ -390,12 +448,15 @@ awslocal iam put-role-policy \
                 "Sid": "SNSPublish",
                 "Effect": "Allow",
                 "Action": ["sns:Publish"],
-                "Resource": "arn:aws:sns:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-file-events"
+                "Resource": [
+                    "arn:aws:sns:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-file-events",
+                    "arn:aws:sns:'"$REGION"':'"$ACCOUNT_ID"':fsamp-local-processing-events"
+                ]
             },
             {
                 "Sid": "KMSDecrypt",
                 "Effect": "Allow",
-                "Action": ["kms:Decrypt", "kms:DescribeKey"],
+                "Action": ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"],
                 "Resource": "arn:aws:kms:'"$REGION"':'"$ACCOUNT_ID"':key/'"$KMS_KEY_ID"'"
             },
             {
@@ -484,9 +545,12 @@ echo "FSAMP LocalStack initialization complete"
 echo ""
 echo "Resources created:"
 echo "  S3 Bucket:     s3://fsamp-local-files"
-echo "  SNS Topic:     $SNS_TOPIC_ARN"
+echo "  File Topic:    $FILE_EVENTS_TOPIC_ARN"
+echo "  Result Topic:  $PROCESSING_EVENTS_TOPIC_ARN"
 echo "  SQS Queue:     $QUEUE_URL"
 echo "  SQS DLQ:       $DLQ_URL"
+echo "  Audit Queue:   $FILE_EVENTS_AUDIT_QUEUE_URL"
+echo "  Audit Queue:   $PROCESSING_EVENTS_AUDIT_QUEUE_URL"
 echo "  DynamoDB:      fsamp-local-file-metadata"
 echo "  DynamoDB:      fsamp-local-outbox (Streams enabled)"
 echo "  DynamoDB:      fsamp-local-idempotency-keys"
@@ -509,6 +573,7 @@ echo "  AWS_ENDPOINT_URL=http://localhost:4566"
 echo "  AWS_REGION=$REGION"
 echo "  S3_BUCKET_NAME=fsamp-local-files"
 echo "  SNS_TOPIC_ARN=$SNS_TOPIC_ARN"
+echo "  PROCESSING_EVENTS_TOPIC_ARN=$PROCESSING_EVENTS_TOPIC_ARN"
 echo "  SQS_QUEUE_URL=$QUEUE_URL"
 echo "  DYNAMODB_TABLE_NAME=fsamp-local-file-metadata"
 echo "  KMS_KEY_ID=alias/fsamp-local-master-key"
@@ -528,8 +593,12 @@ export AWS_REGION=$REGION
 export S3_BUCKET_NAME=fsamp-local-files
 
 export SNS_TOPIC_ARN=$SNS_TOPIC_ARN
+export FILE_EVENTS_TOPIC_ARN=$FILE_EVENTS_TOPIC_ARN
+export PROCESSING_EVENTS_TOPIC_ARN=$PROCESSING_EVENTS_TOPIC_ARN
 
 export SQS_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-processing-queue
+export FILE_EVENTS_AUDIT_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-file-events-audit
+export PROCESSING_EVENTS_AUDIT_QUEUE_URL=http://localstack:4566/000000000000/fsamp-local-processing-events-audit
 
 export DYNAMODB_TABLE_NAME=fsamp-local-file-metadata
 export DYNAMODB_OUTBOX_TABLE_NAME=fsamp-local-outbox

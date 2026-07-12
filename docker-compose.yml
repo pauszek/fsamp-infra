@@ -1,10 +1,36 @@
 services:
+  docker-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
+    container_name: fsamp-docker-proxy
+    environment:
+      CONTAINERS: 1
+      DELETE: 1
+      EXEC: 1
+      IMAGES: 1
+      INFO: 1
+      NETWORKS: 1
+      PING: 1
+      POST: 1
+      VERSION: 1
+      VOLUMES: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - fsamp-network
+    read_only: true
+    tmpfs:
+      - /run
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   localstack:
-    image: localstack/localstack-pro:4.14.0
+    image: localstack/localstack-pro@sha256:5f1fb6c73ccf053e3748d57d5c43b9cd3dba109bb2ae5b7096d2cf5155082a6c
     container_name: fsamp-localstack
     ports:
-      - "${LOCALSTACK_PORT:-4566}:4566"
-      - "4510-4559:4510-4559"
+      - "127.0.0.1:${LOCALSTACK_PORT:-4566}:4566"
     environment:
       - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
       - FSAMP_TF_MANAGED=${FSAMP_TF_MANAGED:-0}
@@ -19,16 +45,17 @@ services:
       - IAM_SOFT_MODE=0
       - LAMBDA_EXECUTOR=docker
       - LAMBDA_DOCKER_NETWORK=fsamp-network
-      - DOCKER_HOST=unix:///var/run/docker.sock
+      - DOCKER_HOST=tcp://docker-proxy:2375
 
       - PERSISTENCE=${PERSISTENCE:-1}
       - DEBUG=${DEBUG:-0}
     volumes:
       - localstack-data:/var/lib/localstack
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./localstack:/etc/localstack/init/ready.d
     networks:
       - fsamp-network
+    depends_on:
+      - docker-proxy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
       interval: 10s

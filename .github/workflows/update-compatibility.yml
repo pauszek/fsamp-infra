@@ -18,14 +18,17 @@ on:
         description: 'New version (e.g., 1.2.3)'
         required: true
         type: string
+      source_sha:
+        description: 'Full commit SHA referenced by the release tag'
+        required: true
+        type: string
 
 jobs:
   update-matrix:
     name: Update Compatibility Matrix
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
 
     steps:
       - name: Checkout
@@ -34,25 +37,72 @@ jobs:
           fetch-depth: 0
 
       - name: Install yq
+        env:
+          YQ_VERSION: v4.45.4
+          YQ_SHA256: b96de04645707e14a12f52c37e6266832e03c29e95b9b139cddcae7314466e69
         run: |
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
+          set -euo pipefail
+          destination="${RUNNER_TEMP}/yq"
+          curl --fail --silent --show-error --location \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
+            --output "${destination}"
+          echo "${YQ_SHA256}  ${destination}" | sha256sum --check --strict
+          chmod 0755 "${destination}"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
 
       - name: Determine service and version
         id: params
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_SERVICE: ${{ github.event.client_payload.service || '' }}
+          DISPATCH_VERSION: ${{ github.event.client_payload.version || '' }}
+          DISPATCH_SOURCE_SHA: ${{ github.event.client_payload.source_sha || '' }}
+          INPUT_SERVICE: ${{ inputs.service || '' }}
+          INPUT_VERSION: ${{ inputs.version || '' }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha || '' }}
         run: |
-          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
-            SERVICE="${{ github.event.client_payload.service }}"
-            VERSION="${{ github.event.client_payload.version }}"
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "repository_dispatch" ]]; then
+            SERVICE="${DISPATCH_SERVICE}"
+            VERSION="${DISPATCH_VERSION}"
+            SOURCE_SHA="${DISPATCH_SOURCE_SHA}"
           else
-            SERVICE="${{ inputs.service }}"
-            VERSION="${{ inputs.version }}"
+            SERVICE="${INPUT_SERVICE}"
+            VERSION="${INPUT_VERSION}"
+            SOURCE_SHA="${INPUT_SOURCE_SHA}"
           fi
 
           VERSION="${VERSION#v}"
 
-          echo "service=${SERVICE}" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          [[ "${SERVICE}" =~ ^(gateway|processor|event-schema)$ ]] || {
+            echo "::error::Unsupported service"
+            exit 1
+          }
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Version must be stable semantic version x.y.z"
+            exit 1
+          }
+          [[ "${SOURCE_SHA}" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "::error::A full source_sha is required"
+            exit 1
+          }
+
+          repository="${GITHUB_REPOSITORY_OWNER}/fsamp-${SERVICE}"
+          tag_refs="$(git ls-remote "https://github.com/${repository}.git" "refs/tags/v${VERSION}" "refs/tags/v${VERSION}^{}")"
+          tag_sha="$(awk '/\^\{\}$/ {print $1}' <<< "${tag_refs}")"
+          if [[ -z "${tag_sha}" ]]; then
+            tag_sha="$(awk 'NR == 1 {print $1}' <<< "${tag_refs}")"
+          fi
+          [[ -n "${tag_sha}" && "${tag_sha}" == "${SOURCE_SHA}" ]] || {
+            echo "::error::source_sha does not match ${repository} tag v${VERSION}"
+            exit 1
+          }
+
+          {
+            echo "service=${SERVICE}"
+            echo "version=${VERSION}"
+            echo "source_sha=${SOURCE_SHA}"
+          } >> "$GITHUB_OUTPUT"
           echo "Updating ${SERVICE} to version ${VERSION}"
 
       - name: Update compatibility.yml
@@ -65,16 +115,23 @@ jobs:
           echo "Current values:"
           yq '.current' "$COMPAT_FILE"
 
-          yq -i ".current.${SERVICE} = \"${VERSION}\"" "$COMPAT_FILE"
+          yq -i '.current[strenv(SERVICE)] = strenv(VERSION)' "$COMPAT_FILE"
 
           echo ""
           echo "Updated values:"
           yq '.current' "$COMPAT_FILE"
 
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.GABRBA_APPID }}
+          private-key: ${{ secrets.GABRBA_SECRET }}
+
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           commit-message: "chore: update ${{ steps.params.outputs.service }} to ${{ steps.params.outputs.version }}"
           title: "Update compatibility: ${{ steps.params.outputs.service }} to ${{ steps.params.outputs.version }}"
           body: |
@@ -85,8 +142,8 @@ jobs:
             |---------|---------|
             | ${{ steps.params.outputs.service }} | ${{ steps.params.outputs.version }} |
 
-            - E2E tests will now use `${{ steps.params.outputs.service }}:${{ steps.params.outputs.version }}` as the stable counterpart
-            - This version has passed all CI checks and security scans
+            - Release tag commit: `${{ steps.params.outputs.source_sha }}`
+            - The compatibility E2E matrix must pass before this PR can merge.
           branch: "compat-update/${{ steps.params.outputs.service }}-${{ steps.params.outputs.version }}"
           labels: |
             automerge

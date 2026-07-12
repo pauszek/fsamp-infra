@@ -3,7 +3,7 @@ output "topic_arns" {
   value = {
     file_events       = aws_sns_topic.file_events.arn
     processing_events = aws_sns_topic.processing_events.arn
-    dlq_alerts        = aws_sns_topic.dlq_alerts.arn
+    operations_alerts = aws_sns_topic.dlq_alerts.arn
   }
 }
 

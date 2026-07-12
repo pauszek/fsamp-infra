@@ -1,20 +1,28 @@
 current:
-  gateway: "0.0.6"
-  processor: "0.0.10"
-  event-schema: "1.1.2"
-  infra: "0.0.7"
-  code-ci: "0.0.48"
+  gateway: "0.0.22"
+  processor: "0.0.26"
+  event-schema: "1.2.0"
+  infra: "0.0.26"
+  code-ci: "0.0.81"
 
 compatibility:
   gateway:
     processor: ">=0.0.9"
-    event-schema: ">=1.1.0,<1.2.0"
+    event-schema: ">=1.2.0,<1.3.0"
 
   processor:
     gateway: ">=0.0.5"
-    event-schema: ">=1.1.0,<1.2.0"
+    event-schema: ">=1.2.0,<1.3.0"
 
 breaking-changes:
+  - date: "2026-07-11"
+    service: event-schema
+    version: "1.2.0"
+    description: "Schema 1.2.0 is required end-to-end; outbox records use aggregate-scoped PKs and 16 status shards for deterministic recovery."
+    affected:
+      - gateway: "<0.0.22"
+      - processor: "<0.0.26"
+
   - date: "2026-05-15"
     service: event-schema
     version: "1.1.0"

@@ -102,6 +102,18 @@ resource "aws_ecr_lifecycle_policy" "repos" {
         action = {
           type = "expire"
         }
+      },
+      {
+        rulePriority = 4
+        description  = "Bound all remaining tagged images, including deployment tags"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = var.image_retention_count
+        }
+        action = {
+          type = "expire"
+        }
       }
     ]
   })

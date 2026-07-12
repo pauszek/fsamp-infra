@@ -78,6 +78,16 @@ output "outbox_publisher_lambda_name" {
   value       = var.enable_lambdas ? aws_lambda_function.outbox_publisher[0].function_name : null
 }
 
+output "outbox_retry_lambda_arn" {
+  description = "ARN of the scheduled outbox reconciliation Lambda function"
+  value       = var.enable_lambdas ? aws_lambda_function.outbox_retry[0].arn : null
+}
+
+output "outbox_retry_lambda_name" {
+  description = "Name of the scheduled outbox reconciliation Lambda function"
+  value       = var.enable_lambdas ? aws_lambda_function.outbox_retry[0].function_name : null
+}
+
 output "gateway_endpoint_host" {
   description = "Host the API Gateway integrations use to reach the ALB: the Route53 domain in acm mode, the ALB DNS name otherwise"
   value       = local.use_acm_cert ? var.alb_domain_name : aws_lb.gateway.dns_name

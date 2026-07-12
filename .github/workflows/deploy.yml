@@ -35,16 +35,21 @@ on:
         required: true
         type: boolean
         default: true
-      gateway_ref:
-        description: fsamp-gateway git ref
-        required: true
+      gateway_source_image:
+        description: Digest-pinned CI gateway image; empty reuses the current deployment
+        required: false
         type: string
-        default: main
-      processor_ref:
-        description: fsamp-processor git ref
-        required: true
+        default: ''
+      processor_source_image:
+        description: Digest-pinned CI processor image; empty reuses the current deployment
+        required: false
         type: string
-        default: main
+        default: ''
+      code_ci_workflow_sha:
+        description: Full fsamp-code-ci commit SHA used to build and sign both artifacts
+        required: false
+        type: string
+        default: ''
       image_tag:
         description: Optional image tag. Empty value generates a run-scoped tag.
         required: false
@@ -68,6 +73,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  packages: read
 
 jobs:
   params:
@@ -113,9 +119,10 @@ jobs:
       action: ${{ steps.context.outputs.action }}
       aws_region: ${{ steps.context.outputs.aws_region }}
       bootstrap_state: ${{ steps.context.outputs.bootstrap_state }}
-      gateway_ref: ${{ steps.context.outputs.gateway_ref }}
+      gateway_source_image: ${{ steps.context.outputs.gateway_source_image }}
+      code_ci_workflow_sha: ${{ steps.context.outputs.code_ci_workflow_sha }}
       image_tag: ${{ steps.context.outputs.image_tag }}
-      processor_ref: ${{ steps.context.outputs.processor_ref }}
+      processor_source_image: ${{ steps.context.outputs.processor_source_image }}
       rollback_environment: ${{ steps.context.outputs.rollback_environment }}
       rollback_image_tag: ${{ steps.context.outputs.rollback_image_tag }}
     steps:
@@ -127,13 +134,15 @@ jobs:
           INPUT_ACTION: ${{ inputs.action || '' }}
           INPUT_AWS_REGION: ${{ inputs.aws_region || '' }}
           INPUT_BOOTSTRAP_STATE: ${{ toJSON(inputs.bootstrap_state) }}
-          INPUT_GATEWAY_REF: ${{ inputs.gateway_ref || '' }}
-          INPUT_PROCESSOR_REF: ${{ inputs.processor_ref || '' }}
+          INPUT_GATEWAY_IMAGE: ${{ inputs.gateway_source_image || '' }}
+          INPUT_PROCESSOR_IMAGE: ${{ inputs.processor_source_image || '' }}
+          INPUT_CODE_CI_SHA: ${{ inputs.code_ci_workflow_sha || '' }}
           INPUT_IMAGE_TAG: ${{ inputs.image_tag || '' }}
           INPUT_ROLLBACK_ENVIRONMENT: ${{ inputs.rollback_environment || '' }}
           INPUT_ROLLBACK_IMAGE_TAG: ${{ inputs.rollback_image_tag || '' }}
-          PAYLOAD_GATEWAY_REF: ${{ github.event.client_payload.gateway_ref || '' }}
-          PAYLOAD_PROCESSOR_REF: ${{ github.event.client_payload.processor_ref || '' }}
+          PAYLOAD_GATEWAY_IMAGE: ${{ github.event.client_payload.gateway_source_image || '' }}
+          PAYLOAD_PROCESSOR_IMAGE: ${{ github.event.client_payload.processor_source_image || '' }}
+          PAYLOAD_CODE_CI_SHA: ${{ github.event.client_payload.code_ci_workflow_sha || '' }}
           PAYLOAD_IMAGE_TAG: ${{ github.event.client_payload.image_tag || '' }}
           PAYLOAD_AWS_REGION: ${{ github.event.client_payload.aws_region || '' }}
         run: |
@@ -156,8 +165,9 @@ jobs:
               bootstrap_state="true"
               ;;
           esac
-          gateway_ref="${INPUT_GATEWAY_REF:-${PAYLOAD_GATEWAY_REF:-main}}"
-          processor_ref="${INPUT_PROCESSOR_REF:-${PAYLOAD_PROCESSOR_REF:-main}}"
+          gateway_source_image="${INPUT_GATEWAY_IMAGE:-${PAYLOAD_GATEWAY_IMAGE:-}}"
+          processor_source_image="${INPUT_PROCESSOR_IMAGE:-${PAYLOAD_PROCESSOR_IMAGE:-}}"
+          code_ci_workflow_sha="${INPUT_CODE_CI_SHA:-${PAYLOAD_CODE_CI_SHA:-}}"
           rollback_environment="${INPUT_ROLLBACK_ENVIRONMENT:-dev}"
           rollback_image_tag="${INPUT_ROLLBACK_IMAGE_TAG:-previous}"
 
@@ -178,9 +188,10 @@ jobs:
             echo "action=${action}"
             echo "aws_region=${aws_region}"
             echo "bootstrap_state=${bootstrap_state}"
-            echo "gateway_ref=${gateway_ref}"
+            echo "gateway_source_image=${gateway_source_image}"
+            echo "code_ci_workflow_sha=${code_ci_workflow_sha}"
             echo "image_tag=${image_tag}"
-            echo "processor_ref=${processor_ref}"
+            echo "processor_source_image=${processor_source_image}"
             echo "rollback_environment=${rollback_environment}"
             echo "rollback_image_tag=${rollback_image_tag}"
           } >> "$GITHUB_OUTPUT"
@@ -197,15 +208,16 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: read
     secrets: inherit
     with:
       environment: dev
       aws_region: ${{ needs.context.outputs.aws_region }}
       terraform_action: apply
       bootstrap_state: ${{ needs.context.outputs.bootstrap_state == 'true' }}
-      deploy_images: true
-      gateway_ref: ${{ needs.context.outputs.gateway_ref }}
-      processor_ref: ${{ needs.context.outputs.processor_ref }}
+      gateway_source_image: ${{ needs.context.outputs.gateway_source_image }}
+      processor_source_image: ${{ needs.context.outputs.processor_source_image }}
+      code_ci_workflow_sha: ${{ needs.context.outputs.code_ci_workflow_sha }}
       image_tag: ${{ needs.context.outputs.image_tag }}
 
   deploy-staging:
@@ -218,15 +230,16 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: read
     secrets: inherit
     with:
       environment: staging
       aws_region: ${{ needs.context.outputs.aws_region }}
       terraform_action: apply
       bootstrap_state: ${{ needs.context.outputs.bootstrap_state == 'true' }}
-      deploy_images: true
-      gateway_ref: ${{ needs.context.outputs.gateway_ref }}
-      processor_ref: ${{ needs.context.outputs.processor_ref }}
+      gateway_source_image: ${{ needs.context.outputs.gateway_source_image }}
+      processor_source_image: ${{ needs.context.outputs.processor_source_image }}
+      code_ci_workflow_sha: ${{ needs.context.outputs.code_ci_workflow_sha }}
       image_tag: ${{ needs.context.outputs.image_tag }}
 
   deploy-prod:
@@ -239,15 +252,16 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: read
     secrets: inherit
     with:
       environment: prod
       aws_region: ${{ needs.context.outputs.aws_region }}
       terraform_action: apply
       bootstrap_state: ${{ needs.context.outputs.bootstrap_state == 'true' }}
-      deploy_images: true
-      gateway_ref: ${{ needs.context.outputs.gateway_ref }}
-      processor_ref: ${{ needs.context.outputs.processor_ref }}
+      gateway_source_image: ${{ needs.context.outputs.gateway_source_image }}
+      processor_source_image: ${{ needs.context.outputs.processor_source_image }}
+      code_ci_workflow_sha: ${{ needs.context.outputs.code_ci_workflow_sha }}
       image_tag: ${{ needs.context.outputs.image_tag }}
 
   rollback:
@@ -258,13 +272,11 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: read
     secrets: inherit
     with:
       environment: ${{ needs.context.outputs.rollback_environment }}
       aws_region: ${{ needs.context.outputs.aws_region }}
       terraform_action: apply
       bootstrap_state: false
-      deploy_images: false
-      gateway_ref: ${{ needs.context.outputs.gateway_ref }}
-      processor_ref: ${{ needs.context.outputs.processor_ref }}
       image_tag: ${{ needs.context.outputs.image_tag }}

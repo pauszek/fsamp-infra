@@ -1,4 +1,6 @@
-.PHONY: help init plan apply destroy fmt validate lint security clean up down logs init-local plan-local apply-local destroy-local seed-local local-core local-parity-up wait-localstack local-parity-bootstrap local-parity-images local-parity-apply local-demo-env local-parity-down local-parity-reset local-parity local-all init-dev plan-dev apply-dev destroy-dev init-staging plan-staging apply-staging init-prod plan-prod apply-prod
+.PHONY: help fmt fmt-check validate lint security clean ci-validate ci-plan up down logs init-local plan-local apply-local destroy-local seed-local local-core local-parity-up wait-localstack local-parity-bootstrap local-parity-images local-parity-apply local-demo-env local-parity-down local-parity-reset local-parity local-all init-dev plan-dev apply-dev destroy-dev init-staging plan-staging apply-staging init-prod plan-prod apply-prod
+
+SHELL := /bin/bash
 
 ENV ?= local
 AWS_REGION ?= us-west-2
@@ -207,6 +209,9 @@ apply-prod:
 fmt:
 	cd terraform && terraform fmt -recursive
 
+fmt-check:
+	cd terraform && terraform fmt -check -recursive
+
 validate:
 	cd terraform && terraform validate
 
@@ -220,7 +225,7 @@ clean:
 	find terraform -type d -name ".terraform" -exec rm -rf {} + 2>/dev/null || true
 	find terraform -name "*.tfplan" -delete 2>/dev/null || true
 
-ci-validate: fmt validate lint security
+ci-validate: fmt-check validate lint security
 
 ci-plan:
 	cd terraform && terraform plan -var-file=envs/$(ENV).tfvars -no-color
