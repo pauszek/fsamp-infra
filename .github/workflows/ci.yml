@@ -20,6 +20,6 @@ jobs:
 
   call-terraform:
     needs: e2e-compose
-    uses: pauszek/fsamp-code-ci/.github/workflows/build-terraform.yml@3be5121f484722007182b432327f9a6a27d32458
+    uses: pauszek/fsamp-code-ci/.github/workflows/build-terraform.yml@3409376a2811efe661ea848bd6b750fbddcbd2fb
     secrets:
       GABRBA_SECRET: ${{ secrets.GABRBA_SECRET }}
