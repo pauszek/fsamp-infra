@@ -141,7 +141,7 @@ services:
     entrypoint:
       - /bin/sh
       - -ec
-      - while true; do python -c 'from processor.outbox_publisher import retry_handler; retry_handler({}, None)'; sleep 2; done
+      - while true; do python -c 'from processor.outbox_publisher import retry_pending_events; retry_pending_events()'; sleep 2; done
     depends_on:
       localstack:
         condition: service_healthy

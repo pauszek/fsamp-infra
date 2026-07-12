@@ -2,16 +2,16 @@ current:
   gateway: "0.0.22"
   processor: "0.0.26"
   event-schema: "1.2.0"
-  infra: "0.0.28"
+  infra: "0.0.29"
   code-ci: "0.0.81"
 
 compatibility:
   gateway:
-    processor: ">=0.0.9"
+    processor: ">=0.0.26"
     event-schema: ">=1.2.0,<1.3.0"
 
   processor:
-    gateway: ">=0.0.5"
+    gateway: ">=0.0.22"
     event-schema: ">=1.2.0,<1.3.0"
 
 breaking-changes:
