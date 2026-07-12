@@ -2,7 +2,7 @@ current:
   gateway: "0.0.22"
   processor: "0.0.26"
   event-schema: "1.2.0"
-  infra: "0.0.26"
+  infra: "0.0.28"
   code-ci: "0.0.81"
 
 compatibility:
