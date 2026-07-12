@@ -56,7 +56,7 @@ services:
       retries: 30
       start_period: 45s
   gateway:
-    image: ${GATEWAY_IMAGE:?GATEWAY_IMAGE must be an immutable CI candidate or local e2e image}
+    image: ${GATEWAY_IMAGE:-fsamp-gateway:e2e}
     container_name: fsamp-e2e-gateway
     ports:
       - "127.0.0.1:8080:8080"
@@ -90,7 +90,7 @@ services:
       start_period: 90s
 
   processor:
-    image: ${PROCESSOR_IMAGE:?PROCESSOR_IMAGE must be an immutable CI candidate or local e2e image}
+    image: ${PROCESSOR_IMAGE:-fsamp-processor:e2e}
     container_name: fsamp-e2e-processor
     environment:
       ENVIRONMENT: local
@@ -123,7 +123,7 @@ services:
       start_period: 30s
 
   outbox-publisher:
-    image: ${PROCESSOR_IMAGE:?PROCESSOR_IMAGE must be an immutable CI candidate or local e2e image}
+    image: ${PROCESSOR_IMAGE:-fsamp-processor:e2e}
     container_name: fsamp-e2e-outbox-publisher
     environment:
       ENVIRONMENT: local
