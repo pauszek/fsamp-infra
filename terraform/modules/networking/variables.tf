@@ -43,7 +43,7 @@ variable "single_nat_gateway" {
 }
 
 variable "enable_private_endpoints" {
-  description = "Enable paid interface VPC endpoints when NAT is disabled"
+  description = "Enable paid interface VPC endpoints for supported AWS service traffic"
   type        = bool
   default     = true
 }

@@ -38,4 +38,7 @@ locals {
 
   log_retention_days = 365
   key_deletion_days  = local.is_production ? 30 : 7
+
+  callback_urls = length(var.cognito_callback_urls) > 0 ? var.cognito_callback_urls : ["http://localhost:3000/callback"]
+  logout_urls   = length(var.cognito_logout_urls) > 0 ? var.cognito_logout_urls : ["http://localhost:3000"]
 }

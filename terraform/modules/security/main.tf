@@ -111,7 +111,7 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 data "aws_partition" "current" {}
 resource "aws_iam_role" "ecs_task_role" {
-  name = "${var.name_prefix}-ecs-task-role"
+  name = "${var.name_prefix}-gateway-task-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -130,7 +130,7 @@ resource "aws_iam_role" "ecs_task_role" {
 }
 
 resource "aws_iam_role_policy" "ecs_task_policy" {
-  name = "${var.name_prefix}-ecs-task-policy"
+  name = "${var.name_prefix}-gateway-task-policy"
   role = aws_iam_role.ecs_task_role.id
 
   policy = jsonencode({
@@ -156,20 +156,9 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "s3:ListBucket"
         ]
         Resource = [
-          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-*",
-          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-*/*"
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-files",
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-files/*"
         ]
-      },
-      {
-        Sid    = "SQSAccess"
-        Effect = "Allow"
-        Action = [
-          "sqs:SendMessage",
-          "sqs:ReceiveMessage",
-          "sqs:DeleteMessage",
-          "sqs:GetQueueAttributes"
-        ]
-        Resource = "arn:${data.aws_partition.current.partition}:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
       },
       {
         Sid    = "SNSAccess"
@@ -177,7 +166,7 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
         Action = [
           "sns:Publish"
         ]
-        Resource = "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+        Resource = "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-file-events"
       },
       {
         Sid    = "DynamoDBAccess"
@@ -191,24 +180,17 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "dynamodb:TransactWriteItems"
         ]
         Resource = [
-          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*",
-          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/index/*"
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-file-metadata",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox/index/*",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-idempotency-keys"
         ]
-      },
-      {
-        Sid    = "CloudWatchLogs"
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/${var.name_prefix}*:*"
       }
     ]
   })
 }
 resource "aws_iam_role" "lambda_role" {
-  name = "${var.name_prefix}-lambda-role"
+  name = "${var.name_prefix}-processor-lambda-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -242,7 +224,7 @@ resource "aws_iam_role_policy_attachment" "lambda_xray" {
 }
 
 resource "aws_iam_role_policy" "lambda_policy" {
-  name = "${var.name_prefix}-lambda-policy"
+  name = "${var.name_prefix}-processor-lambda-policy"
   role = aws_iam_role.lambda_role.id
 
   policy = jsonencode({
@@ -263,10 +245,13 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Effect = "Allow"
         Action = [
           "s3:GetObject",
-          "s3:PutObject"
+          "s3:PutObject",
+          "s3:DeleteObject"
         ]
         Resource = [
-          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-*/*"
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-files/*",
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-processed/*",
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-quarantine/*"
         ]
       },
       {
@@ -278,7 +263,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "sqs:GetQueueAttributes",
           "sqs:ChangeMessageVisibility"
         ]
-        Resource = "arn:${data.aws_partition.current.partition}:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+        Resource = "arn:${data.aws_partition.current.partition}:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-file-processing"
       },
       {
         Sid    = "SNSPublish"
@@ -286,7 +271,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Action = [
           "sns:Publish"
         ]
-        Resource = "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+        Resource = "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-processing-events"
       },
       {
         Sid    = "DynamoDBAccess"
@@ -297,21 +282,218 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "dynamodb:UpdateItem",
           "dynamodb:DeleteItem",
           "dynamodb:Query",
-          "dynamodb:TransactWriteItems",
-          "dynamodb:DescribeStream",
-          "dynamodb:GetRecords",
-          "dynamodb:GetShardIterator",
-          "dynamodb:ListStreams"
+          "dynamodb:TransactWriteItems"
         ]
         Resource = [
-          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*",
-          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/index/*",
-          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-*/stream/*"
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-file-metadata",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-file-metadata/index/*",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox/index/*"
         ]
       }
     ]
   })
 }
+resource "aws_iam_role" "processor_ecs_task_role" {
+  name = "${var.name_prefix}-processor-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ecs-tasks.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy" "processor_ecs_task" {
+  name = "${var.name_prefix}-processor-task-policy"
+  role = aws_iam_role.processor_ecs_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "KMSAccess"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+        Resource = aws_kms_key.master.arn
+      },
+      {
+        Sid      = "ManageSourceObjects"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+        Resource = "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-files/*"
+      },
+      {
+        Sid    = "WriteProcessingObjects"
+        Effect = "Allow"
+        Action = ["s3:PutObject"]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-processed/*",
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-quarantine/*"
+        ]
+      },
+      {
+        Sid      = "ConsumeProcessingQueue"
+        Effect   = "Allow"
+        Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"]
+        Resource = "arn:${data.aws_partition.current.partition}:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-file-processing"
+      },
+      {
+        Sid      = "PublishProcessingEvents"
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
+        Resource = "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-processing-events"
+      },
+      {
+        Sid    = "WriteProcessingState"
+        Effect = "Allow"
+        Action = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query", "dynamodb:TransactWriteItems"]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-file-metadata",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-file-metadata/index/*",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox/index/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "outbox_lambda_role" {
+  name               = "${var.name_prefix}-outbox-publisher-role"
+  assume_role_policy = aws_iam_role.lambda_role.assume_role_policy
+  tags               = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "outbox_lambda_basic" {
+  role       = aws_iam_role.outbox_lambda_role.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "outbox_lambda_vpc" {
+  role       = aws_iam_role.outbox_lambda_role.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "outbox_lambda_xray" {
+  role       = aws_iam_role.outbox_lambda_role.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
+}
+
+resource "aws_iam_role_policy" "outbox_lambda" {
+  name = "${var.name_prefix}-outbox-publisher-policy"
+  role = aws_iam_role.outbox_lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "KMSAccess"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+        Resource = aws_kms_key.master.arn
+      },
+      {
+        Sid    = "OutboxTableAndStream"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:Query", "dynamodb:Scan",
+          "dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator"
+        ]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox/index/*",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox/stream/*"
+        ]
+      },
+      {
+        Sid      = "ListDynamoDBStreams"
+        Effect   = "Allow"
+        Action   = ["dynamodb:ListStreams"]
+        Resource = "*"
+      },
+      {
+        Sid    = "PublishOutboxEvents"
+        Effect = "Allow"
+        Action = ["sns:Publish"]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-file-events",
+          "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-processing-events"
+        ]
+      },
+      {
+        Sid      = "SendFailedBatches"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = "arn:${data.aws_partition.current.partition}:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-outbox-publisher-dlq"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "retry_lambda_role" {
+  name               = "${var.name_prefix}-outbox-retry-role"
+  assume_role_policy = aws_iam_role.lambda_role.assume_role_policy
+  tags               = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "retry_lambda_basic" {
+  role       = aws_iam_role.retry_lambda_role.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "retry_lambda_vpc" {
+  role       = aws_iam_role.retry_lambda_role.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "retry_lambda_xray" {
+  role       = aws_iam_role.retry_lambda_role.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
+}
+
+resource "aws_iam_role_policy" "retry_lambda" {
+  name = "${var.name_prefix}-outbox-retry-policy"
+  role = aws_iam_role.retry_lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "KMSAccess"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+        Resource = aws_kms_key.master.arn
+      },
+      {
+        Sid    = "RecoverOutboxEvents"
+        Effect = "Allow"
+        Action = ["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:Query"]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox",
+          "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox/index/*"
+        ]
+      },
+      {
+        Sid    = "RepublishOutboxEvents"
+        Effect = "Allow"
+        Action = ["sns:Publish"]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-file-events",
+          "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-processing-events"
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role" "ecs_execution_role" {
   name = "${var.name_prefix}-ecs-execution-role"
 

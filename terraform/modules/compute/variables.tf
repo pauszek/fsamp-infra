@@ -18,8 +18,13 @@ variable "kms_key_arn" {
   type        = string
 }
 
-variable "ecs_task_role_arn" {
-  description = "ARN of the ECS task role"
+variable "gateway_task_role_arn" {
+  description = "ARN of the least-privilege gateway ECS task role"
+  type        = string
+}
+
+variable "processor_task_role_arn" {
+  description = "ARN of the least-privilege processor ECS task role"
   type        = string
 }
 
@@ -28,8 +33,18 @@ variable "ecs_execution_role_arn" {
   type        = string
 }
 
-variable "lambda_role_arn" {
-  description = "ARN of the Lambda execution role"
+variable "processor_lambda_role_arn" {
+  description = "ARN of the processor Lambda execution role"
+  type        = string
+}
+
+variable "outbox_lambda_role_arn" {
+  description = "ARN of the DynamoDB Streams outbox publisher Lambda role"
+  type        = string
+}
+
+variable "retry_lambda_role_arn" {
+  description = "ARN of the scheduled outbox reconciliation Lambda role"
   type        = string
 }
 

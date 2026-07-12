@@ -1,51 +1,26 @@
 #!/usr/bin/env bash
-#
-# Bootstraps the GitHub OIDC trust relationship and the deployment IAM role
-# used by the FSAMP Deploy workflow. The script is intended to be run once
-# per AWS account by an operator with IAM administration permissions.
-#
-# Security posture:
-#   - Trust policy is scoped to specific branches and GitHub Environments
-#     (not a wildcard subject pattern). This prevents arbitrary forks,
-#     pull-request workflows and unrelated branches from assuming the role.
-#   - Permissions policy follows least-privilege for the resources Terraform
-#     actually manages: it intentionally avoids iam:* and kms:* wildcards.
-#     IAM actions are scoped to FSAMP-prefixed resources; KMS actions are
-#     action-scoped because several key-management APIs require Resource "*".
-#   - Optional managed policy fallback (USE_MANAGED_FALLBACK=true) attaches
-#     PowerUserAccess + IAMFullAccess for environments where the inline
-#     policy is too restrictive during early bootstrap. This is OFF by default.
-#
+# Create environment-scoped GitHub OIDC plan/apply roles for FSAMP.
+# Run once per AWS account with IAM administrator credentials. The generated
+# roles trust only the fsamp-infra GitHub Environment subject; configure each
+# GitHub Environment to allow deployments from the protected main branch.
 set -euo pipefail
 
 usage() {
   cat <<'USAGE'
 Usage:
-  GITHUB_OWNER=pauszek GITHUB_REPO=fsamp-infra ./scripts/bootstrap-github-oidc.sh
+  GITHUB_OWNER=pauszek ./scripts/bootstrap-github-oidc.sh
 
-Required environment variables:
-  GITHUB_OWNER  - GitHub organization or user that owns the repositories
-                  authorized to assume the deployment role.
+Required:
+  GITHUB_OWNER          GitHub organization or user.
 
-Optional environment variables:
-  GITHUB_REPO         - Primary repo authorized to assume the role.
-                        Default: fsamp-infra
-  ROLE_NAME           - IAM role name. Default: fsamp-github-deploy
-  RESOURCE_PREFIX     - Resource name prefix used in least-privilege ARN
-                        conditions (matches Terraform name_prefix).
-                        Default: fsamp-*
-  ALLOWED_BRANCHES    - Comma-separated list of refs allowed to deploy.
-                        Default: refs/heads/main
-  ALLOWED_ENVIRONMENTS - Comma-separated list of GitHub Environments allowed
-                        to assume the role. Default: dev,staging,prod
-  ALLOWED_REPOS       - Comma-separated list of repositories allowed to
-                        dispatch deployments through this role.
-                        Default: GITHUB_REPO,fsamp-gateway,fsamp-processor
-  USE_MANAGED_FALLBACK - When set to "true" attaches PowerUserAccess +
-                         IAMFullAccess instead of the inline least-privilege
-                         policy. Use only for the very first bootstrap when
-                         account state requires broader permissions.
-                         Default: false
+Optional:
+  GITHUB_REPO           Infrastructure repository (default: fsamp-infra).
+  ROLE_PREFIX           Role prefix (default: fsamp-github).
+  ENVIRONMENTS          Comma-separated environments (default: dev,staging,prod).
+  AWS_REGION            Deployment region (default: us-west-2).
+
+The script prints AWS_PLAN_ROLE_ARN and AWS_APPLY_ROLE_ARN values for every
+GitHub Environment. Store them as environment-scoped GitHub variables.
 USAGE
 }
 
@@ -54,9 +29,12 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-command -v aws >/dev/null || { echo "aws CLI is required."; exit 1; }
-command -v openssl >/dev/null || { echo "openssl is required."; exit 1; }
-command -v jq >/dev/null || { echo "jq is required."; exit 1; }
+for command_name in aws jq openssl; do
+  command -v "${command_name}" >/dev/null || {
+    echo "${command_name} is required." >&2
+    exit 1
+  }
+done
 
 if [[ -z "${GITHUB_OWNER:-}" ]]; then
   echo "GITHUB_OWNER is required." >&2
@@ -66,53 +44,27 @@ fi
 
 github_owner="${GITHUB_OWNER}"
 github_repo="${GITHUB_REPO:-fsamp-infra}"
-role_name="${ROLE_NAME:-fsamp-github-deploy}"
-resource_prefix="${RESOURCE_PREFIX:-fsamp-*}"
-allowed_branches="${ALLOWED_BRANCHES:-refs/heads/main}"
-allowed_environments="${ALLOWED_ENVIRONMENTS:-dev,staging,prod}"
-allowed_repos="${ALLOWED_REPOS:-${github_repo},fsamp-gateway,fsamp-processor}"
-use_managed_fallback="${USE_MANAGED_FALLBACK:-false}"
+role_prefix="${ROLE_PREFIX:-fsamp-github}"
+environments="${ENVIRONMENTS:-dev,staging,prod}"
+aws_region="${AWS_REGION:-us-west-2}"
 oidc_host="token.actions.githubusercontent.com"
 oidc_url="https://${oidc_host}"
+
+if [[ "${aws_region}" != "us-west-2" ]]; then
+  echo "FSAMP deployment roles are restricted to us-west-2." >&2
+  exit 2
+fi
 
 account_id="$(aws sts get-caller-identity --query Account --output text)"
 partition="$(aws sts get-caller-identity --query Arn --output text | cut -d: -f2)"
 
-# Build the StringLike list of allowed sub claims. Each combination of
-# (allowed repo) x (allowed branch) and (allowed repo) x (environment) is
-# enumerated explicitly so that the resulting trust policy is auditable.
-build_sub_patterns() {
-  local -a patterns=()
-  IFS=',' read -ra repos_arr <<< "${allowed_repos}"
-  IFS=',' read -ra branches_arr <<< "${allowed_branches}"
-  IFS=',' read -ra envs_arr <<< "${allowed_environments}"
-
-  local repo branch env_name
-  for repo in "${repos_arr[@]}"; do
-    repo="$(echo "${repo}" | xargs)"
-    [[ -z "${repo}" ]] && continue
-    for branch in "${branches_arr[@]}"; do
-      branch="$(echo "${branch}" | xargs)"
-      [[ -z "${branch}" ]] && continue
-      patterns+=("repo:${github_owner}/${repo}:ref:${branch}")
-    done
-    for env_name in "${envs_arr[@]}"; do
-      env_name="$(echo "${env_name}" | xargs)"
-      [[ -z "${env_name}" ]] && continue
-      patterns+=("repo:${github_owner}/${repo}:environment:${env_name}")
-    done
-  done
-
-  printf '%s\n' "${patterns[@]}" | jq -R . | jq -s .
-}
-
 extract_thumbprint() {
-  local cert_index="$1"
+  local certificate_index="$1"
   echo | openssl s_client -servername "${oidc_host}" -showcerts -connect "${oidc_host}:443" 2>/dev/null \
-    | awk -v wanted="${cert_index}" '
-        /BEGIN CERTIFICATE/ { cert++ }
-        cert == wanted { print }
-        /END CERTIFICATE/ && cert == wanted { exit }
+    | awk -v wanted="${certificate_index}" '
+        /BEGIN CERTIFICATE/ { certificate++ }
+        certificate == wanted { print }
+        /END CERTIFICATE/ && certificate == wanted { exit }
       ' \
     | openssl x509 -fingerprint -sha1 -noout 2>/dev/null \
     | cut -d= -f2 \
@@ -125,7 +77,7 @@ if [[ -z "${thumbprint}" ]]; then
   thumbprint="$(extract_thumbprint 1)"
 fi
 if [[ -z "${thumbprint}" ]]; then
-  echo "Could not resolve GitHub OIDC thumbprint." >&2
+  echo "Could not resolve the GitHub OIDC thumbprint." >&2
   exit 1
 fi
 
@@ -146,284 +98,331 @@ else
     --thumbprint-list "${thumbprint}" >/dev/null
 fi
 
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "${tmp_dir}"' EXIT
+temporary_directory="$(mktemp -d)"
+cleanup() {
+  rm -rf "${temporary_directory}"
+}
+trap cleanup EXIT
 
-trust_policy="${tmp_dir}/trust-policy.json"
-permissions_policy="${tmp_dir}/permissions-policy.json"
+write_trust_policy() {
+  local environment_name="$1"
+  local destination="$2"
+  local subject="repo:${github_owner}/${github_repo}:environment:${environment_name}"
 
-sub_patterns_json="$(build_sub_patterns)"
-
-jq -n \
-  --arg oidcArn "${oidc_arn}" \
-  --arg oidcHost "${oidc_host}" \
-  --argjson subs "${sub_patterns_json}" \
-  '{
-    Version: "2012-10-17",
-    Statement: [
-      {
-        Sid: "GitHubOIDCTrust",
+  jq -n \
+    --arg provider "${oidc_arn}" \
+    --arg host "${oidc_host}" \
+    --arg subject "${subject}" \
+    '{
+      Version: "2012-10-17",
+      Statement: [{
+        Sid: "GitHubEnvironmentOIDC",
         Effect: "Allow",
-        Principal: { Federated: $oidcArn },
+        Principal: {Federated: $provider},
         Action: "sts:AssumeRoleWithWebIdentity",
         Condition: {
           StringEquals: {
-            ($oidcHost + ":aud"): "sts.amazonaws.com"
-          },
-          StringLike: {
-            ($oidcHost + ":sub"): $subs
+            ($host + ":aud"): "sts.amazonaws.com",
+            ($host + ":sub"): $subject
           }
         }
-      }
-    ]
-  }' > "${trust_policy}"
+      }]
+    }' > "${destination}"
+}
 
-# Least-privilege permissions policy. IAM actions are scoped to resources
-# owned by the FSAMP project. KMS bootstrap actions remain action-scoped
-# because several key-management APIs require Resource "*"; Terraform applies
-# Project/Environment tags to the keys it creates. Other AWS service actions
-# are constrained to operations Terraform requires for plan/apply.
-jq -n \
-  --arg accountId "${account_id}" \
-  --arg partition "${partition}" \
-  --arg prefix "${resource_prefix}" \
-  '{
-    Version: "2012-10-17",
-    Statement: [
-      {
-        Sid: "TerraformReadOnlyAccess",
-        Effect: "Allow",
-        Action: [
-          "apigateway:GET",
-          "cloudtrail:Describe*",
-          "cloudtrail:Get*",
-          "cloudtrail:List*",
-          "cloudwatch:Describe*",
-          "cloudwatch:Get*",
-          "cloudwatch:List*",
-          "cognito-idp:Describe*",
-          "cognito-idp:Get*",
-          "cognito-idp:List*",
-          "config:Describe*",
-          "config:Get*",
-          "config:List*",
-          "dynamodb:Describe*",
-          "dynamodb:List*",
-          "ec2:Describe*",
-          "ecr:Describe*",
-          "ecr:Get*",
-          "ecr:List*",
-          "ecs:Describe*",
-          "ecs:List*",
-          "elasticloadbalancing:Describe*",
-          "events:Describe*",
-          "events:List*",
-          "guardduty:Get*",
-          "guardduty:List*",
-          "iam:Get*",
-          "iam:List*",
-          "kms:Describe*",
-          "kms:Get*",
-          "kms:List*",
-          "lambda:Get*",
-          "lambda:List*",
-          "logs:Describe*",
-          "logs:Get*",
-          "logs:List*",
-          "s3:GetBucket*",
-          "s3:GetObject*",
-          "s3:List*",
-          "securityhub:Describe*",
-          "securityhub:Get*",
-          "securityhub:List*",
-          "secretsmanager:Describe*",
-          "secretsmanager:Get*",
-          "secretsmanager:List*",
-          "sns:Get*",
-          "sns:List*",
-          "sqs:Get*",
-          "sqs:List*",
-          "ssm:Describe*",
-          "ssm:Get*",
-          "ssm:List*",
-          "sts:GetCallerIdentity",
-          "tag:Get*",
-          "wafv2:Get*",
-          "wafv2:List*",
-          "xray:Get*"
-        ],
-        Resource: "*"
-      },
-      {
-        Sid: "TerraformInfrastructureWrite",
-        Effect: "Allow",
-        Action: [
-          "apigateway:POST", "apigateway:PUT", "apigateway:PATCH", "apigateway:DELETE",
-          "application-autoscaling:*",
-          "autoscaling:*",
-          "cloudtrail:CreateTrail", "cloudtrail:DeleteTrail", "cloudtrail:UpdateTrail",
-          "cloudtrail:StartLogging", "cloudtrail:StopLogging",
-          "cloudtrail:PutEventSelectors", "cloudtrail:AddTags", "cloudtrail:RemoveTags",
-          "cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms",
-          "cloudwatch:PutCompositeAlarm", "cloudwatch:PutDashboard",
-          "cloudwatch:DeleteDashboards", "cloudwatch:TagResource", "cloudwatch:UntagResource",
-          "cognito-idp:CreateUserPool*", "cognito-idp:DeleteUserPool*",
-          "cognito-idp:UpdateUserPool*", "cognito-idp:CreateGroup",
-          "cognito-idp:DeleteGroup", "cognito-idp:CreateResourceServer",
-          "cognito-idp:DeleteResourceServer", "cognito-idp:CreateIdentityProvider",
-          "cognito-idp:DeleteIdentityProvider", "cognito-idp:TagResource",
-          "config:Put*", "config:Delete*", "config:Start*", "config:Stop*",
-          "dynamodb:CreateTable", "dynamodb:DeleteTable", "dynamodb:UpdateTable",
-          "dynamodb:UpdateTimeToLive", "dynamodb:UpdateContinuousBackups",
-          "dynamodb:TagResource", "dynamodb:UntagResource",
-          "ec2:CreateVpc*", "ec2:DeleteVpc*", "ec2:ModifyVpc*",
-          "ec2:CreateSubnet", "ec2:DeleteSubnet", "ec2:ModifySubnet*",
-          "ec2:CreateRoute*", "ec2:DeleteRoute*", "ec2:ReplaceRoute*",
-          "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable",
-          "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup",
-          "ec2:AuthorizeSecurityGroup*", "ec2:RevokeSecurityGroup*",
-          "ec2:CreateInternetGateway", "ec2:DeleteInternetGateway",
-          "ec2:AttachInternetGateway", "ec2:DetachInternetGateway",
-          "ec2:CreateNatGateway", "ec2:DeleteNatGateway",
-          "ec2:AllocateAddress", "ec2:ReleaseAddress",
-          "ec2:CreateVpcEndpoint", "ec2:DeleteVpcEndpoints",
-          "ec2:ModifyVpcEndpoint", "ec2:CreateNetworkAcl*",
-          "ec2:DeleteNetworkAcl*", "ec2:ReplaceNetworkAcl*",
-          "ec2:CreateTags", "ec2:DeleteTags",
-          "ec2:CreateFlowLogs", "ec2:DeleteFlowLogs",
-          "ecr:CreateRepository", "ecr:DeleteRepository",
-          "ecr:PutLifecyclePolicy", "ecr:DeleteLifecyclePolicy",
-          "ecr:PutImageScanningConfiguration", "ecr:PutImageTagMutability",
-          "ecr:SetRepositoryPolicy", "ecr:DeleteRepositoryPolicy",
-          "ecr:TagResource", "ecr:UntagResource",
-          "ecs:Create*", "ecs:Delete*", "ecs:Update*",
-          "ecs:Register*", "ecs:Deregister*", "ecs:TagResource", "ecs:UntagResource",
-          "elasticloadbalancing:Create*", "elasticloadbalancing:Delete*",
-          "elasticloadbalancing:Modify*", "elasticloadbalancing:Register*",
-          "elasticloadbalancing:Deregister*", "elasticloadbalancing:AddTags",
-          "elasticloadbalancing:RemoveTags",
-          "events:Put*", "events:Delete*", "events:Remove*", "events:Tag*",
-          "guardduty:Create*", "guardduty:Update*", "guardduty:Delete*",
-          "guardduty:TagResource", "guardduty:UntagResource",
-          "lambda:Create*", "lambda:Update*", "lambda:Delete*",
-          "lambda:Add*", "lambda:Remove*", "lambda:Publish*",
-          "lambda:PutFunctionConcurrency", "lambda:DeleteFunctionConcurrency",
-          "lambda:TagResource", "lambda:UntagResource",
-          "logs:CreateLogGroup", "logs:DeleteLogGroup",
-          "logs:PutRetentionPolicy", "logs:DeleteRetentionPolicy",
-          "logs:AssociateKmsKey", "logs:DisassociateKmsKey",
-          "logs:TagResource", "logs:UntagResource", "logs:TagLogGroup",
-          "s3:CreateBucket", "s3:DeleteBucket",
-          "s3:PutBucket*", "s3:DeleteBucket*",
-          "s3:PutLifecycleConfiguration", "s3:DeleteLifecycleConfiguration",
-          "s3:PutEncryptionConfiguration", "s3:PutObject",
-          "s3:DeleteObject", "s3:DeleteObjectVersion",
-          "s3:PutBucketTagging", "s3:DeleteBucketTagging",
-          "securityhub:Enable*", "securityhub:Disable*", "securityhub:Update*",
-          "secretsmanager:CreateSecret", "secretsmanager:UpdateSecret",
-          "secretsmanager:DeleteSecret", "secretsmanager:PutResourcePolicy",
-          "secretsmanager:DeleteResourcePolicy", "secretsmanager:TagResource",
-          "secretsmanager:UntagResource", "secretsmanager:RotateSecret",
-          "sns:CreateTopic", "sns:DeleteTopic", "sns:Subscribe",
-          "sns:Unsubscribe", "sns:SetTopicAttributes", "sns:SetSubscriptionAttributes",
-          "sns:TagResource", "sns:UntagResource",
-          "sqs:CreateQueue", "sqs:DeleteQueue", "sqs:SetQueueAttributes",
-          "sqs:TagQueue", "sqs:UntagQueue", "sqs:PurgeQueue",
-          "ssm:PutParameter", "ssm:DeleteParameter",
-          "ssm:LabelParameterVersion", "ssm:AddTagsToResource", "ssm:RemoveTagsFromResource",
-          "tag:TagResources", "tag:UntagResources",
-          "wafv2:Create*", "wafv2:Update*", "wafv2:Delete*", "wafv2:Tag*", "wafv2:Untag*",
-          "xray:PutEncryptionConfig", "xray:CreateGroup", "xray:DeleteGroup", "xray:Tag*"
-        ],
-        Resource: "*"
-      },
-      {
-        Sid: "IamScopedToFsampResources",
-        Effect: "Allow",
-        Action: [
-          "iam:CreateRole", "iam:DeleteRole", "iam:UpdateRole",
-          "iam:UpdateAssumeRolePolicy", "iam:PutRolePolicy", "iam:DeleteRolePolicy",
-          "iam:AttachRolePolicy", "iam:DetachRolePolicy",
-          "iam:CreatePolicy", "iam:DeletePolicy",
-          "iam:CreatePolicyVersion", "iam:DeletePolicyVersion",
-          "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
-          "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile",
-          "iam:PassRole", "iam:TagRole", "iam:UntagRole",
-          "iam:TagPolicy", "iam:UntagPolicy",
-          "iam:CreateServiceLinkedRole", "iam:DeleteServiceLinkedRole"
-        ],
-        Resource: [
-          ("arn:" + $partition + ":iam::" + $accountId + ":role/" + $prefix),
-          ("arn:" + $partition + ":iam::" + $accountId + ":policy/" + $prefix),
-          ("arn:" + $partition + ":iam::" + $accountId + ":instance-profile/" + $prefix)
-        ]
-      },
-      {
-        Sid: "KmsScopedToFsampKeys",
-        Effect: "Allow",
-        Action: [
-          "kms:CreateKey", "kms:CreateAlias", "kms:DeleteAlias",
-          "kms:UpdateAlias", "kms:ScheduleKeyDeletion",
-          "kms:CancelKeyDeletion", "kms:DisableKey", "kms:EnableKey",
-          "kms:EnableKeyRotation", "kms:DisableKeyRotation",
-          "kms:PutKeyPolicy", "kms:UpdateKeyDescription",
-          "kms:TagResource", "kms:UntagResource"
-        ],
-        Resource: "*"
-      },
-      {
-        Sid: "DenyDangerousActions",
-        Effect: "Deny",
-        Action: [
-          "iam:CreateUser",
-          "iam:DeleteUser",
-          "iam:CreateAccessKey",
-          "iam:DeleteAccessKey",
-          "iam:CreateLoginProfile",
-          "iam:UpdateAccountPasswordPolicy",
-          "organizations:*",
-          "account:*"
-        ],
-        Resource: "*"
-      }
-    ]
-  }' > "${permissions_policy}"
+write_plan_policy() {
+  local environment_name="$1"
+  local destination="$2"
+  local state_bucket="fsamp-${environment_name}-${account_id}-${aws_region}-tfstate"
+  local lock_table="fsamp-${environment_name}-terraform-locks"
 
-if aws iam get-role --role-name "${role_name}" >/dev/null 2>&1; then
-  aws iam update-assume-role-policy \
-    --role-name "${role_name}" \
-    --policy-document "file://${trust_policy}" >/dev/null
-else
-  aws iam create-role \
-    --role-name "${role_name}" \
-    --assume-role-policy-document "file://${trust_policy}" \
-    --description "GitHub OIDC deployment role for the FSAMP platform (managed by bootstrap-github-oidc.sh)" \
-    --max-session-duration 3600 >/dev/null
-fi
+  jq -n \
+    --arg account "${account_id}" \
+    --arg environment "${environment_name}" \
+    --arg partition "${partition}" \
+    --arg region "${aws_region}" \
+    --arg stateBucket "${state_bucket}" \
+    --arg lockTable "${lock_table}" \
+    '{
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "TerraformReadOnly",
+          Effect: "Allow",
+          Action: [
+            "acm:Describe*", "acm:List*", "apigateway:GET",
+            "application-autoscaling:Describe*", "autoscaling:Describe*",
+            "cloudtrail:Describe*", "cloudtrail:Get*", "cloudtrail:List*",
+            "cloudwatch:Describe*", "cloudwatch:Get*", "cloudwatch:List*",
+            "cognito-idp:Describe*", "cognito-idp:Get*", "cognito-idp:List*",
+            "config:Describe*", "config:Get*", "config:List*",
+            "dynamodb:Describe*", "dynamodb:List*",
+            "ec2:Describe*", "ecr:Describe*", "ecr:Get*", "ecr:List*",
+            "ecs:Describe*", "ecs:List*", "elasticloadbalancing:Describe*",
+            "events:Describe*", "events:List*", "guardduty:Get*", "guardduty:List*",
+            "iam:Get*", "iam:List*", "kms:Describe*", "kms:Get*", "kms:List*",
+            "lambda:Get*", "lambda:List*", "logs:Describe*", "logs:Get*", "logs:List*",
+            "route53:Get*", "route53:List*", "s3:GetBucket*", "s3:ListAllMyBuckets",
+            "securityhub:Describe*", "securityhub:Get*", "securityhub:List*",
+            "sns:Get*", "sns:List*", "sqs:Get*", "sqs:List*",
+            "ssm:Describe*", "ssm:Get*", "ssm:List*", "sts:GetCallerIdentity",
+            "tag:Get*", "wafv2:Get*", "wafv2:List*", "xray:Get*"
+          ],
+          Resource: "*"
+        },
+        {
+          Sid: "TerraformStateRead",
+          Effect: "Allow",
+          Action: ["s3:GetObject", "s3:GetObjectVersion", "s3:ListBucket"],
+          Resource: [
+            ("arn:" + $partition + ":s3:::" + $stateBucket),
+            ("arn:" + $partition + ":s3:::" + $stateBucket + "/*")
+          ]
+        },
+        {
+          Sid: "TerraformStateLock",
+          Effect: "Allow",
+          Action: ["dynamodb:DescribeTable", "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:UpdateItem"],
+          Resource: ("arn:" + $partition + ":dynamodb:" + $region + ":" + $account + ":table/" + $lockTable)
+        }
+      ]
+    }' > "${destination}"
+}
 
-if [[ "${use_managed_fallback}" == "true" ]]; then
-  echo "USE_MANAGED_FALLBACK=true: attaching PowerUserAccess + IAMFullAccess." >&2
-  aws iam attach-role-policy \
-    --role-name "${role_name}" \
-    --policy-arn "arn:${partition}:iam::aws:policy/PowerUserAccess" >/dev/null
-  aws iam attach-role-policy \
-    --role-name "${role_name}" \
-    --policy-arn "arn:${partition}:iam::aws:policy/IAMFullAccess" >/dev/null
-  aws iam delete-role-policy \
-    --role-name "${role_name}" \
-    --policy-name fsamp-terraform-deploy >/dev/null 2>&1 || true
-else
+write_apply_policy() {
+  local environment_name="$1"
+  local destination="$2"
+  local name_prefix="fsamp-${environment_name}"
+  local state_bucket="fsamp-${environment_name}-${account_id}-${aws_region}-tfstate"
+  local lock_table="fsamp-${environment_name}-terraform-locks"
+
+  jq -n \
+    --arg account "${account_id}" \
+    --arg environment "${environment_name}" \
+    --arg namePrefix "${name_prefix}" \
+    --arg partition "${partition}" \
+    --arg region "${aws_region}" \
+    --arg stateBucket "${state_bucket}" \
+    --arg lockTable "${lock_table}" \
+    '{
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "TerraformReadOnly",
+          Effect: "Allow",
+          Action: [
+            "acm:Describe*", "acm:List*", "apigateway:GET",
+            "application-autoscaling:Describe*", "autoscaling:Describe*",
+            "cloudtrail:Describe*", "cloudtrail:Get*", "cloudtrail:List*",
+            "cloudwatch:Describe*", "cloudwatch:Get*", "cloudwatch:List*",
+            "cognito-idp:Describe*", "cognito-idp:Get*", "cognito-idp:List*",
+            "config:Describe*", "config:Get*", "config:List*", "dynamodb:Describe*", "dynamodb:List*",
+            "ec2:Describe*", "ecr:Describe*", "ecr:Get*", "ecr:List*", "ecs:Describe*", "ecs:List*",
+            "elasticloadbalancing:Describe*", "events:Describe*", "events:List*",
+            "guardduty:Get*", "guardduty:List*", "iam:Get*", "iam:List*",
+            "kms:Describe*", "kms:Get*", "kms:List*", "lambda:Get*", "lambda:List*",
+            "logs:Describe*", "logs:Get*", "logs:List*", "route53:Get*", "route53:List*",
+            "s3:GetBucket*", "s3:GetObject*", "s3:List*",
+            "securityhub:Describe*", "securityhub:Get*", "securityhub:List*",
+            "sns:Get*", "sns:List*", "sqs:Get*", "sqs:List*", "ssm:Describe*", "ssm:Get*", "ssm:List*",
+            "sts:GetCallerIdentity", "tag:Get*", "wafv2:Get*", "wafv2:List*", "xray:Get*"
+          ],
+          Resource: "*"
+        },
+        {
+          Sid: "TerraformState",
+          Effect: "Allow",
+          Action: ["s3:CreateBucket", "s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:ListBucket", "s3:PutBucket*", "s3:PutEncryptionConfiguration", "s3:PutLifecycleConfiguration"],
+          Resource: [
+            ("arn:" + $partition + ":s3:::" + $stateBucket),
+            ("arn:" + $partition + ":s3:::" + $stateBucket + "/*")
+          ]
+        },
+        {
+          Sid: "TerraformStateLock",
+          Effect: "Allow",
+          Action: ["dynamodb:CreateTable", "dynamodb:DescribeTable", "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:UpdateItem", "dynamodb:UpdateTable", "dynamodb:UpdateContinuousBackups", "dynamodb:TagResource"],
+          Resource: ("arn:" + $partition + ":dynamodb:" + $region + ":" + $account + ":table/" + $lockTable)
+        },
+        {
+          Sid: "ProjectS3",
+          Effect: "Allow",
+          Action: ["s3:CreateBucket", "s3:DeleteBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutBucket*", "s3:DeleteBucket*", "s3:GetReplicationConfiguration", "s3:PutReplicationConfiguration", "s3:DeleteReplicationConfiguration", "s3:ListBucket"],
+          Resource: [
+            ("arn:" + $partition + ":s3:::" + $namePrefix + "-*"),
+            ("arn:" + $partition + ":s3:::" + $namePrefix + "-*/*")
+          ]
+        },
+        {
+          Sid: "ProjectNamedResources",
+          Effect: "Allow",
+          Action: [
+            "cloudtrail:CreateTrail", "cloudtrail:DeleteTrail", "cloudtrail:UpdateTrail", "cloudtrail:StartLogging", "cloudtrail:StopLogging", "cloudtrail:PutEventSelectors", "cloudtrail:AddTags", "cloudtrail:RemoveTags",
+            "cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:PutCompositeAlarm", "cloudwatch:PutDashboard", "cloudwatch:DeleteDashboards", "cloudwatch:TagResource", "cloudwatch:UntagResource",
+            "dynamodb:CreateTable", "dynamodb:DeleteTable", "dynamodb:UpdateTable", "dynamodb:UpdateTimeToLive", "dynamodb:UpdateContinuousBackups", "dynamodb:TagResource", "dynamodb:UntagResource",
+            "ecr:CreateRepository", "ecr:DeleteRepository", "ecr:PutLifecyclePolicy", "ecr:DeleteLifecyclePolicy", "ecr:PutImageScanningConfiguration", "ecr:PutImageTagMutability", "ecr:SetRepositoryPolicy", "ecr:DeleteRepositoryPolicy", "ecr:TagResource", "ecr:UntagResource", "ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage",
+            "ecs:CreateCluster", "ecs:DeleteCluster", "ecs:CreateService", "ecs:DeleteService", "ecs:UpdateService", "ecs:UpdateCluster", "ecs:UpdateClusterSettings", "ecs:PutClusterCapacityProviders", "ecs:RegisterTaskDefinition", "ecs:DeregisterTaskDefinition", "ecs:TagResource", "ecs:UntagResource",
+            "events:PutRule", "events:DeleteRule", "events:PutTargets", "events:RemoveTargets", "events:TagResource", "events:UntagResource",
+            "lambda:CreateFunction", "lambda:DeleteFunction", "lambda:UpdateFunction*", "lambda:AddPermission", "lambda:RemovePermission", "lambda:PutFunctionConcurrency", "lambda:DeleteFunctionConcurrency", "lambda:TagResource", "lambda:UntagResource",
+            "logs:CreateLogGroup", "logs:DeleteLogGroup", "logs:PutRetentionPolicy", "logs:DeleteRetentionPolicy", "logs:AssociateKmsKey", "logs:DisassociateKmsKey", "logs:TagResource", "logs:UntagResource",
+            "sns:CreateTopic", "sns:DeleteTopic", "sns:Subscribe", "sns:Unsubscribe", "sns:SetTopicAttributes", "sns:SetSubscriptionAttributes", "sns:TagResource", "sns:UntagResource",
+            "sqs:CreateQueue", "sqs:DeleteQueue", "sqs:SetQueueAttributes", "sqs:TagQueue", "sqs:UntagQueue",
+            "ssm:PutParameter", "ssm:DeleteParameter", "ssm:AddTagsToResource", "ssm:RemoveTagsFromResource"
+          ],
+          Resource: [
+            ("arn:" + $partition + ":cloudtrail:" + $region + ":" + $account + ":trail/" + $namePrefix + "-*"),
+            ("arn:" + $partition + ":cloudwatch:" + $region + ":" + $account + ":alarm:" + $namePrefix + "-*"),
+            ("arn:" + $partition + ":cloudwatch::" + $account + ":dashboard/" + $namePrefix + "-*"),
+            ("arn:" + $partition + ":dynamodb:" + $region + ":" + $account + ":table/" + $namePrefix + "-*"),
+            ("arn:" + $partition + ":ecr:" + $region + ":" + $account + ":repository/" + $namePrefix + "-*"),
+            ("arn:" + $partition + ":ecs:" + $region + ":" + $account + ":cluster/" + $namePrefix + "-*"),
+            ("arn:" + $partition + ":ecs:" + $region + ":" + $account + ":service/" + $namePrefix + "-*/*"),
+            ("arn:" + $partition + ":ecs:" + $region + ":" + $account + ":task-definition/" + $namePrefix + "-*:*"),
+            ("arn:" + $partition + ":events:" + $region + ":" + $account + ":rule/" + $namePrefix + "-*"),
+            ("arn:" + $partition + ":lambda:" + $region + ":" + $account + ":function:" + $namePrefix + "-*"),
+            ("arn:" + $partition + ":logs:" + $region + ":" + $account + ":log-group:*" + $namePrefix + "*"),
+            ("arn:" + $partition + ":sns:" + $region + ":" + $account + ":" + $namePrefix + "-*"),
+            ("arn:" + $partition + ":sqs:" + $region + ":" + $account + ":" + $namePrefix + "-*"),
+            ("arn:" + $partition + ":ssm:" + $region + ":" + $account + ":parameter/fsamp/" + $environment + "/*")
+          ]
+        },
+        {
+          Sid: "ProjectIam",
+          Effect: "Allow",
+          Action: ["iam:CreateRole", "iam:DeleteRole", "iam:UpdateRole", "iam:UpdateAssumeRolePolicy", "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:AttachRolePolicy", "iam:DetachRolePolicy", "iam:PassRole", "iam:TagRole", "iam:UntagRole"],
+          Resource: ("arn:" + $partition + ":iam::" + $account + ":role/" + $namePrefix + "-*")
+        },
+        {
+          Sid: "CreateRequiredServiceLinkedRoles",
+          Effect: "Allow",
+          Action: "iam:CreateServiceLinkedRole",
+          Resource: "*",
+          Condition: {
+            StringEquals: {
+              "iam:AWSServiceName": [
+                "config.amazonaws.com",
+                "ecs.amazonaws.com",
+                "ecs.application-autoscaling.amazonaws.com",
+                "elasticloadbalancing.amazonaws.com",
+                "guardduty.amazonaws.com",
+                "securityhub.amazonaws.com"
+              ]
+            }
+          }
+        },
+        {
+          Sid: "CreateTaggedKmsKeys",
+          Effect: "Allow",
+          Action: ["kms:CreateKey"],
+          Resource: "*",
+          Condition: {StringEquals: {"aws:RequestTag/Project": "fsamp", "aws:RequestTag/Environment": $environment}}
+        },
+        {
+          Sid: "ManageProjectKmsKeys",
+          Effect: "Allow",
+          Action: ["kms:CreateAlias", "kms:UpdateAlias", "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion", "kms:DisableKey", "kms:EnableKey", "kms:EnableKeyRotation", "kms:DisableKeyRotation", "kms:PutKeyPolicy", "kms:UpdateKeyDescription", "kms:TagResource", "kms:UntagResource"],
+          Resource: ("arn:" + $partition + ":kms:*:" + $account + ":key/*"),
+          Condition: {StringEquals: {"aws:ResourceTag/Project": "fsamp", "aws:ResourceTag/Environment": $environment}}
+        },
+        {
+          Sid: "ManageProjectKmsAliases",
+          Effect: "Allow",
+          Action: ["kms:CreateAlias", "kms:UpdateAlias", "kms:DeleteAlias"],
+          Resource: ("arn:" + $partition + ":kms:*:" + $account + ":alias/" + $namePrefix + "-*")
+        },
+        {
+          Sid: "EnvironmentInfrastructureMutation",
+          Effect: "Allow",
+          Action: [
+            "acm:RequestCertificate", "acm:ImportCertificate", "acm:DeleteCertificate", "acm:AddTagsToCertificate", "acm:RemoveTagsFromCertificate",
+            "apigateway:POST", "apigateway:PUT", "apigateway:PATCH", "apigateway:DELETE",
+            "application-autoscaling:RegisterScalableTarget", "application-autoscaling:DeregisterScalableTarget", "application-autoscaling:PutScalingPolicy", "application-autoscaling:DeleteScalingPolicy",
+            "cognito-idp:CreateUserPool*", "cognito-idp:DeleteUserPool*", "cognito-idp:UpdateUserPool*", "cognito-idp:CreateGroup", "cognito-idp:DeleteGroup", "cognito-idp:CreateResourceServer", "cognito-idp:DeleteResourceServer", "cognito-idp:TagResource", "cognito-idp:UntagResource",
+            "config:Put*", "config:Delete*", "config:Start*", "config:Stop*",
+            "ec2:CreateVpc", "ec2:DeleteVpc", "ec2:ModifyVpc*", "ec2:CreateSubnet", "ec2:DeleteSubnet", "ec2:ModifySubnet*", "ec2:CreateRoute*", "ec2:DeleteRoute*", "ec2:ReplaceRoute*", "ec2:AssociateRouteTable", "ec2:DisassociateRouteTable", "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup", "ec2:ModifySecurityGroupRules", "ec2:AuthorizeSecurityGroup*", "ec2:RevokeSecurityGroup*", "ec2:CreateInternetGateway", "ec2:DeleteInternetGateway", "ec2:AttachInternetGateway", "ec2:DetachInternetGateway", "ec2:CreateNatGateway", "ec2:DeleteNatGateway", "ec2:AllocateAddress", "ec2:ReleaseAddress", "ec2:CreateVpcEndpoint", "ec2:DeleteVpcEndpoints", "ec2:ModifyVpcEndpoint", "ec2:CreateNetworkAcl*", "ec2:DeleteNetworkAcl*", "ec2:ReplaceNetworkAcl*", "ec2:CreateTags", "ec2:DeleteTags", "ec2:CreateFlowLogs", "ec2:DeleteFlowLogs",
+            "elasticloadbalancing:Create*", "elasticloadbalancing:Delete*", "elasticloadbalancing:Modify*", "elasticloadbalancing:Register*", "elasticloadbalancing:Deregister*", "elasticloadbalancing:Set*", "elasticloadbalancing:AddTags", "elasticloadbalancing:RemoveTags",
+            "guardduty:Create*", "guardduty:Update*", "guardduty:Delete*", "guardduty:TagResource", "guardduty:UntagResource",
+            "route53:CreateHostedZone", "route53:DeleteHostedZone", "route53:ChangeResourceRecordSets", "route53:ChangeTagsForResource",
+            "lambda:CreateEventSourceMapping", "lambda:UpdateEventSourceMapping", "lambda:DeleteEventSourceMapping",
+            "securityhub:Enable*", "securityhub:Disable*", "securityhub:Update*", "securityhub:BatchEnableStandards", "securityhub:BatchDisableStandards",
+            "wafv2:Create*", "wafv2:Update*", "wafv2:Delete*", "wafv2:AssociateWebACL", "wafv2:DisassociateWebACL", "wafv2:PutLoggingConfiguration", "wafv2:DeleteLoggingConfiguration", "wafv2:TagResource", "wafv2:UntagResource",
+            "xray:PutEncryptionConfig", "xray:CreateGroup", "xray:DeleteGroup", "xray:TagResource", "xray:UntagResource"
+          ],
+          Resource: "*",
+          Condition: {
+            StringEqualsIfExists: {
+              "aws:ResourceTag/Project": "fsamp",
+              "aws:ResourceTag/Environment": $environment,
+              "aws:RequestTag/Project": "fsamp",
+              "aws:RequestTag/Environment": $environment
+            }
+          }
+        },
+        {
+          Sid: "AccountLevelConfiguration",
+          Effect: "Allow",
+          Action: ["ecr:PutRegistryScanningConfiguration"],
+          Resource: "*"
+        },
+        {
+          Sid: "DenyIdentityAndOrganizationAdministration",
+          Effect: "Deny",
+          Action: ["iam:CreateUser", "iam:DeleteUser", "iam:CreateAccessKey", "iam:DeleteAccessKey", "iam:CreateLoginProfile", "organizations:*", "account:*"],
+          Resource: "*"
+        }
+      ]
+    }' > "${destination}"
+}
+
+ensure_role() {
+  local role_name="$1"
+  local trust_policy="$2"
+  local permissions_policy="$3"
+  local policy_name="$4"
+
+  if aws iam get-role --role-name "${role_name}" >/dev/null 2>&1; then
+    aws iam update-assume-role-policy \
+      --role-name "${role_name}" \
+      --policy-document "file://${trust_policy}" >/dev/null
+  else
+    aws iam create-role \
+      --role-name "${role_name}" \
+      --assume-role-policy-document "file://${trust_policy}" \
+      --description "Environment-scoped FSAMP GitHub OIDC role" \
+      --max-session-duration 3600 \
+      --tags Key=Project,Value=fsamp >/dev/null
+  fi
+
   aws iam put-role-policy \
     --role-name "${role_name}" \
-    --policy-name fsamp-terraform-deploy \
+    --policy-name "${policy_name}" \
     --policy-document "file://${permissions_policy}" >/dev/null
-fi
+}
 
-role_arn="arn:${partition}:iam::${account_id}:role/${role_name}"
+IFS=',' read -ra environment_names <<< "${environments}"
+for raw_environment in "${environment_names[@]}"; do
+  environment_name="$(echo "${raw_environment}" | xargs)"
+  if [[ ! "${environment_name}" =~ ^(dev|staging|prod)$ ]]; then
+    echo "Unsupported environment: ${environment_name}" >&2
+    exit 2
+  fi
 
-echo "AWS_DEPLOY_ROLE_ARN=${role_arn}"
+  trust_policy="${temporary_directory}/trust-${environment_name}.json"
+  plan_policy="${temporary_directory}/plan-${environment_name}.json"
+  apply_policy="${temporary_directory}/apply-${environment_name}.json"
+  plan_role="${role_prefix}-plan-${environment_name}"
+  apply_role="${role_prefix}-apply-${environment_name}"
+
+  write_trust_policy "${environment_name}" "${trust_policy}"
+  write_plan_policy "${environment_name}" "${plan_policy}"
+  write_apply_policy "${environment_name}" "${apply_policy}"
+
+  ensure_role "${plan_role}" "${trust_policy}" "${plan_policy}" "fsamp-terraform-plan-${environment_name}"
+  ensure_role "${apply_role}" "${trust_policy}" "${apply_policy}" "fsamp-terraform-apply-${environment_name}"
+
+  echo "${environment_name}:"
+  echo "  AWS_PLAN_ROLE_ARN=arn:${partition}:iam::${account_id}:role/${plan_role}"
+  echo "  AWS_APPLY_ROLE_ARN=arn:${partition}:iam::${account_id}:role/${apply_role}"
+done
+
 echo "OIDC_PROVIDER_ARN=${oidc_arn}"
-echo "ALLOWED_REPOS=${allowed_repos}"
-echo "ALLOWED_BRANCHES=${allowed_branches}"
-echo "ALLOWED_ENVIRONMENTS=${allowed_environments}"
-echo "USE_MANAGED_FALLBACK=${use_managed_fallback}"

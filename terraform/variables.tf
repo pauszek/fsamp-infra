@@ -51,8 +51,8 @@ variable "enable_nat_gateway" {
   description = <<-EOT
     Enable NAT Gateway for private subnet internet access.
     Cost: ~$32/month per gateway.
-    Alternative: VPC Endpoints (enabled automatically when NAT is disabled)
-    Recommendation: false for dev, true only if external API access needed
+    AWS environments also enable NAT automatically when FIPS endpoints are
+    required because not every service exposes a FIPS PrivateLink endpoint.
   EOT
   type        = bool
   default     = false
@@ -104,6 +104,50 @@ variable "alb_domain_name" {
   default     = null
 }
 
+variable "cognito_callback_urls" {
+  description = "Explicit OAuth callback URLs. Staging and production require non-placeholder HTTPS URLs."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for url in var.cognito_callback_urls : can(regex("^https://[^[:space:]]+$", url)) || can(regex("^http://localhost(:[0-9]+)?/", url))
+    ])
+    error_message = "Callback URLs must use HTTPS; only local localhost callbacks may use HTTP."
+  }
+}
+
+variable "cognito_logout_urls" {
+  description = "Explicit OAuth logout URLs. Staging and production require non-placeholder HTTPS URLs."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for url in var.cognito_logout_urls : can(regex("^https://[^[:space:]]+$", url)) || can(regex("^http://localhost(:[0-9]+)?($|/)", url))
+    ])
+    error_message = "Logout URLs must use HTTPS; only local localhost URLs may use HTTP."
+  }
+}
+
+variable "alarm_notification_endpoint" {
+  description = "Email address or HTTPS endpoint subscribed to the central operations alarm topic. Required outside local."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "alarm_notification_protocol" {
+  description = "SNS protocol used for alarm notifications."
+  type        = string
+  default     = "email"
+
+  validation {
+    condition     = contains(["email", "https"], var.alarm_notification_protocol)
+    error_message = "alarm_notification_protocol must be email or https."
+  }
+}
+
 variable "enable_waf" {
   description = "Enable WAF for API Gateway. Automatically enabled in prod"
   type        = bool
@@ -123,7 +167,7 @@ variable "enable_processor_ecs" {
 }
 
 variable "enable_private_endpoints" {
-  description = "Enable paid interface VPC endpoints for private ECS/Lambda AWS API access when NAT is disabled"
+  description = "Enable paid interface VPC endpoints for private ECS/Lambda AWS API access"
   type        = bool
   default     = true
 }
@@ -135,6 +179,11 @@ variable "gateway_image_tag" {
   EOT
   type        = string
   default     = "latest"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$", var.gateway_image_tag))
+    error_message = "gateway_image_tag must be an ECR tag, not a digest or repository reference."
+  }
 }
 
 variable "gateway_image_digest" {
@@ -156,6 +205,11 @@ variable "processor_image_tag" {
   EOT
   type        = string
   default     = "latest"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$", var.processor_image_tag))
+    error_message = "processor_image_tag must be an ECR tag, not a digest or repository reference."
+  }
 }
 
 variable "processor_image_digest" {

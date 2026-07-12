@@ -117,7 +117,10 @@ resource "aws_cognito_user_pool_client" "web" {
   allowed_oauth_scopes = [
     "email",
     "openid",
-    "profile"
+    "profile",
+    "https://${var.name_prefix}-api/files.read",
+    "https://${var.name_prefix}-api/files.write",
+    "https://${var.name_prefix}-api/files.delete"
   ]
 
   callback_urls = var.callback_urls
@@ -209,6 +212,11 @@ resource "aws_cognito_resource_server" "api" {
   scope {
     scope_name        = "files.write"
     scope_description = "Write files"
+  }
+
+  scope {
+    scope_name        = "files.delete"
+    scope_description = "Delete files"
   }
 }
 resource "aws_cognito_user_group" "admins" {

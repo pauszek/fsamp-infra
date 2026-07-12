@@ -9,9 +9,17 @@ terraform {
   }
 }
 data "aws_region" "current" {}
+data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
+data "aws_prefix_list" "s3" {
+  name = "com.amazonaws.${data.aws_region.current.region}.s3"
+}
+data "aws_prefix_list" "dynamodb" {
+  name = "com.amazonaws.${data.aws_region.current.region}.dynamodb"
+}
 
 locals {
-  enable_interface_endpoints = var.enable_private_endpoints && !var.enable_nat_gateway
+  enable_interface_endpoints = var.enable_private_endpoints
 }
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
@@ -204,12 +212,21 @@ resource "aws_security_group" "ecs" {
     security_groups = [aws_security_group.alb.id]
   }
 
+  #trivy:ignore:AVD-AWS-0104 -- TCP/443 only; AWS FIPS endpoints without PrivateLink require outbound NAT, and tasks have no public IP.
   egress {
-    description = "HTTPS to VPC Endpoints and AWS APIs"
+    description = "HTTPS to interface endpoints and FIPS service endpoints via NAT"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description     = "HTTPS to S3 and DynamoDB gateway endpoints"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    prefix_list_ids = [data.aws_prefix_list.s3.id, data.aws_prefix_list.dynamodb.id]
   }
 
   egress {
@@ -238,12 +255,21 @@ resource "aws_security_group" "lambda" {
   description = "Security group for Lambda functions"
   vpc_id      = aws_vpc.main.id
 
+  #trivy:ignore:AVD-AWS-0104 -- TCP/443 only; AWS FIPS endpoints without PrivateLink require outbound NAT, and functions have no public IP.
   egress {
-    description = "HTTPS to VPC Endpoints and AWS APIs"
+    description = "HTTPS to interface endpoints and FIPS service endpoints via NAT"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description     = "HTTPS to S3 and DynamoDB gateway endpoints"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    prefix_list_ids = [data.aws_prefix_list.s3.id, data.aws_prefix_list.dynamodb.id]
   }
 
   egress {
@@ -275,6 +301,31 @@ resource "aws_vpc_endpoint" "s3" {
     aws_route_table.private[*].id
   )
 
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "ProjectData"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-files",
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-files/*",
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-processed/*",
+          "arn:${data.aws_partition.current.partition}:s3:::${var.name_prefix}-quarantine/*"
+        ]
+      },
+      {
+        Sid       = "ECRImageLayers"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = ["s3:GetObject"]
+        Resource  = "arn:${data.aws_partition.current.partition}:s3:::prod-${data.aws_region.current.region}-starport-layer-bucket/*"
+      }
+    ]
+  })
+
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-s3-endpoint"
   })
@@ -289,6 +340,25 @@ resource "aws_vpc_endpoint" "dynamodb" {
     aws_route_table.private[*].id
   )
 
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action = [
+        "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:TransactWriteItems"
+      ]
+      Resource = [
+        "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-file-metadata",
+        "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-file-metadata/index/*",
+        "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox",
+        "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-outbox/index/*",
+        "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-idempotency-keys"
+      ]
+    }]
+  })
+
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-dynamodb-endpoint"
   })
@@ -299,11 +369,11 @@ resource "aws_security_group" "vpc_endpoints" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "HTTPS from VPC"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
+    description     = "HTTPS from application and Lambda workloads"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs.id, aws_security_group.lambda.id]
   }
 
   tags = merge(var.tags, {
@@ -320,6 +390,23 @@ resource "aws_vpc_endpoint" "ecr_api" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = ["ecr:GetAuthorizationToken"]
+        Resource  = "*"
+      },
+      {
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
+        Resource  = "arn:${data.aws_partition.current.partition}:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/${var.name_prefix}-*"
+      }
+    ]
+  })
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-ecr-api-endpoint"
@@ -335,6 +422,7 @@ resource "aws_vpc_endpoint" "ecr_dkr" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
+  policy              = aws_vpc_endpoint.ecr_api[0].policy
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-ecr-dkr-endpoint"
@@ -350,9 +438,45 @@ resource "aws_vpc_endpoint" "logs" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["logs:CreateLogStream", "logs:PutLogEvents"]
+      Resource = [
+        "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/ecs/${var.name_prefix}:*",
+        "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.name_prefix}-*:*"
+      ]
+    }]
+  })
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-logs-endpoint"
+  })
+}
+
+resource "aws_vpc_endpoint" "monitoring" {
+  count = local.enable_interface_endpoints ? 1 : 0
+
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.monitoring"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["cloudwatch:PutMetricData"]
+      Resource  = "*"
+    }]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${var.name_prefix}-monitoring-endpoint"
   })
 }
 
@@ -365,6 +489,15 @@ resource "aws_vpc_endpoint" "sqs" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility", "sqs:SendMessage"]
+      Resource  = "arn:${data.aws_partition.current.partition}:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+    }]
+  })
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-sqs-endpoint"
@@ -380,6 +513,15 @@ resource "aws_vpc_endpoint" "sns" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["sns:Publish"]
+      Resource  = "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
+    }]
+  })
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-sns-endpoint"
@@ -390,14 +532,62 @@ resource "aws_vpc_endpoint" "kms" {
   count = local.enable_interface_endpoints ? 1 : 0
 
   vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.region}.kms"
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.kms-fips"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+      Resource  = var.kms_key_arn
+    }]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${var.name_prefix}-kms-endpoint"
+  })
+}
+
+resource "aws_vpc_endpoint" "cognito_idp" {
+  count = local.enable_interface_endpoints ? 1 : 0
+
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.cognito-idp"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
 
   tags = merge(var.tags, {
-    Name = "${var.name_prefix}-kms-endpoint"
+    Name = "${var.name_prefix}-cognito-idp-endpoint"
+  })
+}
+
+resource "aws_vpc_endpoint" "sts" {
+  count = local.enable_interface_endpoints ? 1 : 0
+
+  vpc_id              = aws_vpc.main.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.sts-fips"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["sts:GetCallerIdentity"]
+      Resource  = "*"
+    }]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${var.name_prefix}-sts-endpoint"
   })
 }
 resource "aws_network_acl" "public" {

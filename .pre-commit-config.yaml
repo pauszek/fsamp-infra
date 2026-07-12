@@ -30,6 +30,10 @@ repos:
     hooks:
       - id: terraform_fmt
       - id: terraform_validate
+        # The CRR child module intentionally requires an injected aws.replica
+        # alias and cannot be validated as a standalone root. The actual root
+        # validation still loads and validates that module with both providers.
+        exclude: ^terraform/modules/replication/
         args:
           - --hook-config=--retry-once-with-cleanup=true
           - --tf-init-args=-backend=false

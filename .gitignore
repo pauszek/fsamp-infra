@@ -2,10 +2,6 @@
 **/.terraform/
 *.tfstate
 *.tfstate.*
-# Terraform
-.terraform/
-*.tfstate
-*.tfstate.*
 *.tfplan
 crash.log
 crash.*.log
@@ -16,7 +12,8 @@ override.tf.json
 .terraformrc
 terraform.rc
 
-# Note: .terraform.lock.hcl SHOULD be committed (dependency lock)
+# Commit the root dependency lock, not transient locks created while validating modules.
+terraform/modules/**/.terraform.lock.hcl
 
 # Lambda build artifacts
 terraform/modules/compute/files/*.zip
@@ -52,3 +49,5 @@ secrets/
 # Test artifacts
 coverage/
 .pytest_cache/
+__pycache__/
+*.py[cod]

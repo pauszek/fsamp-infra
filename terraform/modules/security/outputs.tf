@@ -14,7 +14,7 @@ output "kms_key_alias" {
 }
 
 output "ecs_task_role_arn" {
-  description = "ARN of the ECS task role"
+  description = "Deprecated alias for the gateway ECS task role ARN"
   value       = aws_iam_role.ecs_task_role.arn
 }
 
@@ -34,11 +34,36 @@ output "ecs_execution_role_name" {
 }
 
 output "lambda_role_arn" {
-  description = "ARN of the Lambda execution role"
+  description = "Deprecated alias for the processor Lambda execution role ARN"
   value       = aws_iam_role.lambda_role.arn
 }
 
 output "lambda_role_name" {
   description = "Name of the Lambda execution role"
   value       = aws_iam_role.lambda_role.name
+}
+
+output "gateway_task_role_arn" {
+  description = "Least-privilege gateway ECS task role ARN"
+  value       = aws_iam_role.ecs_task_role.arn
+}
+
+output "processor_task_role_arn" {
+  description = "Least-privilege processor ECS task role ARN"
+  value       = aws_iam_role.processor_ecs_task_role.arn
+}
+
+output "processor_lambda_role_arn" {
+  description = "Least-privilege processor Lambda role ARN"
+  value       = aws_iam_role.lambda_role.arn
+}
+
+output "outbox_lambda_role_arn" {
+  description = "Least-privilege DynamoDB Streams outbox publisher role ARN"
+  value       = aws_iam_role.outbox_lambda_role.arn
+}
+
+output "retry_lambda_role_arn" {
+  description = "Least-privilege scheduled outbox reconciliation role ARN"
+  value       = aws_iam_role.retry_lambda_role.arn
 }

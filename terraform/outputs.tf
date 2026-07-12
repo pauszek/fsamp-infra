@@ -113,6 +113,16 @@ output "outbox_publisher_lambda_arn" {
   value       = length(module.compute) > 0 ? module.compute[0].outbox_publisher_lambda_arn : null
 }
 
+output "outbox_retry_lambda_name" {
+  description = "Scheduled outbox reconciliation Lambda function name"
+  value       = length(module.compute) > 0 ? module.compute[0].outbox_retry_lambda_name : null
+}
+
+output "outbox_retry_lambda_arn" {
+  description = "Scheduled outbox reconciliation Lambda function ARN"
+  value       = length(module.compute) > 0 ? module.compute[0].outbox_retry_lambda_arn : null
+}
+
 output "ecr_repository_urls" {
   description = "Map of ECR repository URLs for docker push"
   value       = length(module.ecr) > 0 ? module.ecr[0].repository_urls : null
@@ -163,7 +173,7 @@ output "environment_info" {
     name_prefix     = local.name_prefix
     is_local        = local.is_local
     is_production   = local.is_production
-    nat_gateway     = var.enable_nat_gateway
+    nat_gateway     = var.enable_nat_gateway || (var.use_fips_endpoint && !local.is_local)
     fips_oriented   = true
     fedramp_aligned = true
   }

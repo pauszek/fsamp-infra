@@ -2,7 +2,7 @@
 environment              = "prod"
 aws_region               = "us-west-2"
 project_name             = "fsamp"
-enable_nat_gateway       = false
+enable_nat_gateway       = true
 use_fips_endpoint        = true
 enable_processor_ecs     = false
 enable_private_endpoints = true

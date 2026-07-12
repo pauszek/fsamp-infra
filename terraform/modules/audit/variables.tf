@@ -41,3 +41,15 @@ variable "enable_aws_config" {
   type        = bool
   default     = true
 }
+
+variable "data_bucket_arns" {
+  description = "FSAMP data bucket ARNs whose object-level events are recorded by CloudTrail."
+  type        = list(string)
+  default     = []
+}
+
+variable "alert_topic_arn" {
+  description = "Central operations SNS topic receiving security and compliance findings."
+  type        = string
+  default     = ""
+}

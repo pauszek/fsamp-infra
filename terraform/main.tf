@@ -8,6 +8,43 @@ module "security" {
   enable_key_rotation = true
 }
 
+resource "terraform_data" "environment_contract" {
+  input = var.environment
+
+  lifecycle {
+    precondition {
+      condition     = local.is_local || var.alarm_notification_endpoint != ""
+      error_message = "alarm_notification_endpoint must be configured for every AWS environment."
+    }
+
+    precondition {
+      condition     = !(local.is_staging || local.is_production) || (var.alb_certificate_mode == "acm" && var.alb_domain_name != null && length(trimspace(var.alb_domain_name)) > 0 && !endswith(var.alb_domain_name, ".example.com"))
+      error_message = "staging and prod require alb_certificate_mode=acm and a non-placeholder alb_domain_name."
+    }
+
+    precondition {
+      condition = !(local.is_staging || local.is_production) || (
+        length(var.cognito_callback_urls) > 0 &&
+        length(var.cognito_logout_urls) > 0 &&
+        alltrue([for url in concat(var.cognito_callback_urls, var.cognito_logout_urls) : startswith(url, "https://") && !strcontains(url, "example.com")])
+      )
+      error_message = "staging and prod require explicit non-placeholder HTTPS Cognito callback and logout URLs."
+    }
+
+    precondition {
+      condition = local.is_local || alltrue([
+        for url in concat(var.cognito_callback_urls, var.cognito_logout_urls) : startswith(url, "https://")
+      ])
+      error_message = "Only the local environment may use HTTP Cognito callback or logout URLs."
+    }
+
+    precondition {
+      condition     = local.is_local || (var.gateway_image_digest != "" && var.processor_image_digest != "")
+      error_message = "AWS environments must deploy immutable gateway and processor image digests."
+    }
+  }
+}
+
 module "networking" {
   source = "./modules/networking"
   count  = local.deploy_core ? 1 : 0
@@ -17,7 +54,7 @@ module "networking" {
   tags                     = local.common_tags
   kms_key_arn              = module.security.kms_key_arn
   vpc_cidr                 = var.vpc_cidr
-  enable_nat_gateway       = var.enable_nat_gateway || local.is_production
+  enable_nat_gateway       = var.enable_nat_gateway || (var.use_fips_endpoint && !local.is_local)
   single_nat_gateway       = !local.is_production
   enable_private_endpoints = var.enable_private_endpoints
 }
@@ -36,11 +73,13 @@ module "storage" {
 module "messaging" {
   source = "./modules/messaging"
 
-  environment   = var.environment
-  name_prefix   = local.name_prefix
-  kms_key_id    = module.security.kms_key_id
-  tags          = local.common_tags
-  enable_alarms = !local.is_local
+  environment                 = var.environment
+  name_prefix                 = local.name_prefix
+  kms_key_id                  = module.security.kms_key_id
+  tags                        = local.common_tags
+  processor_timeout_seconds   = 300
+  alarm_notification_endpoint = var.alarm_notification_endpoint
+  alarm_notification_protocol = var.alarm_notification_protocol
 
   depends_on = [module.security]
 }
@@ -48,12 +87,10 @@ module "messaging" {
 module "observability" {
   source = "./modules/observability"
 
-  environment        = var.environment
-  name_prefix        = local.name_prefix
-  tags               = local.common_tags
-  log_retention_days = local.log_retention_days
-  kms_key_arn        = module.security.kms_key_arn
-  enable_alarms      = !local.is_local
+  name_prefix         = local.name_prefix
+  tags                = local.common_tags
+  enable_alarms       = !local.is_local
+  alarm_sns_topic_arn = module.messaging.topic_arns.operations_alerts
 
   outbox_table_name                  = module.storage.dynamodb_table_names.outbox
   gateway_alb_full_name              = length(module.compute) > 0 ? module.compute[0].gateway_alb_arn_suffix : ""
@@ -68,8 +105,8 @@ module "auth" {
   name_prefix = local.name_prefix
   tags        = local.common_tags
 
-  callback_urls = var.environment == "prod" ? ["https://app.fsamp.example.com/callback"] : ["http://localhost:3000/callback"]
-  logout_urls   = var.environment == "prod" ? ["https://app.fsamp.example.com"] : ["http://localhost:3000"]
+  callback_urls = local.callback_urls
+  logout_urls   = local.logout_urls
 
   access_token_validity_minutes = var.environment == "prod" ? 30 : 60
   refresh_token_validity_days   = var.environment == "prod" ? 7 : 30
@@ -113,7 +150,7 @@ module "ecr" {
 }
 
 data "aws_ecr_image" "gateway" {
-  count = local.deploy_edge && !startswith(var.gateway_image_tag, "sha256:") && !can(regex("@sha256:", var.gateway_image_tag)) ? 1 : 0
+  count = local.deploy_edge && var.gateway_image_digest == "" ? 1 : 0
 
   repository_name = module.ecr[0].repository_names["gateway"]
   image_tag       = var.gateway_image_tag
@@ -122,7 +159,7 @@ data "aws_ecr_image" "gateway" {
 }
 
 data "aws_ecr_image" "processor" {
-  count = local.deploy_edge && !startswith(var.processor_image_tag, "sha256:") && !can(regex("@sha256:", var.processor_image_tag)) ? 1 : 0
+  count = local.deploy_edge && var.processor_image_digest == "" ? 1 : 0
 
   repository_name = module.ecr[0].repository_names["processor"]
   image_tag       = var.processor_image_tag
@@ -140,9 +177,12 @@ module "compute" {
   aws_region                   = var.aws_region
   use_fips_endpoint            = var.use_fips_endpoint
   kms_key_arn                  = module.security.kms_key_arn
-  ecs_task_role_arn            = module.security.ecs_task_role_arn
+  gateway_task_role_arn        = module.security.gateway_task_role_arn
+  processor_task_role_arn      = module.security.processor_task_role_arn
   ecs_execution_role_arn       = module.security.ecs_execution_role_arn
-  lambda_role_arn              = module.security.lambda_role_arn
+  processor_lambda_role_arn    = module.security.processor_lambda_role_arn
+  outbox_lambda_role_arn       = module.security.outbox_lambda_role_arn
+  retry_lambda_role_arn        = module.security.retry_lambda_role_arn
   log_group_name               = "/ecs/${local.name_prefix}"
   log_retention_days           = local.log_retention_days
   sqs_queue_arn                = module.messaging.queue_arns.file_processing
@@ -200,6 +240,8 @@ module "audit" {
   # forced off locally even when their flags are set.
   enable_guardduty    = !local.is_local && var.enable_guardduty
   enable_security_hub = !local.is_local && var.enable_security_hub
+  alert_topic_arn     = module.messaging.topic_arns.operations_alerts
+  data_bucket_arns    = values(module.storage.bucket_arns)
 
   depends_on = [module.security]
 }

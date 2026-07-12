@@ -1,10 +1,36 @@
 services:
+  docker-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
+    container_name: fsamp-e2e-docker-proxy
+    environment:
+      CONTAINERS: 1
+      DELETE: 1
+      EXEC: 1
+      IMAGES: 1
+      INFO: 1
+      NETWORKS: 1
+      PING: 1
+      POST: 1
+      VERSION: 1
+      VOLUMES: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - fsamp-e2e-network
+    read_only: true
+    tmpfs:
+      - /run
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   localstack:
-    image: localstack/localstack-pro:4.14.0
+    image: localstack/localstack-pro@sha256:5f1fb6c73ccf053e3748d57d5c43b9cd3dba109bb2ae5b7096d2cf5155082a6c
     container_name: fsamp-e2e-localstack
     ports:
-      - "4566:4566"
-      - "4510-4559:4510-4559"
+      - "127.0.0.1:4566:4566"
     environment:
       LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN}
       AWS_DEFAULT_REGION: us-west-2
@@ -13,15 +39,16 @@ services:
       DEBUG: ${LOCALSTACK_DEBUG:-0}
       ENABLE_AUDIT_SERVICES: ${ENABLE_AUDIT_SERVICES:-0}
       ENFORCE_IAM: 1
-      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_HOST: tcp://docker-proxy:2375
       LOCALSTACK_HOST: localstack:4566
       LAMBDA_DOCKER_NETWORK: fsamp-e2e-network
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ../localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
       - fsamp-config:/tmp/localstack-config
     networks:
       - fsamp-e2e-network
+    depends_on:
+      - docker-proxy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health && test -f /tmp/localstack-config/fsamp-config.env"]
       interval: 10s
@@ -29,10 +56,10 @@ services:
       retries: 30
       start_period: 45s
   gateway:
-    image: ${GATEWAY_IMAGE:-ghcr.io/pauszek/fsamp-gateway:latest}
+    image: ${GATEWAY_IMAGE:?GATEWAY_IMAGE must be an immutable CI candidate or local e2e image}
     container_name: fsamp-e2e-gateway
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: local
       AWS_ENDPOINT_URL: http://localstack:4566
@@ -43,7 +70,7 @@ services:
       AWS_SNS_ENDPOINT: http://localstack:4566
       S3_BUCKET_NAME: fsamp-local-files
       SNS_TOPIC_ARN: arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
-      DIRECT_PUBLISH_AFTER_OUTBOX: ${DIRECT_PUBLISH_AFTER_OUTBOX:-true}
+      DIRECT_PUBLISH_AFTER_OUTBOX: "false"
       COGNITO_REGION: us-west-2
       CONFIG_FILE: /config/fsamp-config.env
       CONFIG_WAIT_TIMEOUT: 120
@@ -63,7 +90,7 @@ services:
       start_period: 90s
 
   processor:
-    image: ${PROCESSOR_IMAGE:-ghcr.io/pauszek/fsamp-processor:latest}
+    image: ${PROCESSOR_IMAGE:?PROCESSOR_IMAGE must be an immutable CI candidate or local e2e image}
     container_name: fsamp-e2e-processor
     environment:
       ENVIRONMENT: local
@@ -74,6 +101,7 @@ services:
       LOG_LEVEL: DEBUG
       SQS_QUEUE_URL: http://localstack:4566/000000000000/fsamp-local-processing-queue
       SNS_TOPIC_ARN: arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
+      PROCESSING_EVENTS_TOPIC_ARN: arn:aws:sns:us-west-2:000000000000:fsamp-local-processing-events
       S3_BUCKET_NAME: fsamp-local-files
       DYNAMODB_TABLE_NAME: fsamp-local-file-metadata
       OUTBOX_TABLE_NAME: fsamp-local-outbox
@@ -89,6 +117,38 @@ services:
       - fsamp-e2e-network
     healthcheck:
       test: ["CMD", "python", "-c", "import processor; print('healthy')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  outbox-publisher:
+    image: ${PROCESSOR_IMAGE:?PROCESSOR_IMAGE must be an immutable CI candidate or local e2e image}
+    container_name: fsamp-e2e-outbox-publisher
+    environment:
+      ENVIRONMENT: local
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_REGION: us-west-2
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      LOG_LEVEL: DEBUG
+      FILE_EVENTS_TOPIC_ARN: arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
+      PROCESSING_EVENTS_TOPIC_ARN: arn:aws:sns:us-west-2:000000000000:fsamp-local-processing-events
+      OUTBOX_TABLE_NAME: fsamp-local-outbox
+      OUTBOX_SHARD_COUNT: "16"
+      USE_FIPS_ENDPOINT: "false"
+      OPENSSL_CONF: ""
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - while true; do python -c 'from processor.outbox_publisher import retry_handler; retry_handler({}, None)'; sleep 2; done
+    depends_on:
+      localstack:
+        condition: service_healthy
+    networks:
+      - fsamp-e2e-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "from processor.outbox_publisher import retry_handler; print('healthy')"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -118,6 +178,8 @@ services:
       gateway:
         condition: service_healthy
       processor:
+        condition: service_healthy
+      outbox-publisher:
         condition: service_healthy
     networks:
       - fsamp-e2e-network
