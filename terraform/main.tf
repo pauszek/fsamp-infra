@@ -32,6 +32,13 @@ resource "terraform_data" "environment_contract" {
     }
 
     precondition {
+      condition = local.is_local || alltrue([
+        for url in concat(var.cognito_callback_urls, var.cognito_logout_urls) : startswith(url, "https://")
+      ])
+      error_message = "Only the local environment may use HTTP Cognito callback or logout URLs."
+    }
+
+    precondition {
       condition     = local.is_local || (var.gateway_image_digest != "" && var.processor_image_digest != "")
       error_message = "AWS environments must deploy immutable gateway and processor image digests."
     }

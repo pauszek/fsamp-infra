@@ -111,7 +111,7 @@ variable "cognito_callback_urls" {
 
   validation {
     condition = alltrue([
-      for url in var.cognito_callback_urls : can(regex("^https://[^[:space:]]+$", url)) || (var.environment == "local" && can(regex("^http://localhost(:[0-9]+)?/", url)))
+      for url in var.cognito_callback_urls : can(regex("^https://[^[:space:]]+$", url)) || can(regex("^http://localhost(:[0-9]+)?/", url))
     ])
     error_message = "Callback URLs must use HTTPS; only local localhost callbacks may use HTTP."
   }
@@ -124,7 +124,7 @@ variable "cognito_logout_urls" {
 
   validation {
     condition = alltrue([
-      for url in var.cognito_logout_urls : can(regex("^https://[^[:space:]]+$", url)) || (var.environment == "local" && can(regex("^http://localhost(:[0-9]+)?($|/)", url)))
+      for url in var.cognito_logout_urls : can(regex("^https://[^[:space:]]+$", url)) || can(regex("^http://localhost(:[0-9]+)?($|/)", url))
     ])
     error_message = "Logout URLs must use HTTPS; only local localhost URLs may use HTTP."
   }
