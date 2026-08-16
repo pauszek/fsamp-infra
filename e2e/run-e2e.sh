@@ -75,6 +75,8 @@ log_error() {
     echo -e "${RED}[E2E]${NC} $1"
 }
 
+# Invoked indirectly by the EXIT trap below.
+# shellcheck disable=SC2329
 cleanup() {
     if [[ "$CLEANUP" == "true" ]]; then
         log "Cleaning up..."
@@ -112,10 +114,10 @@ build_local_images() {
         if [[ -f "build.sh" ]]; then
             ./build.sh
         else
-            docker build --target production -t fsamp-processor:latest .
+            docker build -f Dockerfile.lambda -t fsamp-processor:latest .
         fi
         popd > /dev/null
-        log_success "Processor built: fsamp-processor:latest"
+        log_success "Processor Lambda/FIPS image built: fsamp-processor:latest"
     else
         log_warning "Processor repo not found at $PROCESSOR_REPO"
     fi

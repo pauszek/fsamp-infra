@@ -23,6 +23,11 @@ output "web_client_id" {
   value       = aws_cognito_user_pool_client.web.id
 }
 
+output "resource_server_identifier" {
+  description = "Cognito resource server prefix used by access-token scopes"
+  value       = aws_cognito_resource_server.api.identifier
+}
+
 output "service_client_id" {
   description = "Service client ID (for M2M auth)"
   value       = aws_cognito_user_pool_client.service.id

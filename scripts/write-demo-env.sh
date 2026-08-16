@@ -48,6 +48,7 @@ processing_events_topic_arn="$(require_jq "${topics}" '.processing_events')"
 kms_key_arn="$(tf_raw kms_key_arn)"
 cognito_user_pool_id="$(tf_raw cognito_user_pool_id)"
 cognito_client_id="$(tf_raw cognito_web_client_id)"
+cognito_resource_server_identifier="$(tf_raw cognito_resource_server_identifier)"
 
 queue_name="${processing_queue_url##*/}"
 dlq_name="${processing_dlq_url##*/}"
@@ -96,6 +97,7 @@ KMS_KEY_ID=${kms_key_arn}
 
 COGNITO_USER_POOL_ID=${cognito_user_pool_id}
 COGNITO_CLIENT_ID=${cognito_client_id}
+COGNITO_RESOURCE_SERVER_IDENTIFIER=${cognito_resource_server_identifier}
 TEST_USER=e2e@test.local
 TEST_PASSWORD=E2eTestPass123!
 

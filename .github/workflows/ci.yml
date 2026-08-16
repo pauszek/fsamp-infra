@@ -7,6 +7,15 @@ on:
     branches: [main]
 
 jobs:
+  drift-configuration:
+    name: Test drift configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Test fail-closed drift activation
+        run: bash scripts/test-validate-drift-config.sh
+
   e2e-compose:
     name: Validate E2E Compose
     runs-on: ubuntu-latest
@@ -18,8 +27,17 @@ jobs:
           LOCALSTACK_AUTH_TOKEN: validation-only
         run: docker compose -f e2e/docker-compose.yml config --quiet
 
+  k6-contract:
+    name: Test k6 API contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Validate scenarios and exercise strict local API
+        run: bash scripts/test-k6-scripts.sh
+
   call-terraform:
-    needs: e2e-compose
+    needs: [drift-configuration, e2e-compose, k6-contract]
     uses: pauszek/fsamp-code-ci/.github/workflows/build-terraform.yml@3409376a2811efe661ea848bd6b750fbddcbd2fb
     secrets:
       GABRBA_SECRET: ${{ secrets.GABRBA_SECRET }}

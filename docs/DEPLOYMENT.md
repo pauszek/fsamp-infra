@@ -2,6 +2,31 @@
 
 The AWS deployment path is GitHub Actions first. A local bootstrap is required only once, because an empty AWS account cannot be assumed by GitHub OIDC until the IAM provider and role exist.
 
+## Drift detection activation
+
+The daily drift workflow is intentionally fail-safe and ships disabled until
+real AWS environments exist. The repository variable
+`DRIFT_DETECTION_ENABLED` must remain `false` while the account IDs, Terraform
+state backends, and OIDC roles are absent; scheduled runs then report the
+control as explicitly disabled and succeed without pretending that a plan was
+performed.
+
+To activate the control:
+
+1. Run `scripts/bootstrap-github-oidc.sh` for `dev`, `staging`, and `prod`.
+2. Configure the 12-digit repository variables `AWS_ACCOUNT_ID_DEV`,
+   `AWS_ACCOUNT_ID_STAGING`, and `AWS_ACCOUNT_ID_PROD`.
+3. Configure repository secrets `AWS_DRIFT_ROLE_ARN_DEV`,
+   `AWS_DRIFT_ROLE_ARN_STAGING`, and `AWS_DRIFT_ROLE_ARN_PROD` from each
+   bootstrap script's read-only `AWS_PLAN_ROLE_ARN` output, and verify that the
+   matching backend bucket/table from the workflow exists.
+4. Dispatch `Drift Detection` for each environment and confirm a green plan.
+5. Set repository variable `DRIFT_DETECTION_ENABLED=true` only after all three
+   manual runs pass.
+
+When activation is requested with malformed/missing account IDs or a role from
+the wrong account, the configuration job fails closed before any AWS call.
+
 Active AWS deployments are pinned to `us-west-2`. LocalStack remains the local
 development target; other AWS regions are rejected by Terraform and deploy
 workflow guards.

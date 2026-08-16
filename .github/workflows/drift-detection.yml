@@ -22,8 +22,31 @@ permissions:
   issues: write
 
 jobs:
+  configuration:
+    name: Check drift configuration
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Validate activation flag and account IDs
+        id: check
+        env:
+          DRIFT_DETECTION_ENABLED: ${{ vars.DRIFT_DETECTION_ENABLED }}
+          AWS_ACCOUNT_ID_DEV: ${{ vars.AWS_ACCOUNT_ID_DEV }}
+          AWS_ACCOUNT_ID_STAGING: ${{ vars.AWS_ACCOUNT_ID_STAGING }}
+          AWS_ACCOUNT_ID_PROD: ${{ vars.AWS_ACCOUNT_ID_PROD }}
+          AWS_DRIFT_ROLE_ARN_DEV: ${{ secrets.AWS_DRIFT_ROLE_ARN_DEV }}
+          AWS_DRIFT_ROLE_ARN_STAGING: ${{ secrets.AWS_DRIFT_ROLE_ARN_STAGING }}
+          AWS_DRIFT_ROLE_ARN_PROD: ${{ secrets.AWS_DRIFT_ROLE_ARN_PROD }}
+        run: bash scripts/validate-drift-config.sh
+
   dev:
-    if: github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'dev'
+    needs: configuration
+    if: needs.configuration.outputs.enabled == 'true' && (github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'dev')
     uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@3409376a2811efe661ea848bd6b750fbddcbd2fb
     with:
       environment: dev
@@ -33,10 +56,11 @@ jobs:
       backend_key: dev/terraform.tfstate
       tfvars_file: envs/dev.tfvars
     secrets:
-      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DRIFT_ROLE_ARN_DEV }}
 
   staging:
-    if: github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'staging'
+    needs: configuration
+    if: needs.configuration.outputs.enabled == 'true' && (github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'staging')
     uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@3409376a2811efe661ea848bd6b750fbddcbd2fb
     with:
       environment: staging
@@ -46,10 +70,11 @@ jobs:
       backend_key: staging/terraform.tfstate
       tfvars_file: envs/staging.tfvars
     secrets:
-      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DRIFT_ROLE_ARN_STAGING }}
 
   prod:
-    if: github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'prod'
+    needs: configuration
+    if: needs.configuration.outputs.enabled == 'true' && (github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'prod')
     uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@3409376a2811efe661ea848bd6b750fbddcbd2fb
     with:
       environment: prod
@@ -59,4 +84,4 @@ jobs:
       backend_key: prod/terraform.tfstate
       tfvars_file: envs/prod.tfvars
     secrets:
-      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+      AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DRIFT_ROLE_ARN_PROD }}

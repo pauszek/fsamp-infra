@@ -1,9 +1,10 @@
 {
-  "base_url": "https://api.fsamp.example.com",
+  "base_url": "https://api-id.execute-api.us-west-2.amazonaws.com/staging",
+  "health_path": "/health",
+  "upload_path": "/files/upload",
   "auth": {
-    "token_endpoint": "https://cognito-idp.eu-central-1.amazonaws.com/YOUR_USER_POOL_ID",
-    "client_id": "YOUR_CLIENT_ID",
-    "client_secret": "YOUR_CLIENT_SECRET"
+    "token_type": "Cognito access token supplied through AUTH_TOKEN",
+    "resource_server_identifier": "https://fsamp-staging-api"
   },
   "thresholds": {
     "http_req_failed_rate": 0.005,

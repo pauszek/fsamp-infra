@@ -53,3 +53,9 @@ variable "alert_topic_arn" {
   type        = string
   default     = ""
 }
+
+variable "enable_alerting" {
+  description = "Create EventBridge routes to the operations topic. Keep this plan-time value independent of the computed topic ARN."
+  type        = bool
+  default     = false
+}

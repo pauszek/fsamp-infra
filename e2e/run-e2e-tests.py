@@ -633,6 +633,21 @@ def test_full_processing_flow() -> TestResult:
         uploaded_file_id = upload_response.get("fileId")
         if not uploaded_file_id:
             raise AssertionError("upload response has no canonical fileId")
+
+        retry_response = requests.post(
+            f"{TestConfig.GATEWAY_URL}/api/v1/files/upload",
+            files={"file": (filename, file_content.encode(), "text/plain")},
+            headers=headers,
+            timeout=TestConfig.UPLOAD_TIMEOUT,
+        )
+        if retry_response.status_code != response.status_code:
+            raise AssertionError("idempotent retry changed the HTTP status")
+        if retry_response.json().get("fileId") != uploaded_file_id:
+            raise AssertionError("idempotent retry created a different fileId")
+        result.details["1_idempotent_retry"] = {
+            "status": retry_response.status_code,
+            "sameFileId": True,
+        }
         log(f"  -> Upload successful, fileId: {uploaded_file_id}")
 
         dynamodb = get_dynamodb_client()
@@ -768,6 +783,18 @@ def test_full_processing_flow() -> TestResult:
         if gateway_metadata.get("status") != "COMPLETED":
             raise AssertionError("gateway GET did not expose COMPLETED state")
 
+        denied_delete_response = requests.delete(
+            f"{TestConfig.GATEWAY_URL}/api/v1/files/{uploaded_file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=TestConfig.UPLOAD_TIMEOUT,
+        )
+        if denied_delete_response.status_code != 403:
+            raise AssertionError(
+                "non-admin DELETE was not denied: "
+                f"{denied_delete_response.status_code} "
+                f"{denied_delete_response.text[:200]}"
+            )
+
         admin_token = auth.get_admin_token()
         delete_response = requests.delete(
             f"{TestConfig.GATEWAY_URL}/api/v1/files/{uploaded_file_id}",
@@ -780,7 +807,11 @@ def test_full_processing_flow() -> TestResult:
                 f"{delete_response.text[:200]}"
             )
 
-        result.details["6_gateway_api"] = {"GET": 200, "DELETE": 204}
+        result.details["6_gateway_api"] = {
+            "GET": 200,
+            "userDelete": 403,
+            "adminDelete": 204,
+        }
         result.details["7_verdict"] = (
             "Gateway -> SSE-KMS S3 -> published outbox -> SNS/SQS -> processor "
             "-> current metadata -> GET/DELETE verified"

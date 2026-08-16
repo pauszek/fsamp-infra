@@ -587,8 +587,9 @@ locals {
     SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE = "10MB"
     FSAMP_SECURITY_MAX_FILE_SIZE_BYTES        = "9437184"
 
-    COGNITO_USER_POOL_ID = var.cognito_user_pool_id
-    COGNITO_CLIENT_ID    = var.cognito_client_id
+    COGNITO_USER_POOL_ID               = var.cognito_user_pool_id
+    COGNITO_CLIENT_ID                  = var.cognito_client_id
+    COGNITO_RESOURCE_SERVER_IDENTIFIER = var.cognito_resource_server_identifier
 
     KMS_KEY_ID     = var.kms_key_arn
     AWS_KMS_KEY_ID = var.kms_key_arn

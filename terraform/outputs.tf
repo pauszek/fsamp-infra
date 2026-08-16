@@ -147,6 +147,11 @@ output "cognito_web_client_id" {
   value       = length(module.auth) > 0 ? module.auth[0].web_client_id : null
 }
 
+output "cognito_resource_server_identifier" {
+  description = "Cognito resource server prefix used by API access-token scopes"
+  value       = length(module.auth) > 0 ? module.auth[0].resource_server_identifier : null
+}
+
 output "cognito_domain_url" {
   description = "Cognito hosted UI domain URL"
   value       = length(module.auth) > 0 ? module.auth[0].cognito_domain_url : null

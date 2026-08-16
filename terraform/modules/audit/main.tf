@@ -333,7 +333,7 @@ resource "aws_securityhub_standards_subscription" "nist_800_53" {
 }
 
 resource "aws_cloudwatch_event_rule" "security_findings" {
-  count = var.alert_topic_arn != "" && (var.enable_guardduty || var.enable_security_hub) ? 1 : 0
+  count = var.enable_alerting && (var.enable_guardduty || var.enable_security_hub) ? 1 : 0
 
   name        = "${var.name_prefix}-security-findings"
   description = "Route GuardDuty and Security Hub findings to the staffed operations topic"
@@ -356,7 +356,7 @@ resource "aws_cloudwatch_event_target" "security_findings" {
 }
 
 resource "aws_cloudwatch_event_rule" "config_noncompliance" {
-  count = var.alert_topic_arn != "" && var.enable_aws_config ? 1 : 0
+  count = var.enable_alerting && var.enable_aws_config ? 1 : 0
 
   name        = "${var.name_prefix}-config-noncompliance"
   description = "Route AWS Config non-compliant evaluations to operations"

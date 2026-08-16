@@ -252,6 +252,11 @@ variable "cognito_client_id" {
   default     = ""
 }
 
+variable "cognito_resource_server_identifier" {
+  description = "Cognito resource server identifier used to normalize access-token scopes"
+  type        = string
+}
+
 variable "outbox_stream_arn" {
   description = "DynamoDB Streams ARN for outbox table"
   type        = string

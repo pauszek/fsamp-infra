@@ -633,7 +633,7 @@ resource "aws_cloudwatch_metric_alarm" "sqs_message_age" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "gateway_5xx_target" {
-  count = var.enable_alarms && var.gateway_alb_target_group_full_name != "" && var.gateway_alb_full_name != "" ? 1 : 0
+  count = var.enable_alarms && var.enable_gateway_alarms ? 1 : 0
 
   alarm_name          = "${var.name_prefix}-gateway-5xx"
   comparison_operator = "GreaterThanThreshold"
@@ -661,7 +661,7 @@ resource "aws_cloudwatch_metric_alarm" "gateway_5xx_target" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "gateway_5xx_alb" {
-  count = var.enable_alarms && var.gateway_alb_full_name != "" ? 1 : 0
+  count = var.enable_alarms && var.enable_gateway_alarms ? 1 : 0
 
   alarm_name          = "${var.name_prefix}-gateway-alb-5xx"
   comparison_operator = "GreaterThanThreshold"
@@ -690,7 +690,7 @@ resource "aws_cloudwatch_metric_alarm" "gateway_5xx_alb" {
 # Publish failures are emitted by the outbox publisher itself. DynamoDB
 # consumed capacity is not used as an event counter.
 resource "aws_cloudwatch_metric_alarm" "outbox_publish_failures" {
-  count = var.enable_alarms && var.outbox_table_name != "" ? 1 : 0
+  count = var.enable_alarms && var.enable_outbox_alarm ? 1 : 0
 
   alarm_name          = "${var.name_prefix}-outbox-publish-failures"
   comparison_operator = "GreaterThanThreshold"
