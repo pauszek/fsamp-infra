@@ -38,6 +38,6 @@ jobs:
 
   call-terraform:
     needs: [drift-configuration, e2e-compose, k6-contract]
-    uses: pauszek/fsamp-code-ci/.github/workflows/build-terraform.yml@d4d2ae644680e0b08834468031f335084688b59a
+    uses: pauszek/fsamp-code-ci/.github/workflows/build-terraform.yml@fd553ff9598c1d8548cb808b15b967c1610ccfc4
     secrets:
       GABRBA_SECRET: ${{ secrets.GABRBA_SECRET }}

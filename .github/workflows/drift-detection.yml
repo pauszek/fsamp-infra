@@ -47,7 +47,7 @@ jobs:
   dev:
     needs: configuration
     if: needs.configuration.outputs.enabled == 'true' && (github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'dev')
-    uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@d4d2ae644680e0b08834468031f335084688b59a
+    uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@fd553ff9598c1d8548cb808b15b967c1610ccfc4
     with:
       environment: dev
       aws_region: us-west-2
@@ -61,7 +61,7 @@ jobs:
   staging:
     needs: configuration
     if: needs.configuration.outputs.enabled == 'true' && (github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'staging')
-    uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@d4d2ae644680e0b08834468031f335084688b59a
+    uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@fd553ff9598c1d8548cb808b15b967c1610ccfc4
     with:
       environment: staging
       aws_region: us-west-2
@@ -75,7 +75,7 @@ jobs:
   prod:
     needs: configuration
     if: needs.configuration.outputs.enabled == 'true' && (github.event_name == 'schedule' || github.event.inputs.environment == 'all' || github.event.inputs.environment == 'prod')
-    uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@d4d2ae644680e0b08834468031f335084688b59a
+    uses: pauszek/fsamp-code-ci/.github/workflows/drift-detection.yml@fd553ff9598c1d8548cb808b15b967c1610ccfc4
     with:
       environment: prod
       aws_region: us-west-2
