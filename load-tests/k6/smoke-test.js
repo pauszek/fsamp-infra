@@ -177,10 +177,12 @@ export default function(data) {
 
   group('Error Handling', function() {
     const notFoundRes = http.get(`${BASE_URL}/api/v1/nonexistent-endpoint`, {
-      responseCallback: http.expectedStatuses(404),
+      // API Gateway REST APIs use 403 for an undefined edge resource, while
+      // the gateway container itself returns the conventional 404.
+      responseCallback: http.expectedStatuses(403, 404),
     });
     check(notFoundRes, {
-      'nonexistent endpoint returns 404': (r) => r.status === 404,
+      'nonexistent endpoint is rejected': (r) => r.status === 403 || r.status === 404,
     });
 
     sleep(0.5);
@@ -213,12 +215,20 @@ export function teardown(data) {
   console.log(`Ended at: ${new Date().toISOString()}`);
 }
 
+function collectChecks(group) {
+  return (group.groups || []).reduce(
+    (checks, childGroup) => checks.concat(collectChecks(childGroup)),
+    group.checks || []
+  );
+}
+
 export function handleSummary(data) {
-  const passed = data.root_group.checks.filter(c => c.passes > 0 && c.fails === 0);
-  const failed = data.root_group.checks.filter(c => c.fails > 0);
+  const checks = collectChecks(data.root_group);
+  const passed = checks.filter(c => c.passes > 0 && c.fails === 0);
+  const failed = checks.filter(c => c.fails > 0);
 
   console.log('\nSmoke test summary');
-  console.log(`Total Checks: ${data.root_group.checks.length}`);
+  console.log(`Total Checks: ${checks.length}`);
   console.log(`Passed: ${passed.length}`);
   console.log(`Failed: ${failed.length}`);
 

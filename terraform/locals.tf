@@ -32,6 +32,8 @@ locals {
   enable_waf_computed    = coalesce(var.enable_waf, local.is_production || local.is_staging)
   enable_config_computed = coalesce(var.enable_config, var.enable_aws_config)
 
+  normalized_alb_domain_name = var.alb_domain_name == null ? "" : trimspace(var.alb_domain_name)
+
   # Cost-aware thesis baseline: active AWS deployments stay in us-west-2.
   # Cross-region replication is an explicit DR exercise flag, not a default.
   enable_crr_computed = var.enable_cross_region_replication

@@ -27,14 +27,14 @@ services:
       - no-new-privileges:true
 
   localstack:
-    image: localstack/localstack-pro@sha256:5f1fb6c73ccf053e3748d57d5c43b9cd3dba109bb2ae5b7096d2cf5155082a6c
+    image: localstack/localstack-pro@sha256:0d74e1d2d7ce13a3cb25fc64cf15eb225f1c95c762e56e057bc6a9ed0ed29306
     container_name: fsamp-e2e-localstack
     ports:
       - "127.0.0.1:4566:4566"
     environment:
       LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN}
       AWS_DEFAULT_REGION: us-west-2
-      SERVICES: s3,sqs,sns,dynamodb,kms,cognito-idp,iam,sts,lambda,ecr,events,cloudwatch,logs,cloudtrail,guardduty,config
+      SERVICES: s3,sqs,sns,dynamodb,kms,cognito-idp,iam,sts,lambda,ecr,events,cloudwatch,logs,xray,cloudtrail,guardduty,config
       PERSISTENCE: 0
       DEBUG: ${LOCALSTACK_DEBUG:-0}
       ENABLE_AUDIT_SERVICES: ${ENABLE_AUDIT_SERVICES:-0}

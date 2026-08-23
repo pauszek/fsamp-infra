@@ -55,7 +55,7 @@ class ContractHandler(BaseHTTPRequestHandler):
 
         with STATE.lock:
             STATE.not_found_requests += 1
-        self.send_json(404, {"error": "not found"})
+        self.send_json(403, {"message": "Missing Authentication Token"})
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         content_length = int(self.headers.get("Content-Length", "0"))
@@ -102,7 +102,7 @@ def assert_smoke_test_is_testable() -> None:
     required_fragments = (
         "__ENV.SMOKE_DURATION",
         "__ENV.SMOKE_VUS",
-        "http.expectedStatuses(404)",
+        "http.expectedStatuses(403, 404)",
         "http.expectedStatuses(400, 415)",
     )
     missing = [fragment for fragment in required_fragments if fragment not in source]
@@ -148,6 +148,13 @@ def run_contract_test() -> None:
         if result.returncode != 0:
             raise AssertionError(
                 "k6 smoke contract failed\n"
+                f"stdout:\n{result.stdout}\n"
+                f"stderr:\n{result.stderr}"
+            )
+        output = result.stdout + result.stderr
+        if "Total Checks: 8" not in output or "Failed: 0" not in output:
+            raise AssertionError(
+                "k6 smoke summary did not count nested checks\n"
                 f"stdout:\n{result.stdout}\n"
                 f"stderr:\n{result.stderr}"
             )

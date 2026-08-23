@@ -45,7 +45,7 @@ The deploy workflow also needs:
 
 | Name | Type | Purpose |
 |---|---|---|
-| `GABRBA_APPID` | GitHub variable | GitHub App ID for cross-repo checkout |
+| `GABRBA_APPID` | GitHub variable | Numeric GitHub App ID used as the JWT issuer for cross-repo automation (GitHub accepts an App ID or Client ID) |
 | `GABRBA_SECRET` | GitHub secret | GitHub App private key |
 | `.github/params.yml` | Repository config | Set `deploy.auto-dev=true` after AWS and GitHub App setup |
 

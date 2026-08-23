@@ -2,12 +2,8 @@ FROM python:3.14-slim@sha256:b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a279
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir \
-    "boto3==1.43.46" \
-    "requests==2.34.2" \
-    "pytest==9.1.1" \
-    "pytest-timeout==2.4.0" \
-    "tenacity==9.1.4"
+COPY requirements.lock /app/requirements.lock
+RUN pip install --no-cache-dir --require-hashes -r /app/requirements.lock
 
 COPY tests/ /app/tests/
 COPY run-e2e-tests.py /app/

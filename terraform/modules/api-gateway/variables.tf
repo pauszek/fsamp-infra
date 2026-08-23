@@ -24,6 +24,12 @@ variable "cognito_user_pool_arn" {
   default     = null
 }
 
+variable "cognito_resource_server_identifier" {
+  description = "Cognito resource-server identifier used to require route-specific OAuth scopes outside the local password-flow test environment."
+  type        = string
+  default     = null
+}
+
 variable "enable_cognito_authorizer" {
   description = "Create and attach the Cognito User Pool authorizer for protected API methods."
   type        = bool

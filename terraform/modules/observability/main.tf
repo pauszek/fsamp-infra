@@ -635,6 +635,16 @@ resource "aws_cloudwatch_metric_alarm" "sqs_message_age" {
 resource "aws_cloudwatch_metric_alarm" "gateway_5xx_target" {
   count = var.enable_alarms && var.enable_gateway_alarms ? 1 : 0
 
+  lifecycle {
+    precondition {
+      condition = (
+        trimspace(var.gateway_alb_full_name) != "" &&
+        trimspace(var.gateway_alb_target_group_full_name) != ""
+      )
+      error_message = "Gateway target 5xx alarms require non-empty ALB and target group full names."
+    }
+  }
+
   alarm_name          = "${var.name_prefix}-gateway-5xx"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
@@ -662,6 +672,13 @@ resource "aws_cloudwatch_metric_alarm" "gateway_5xx_target" {
 
 resource "aws_cloudwatch_metric_alarm" "gateway_5xx_alb" {
   count = var.enable_alarms && var.enable_gateway_alarms ? 1 : 0
+
+  lifecycle {
+    precondition {
+      condition     = trimspace(var.gateway_alb_full_name) != ""
+      error_message = "Gateway ALB 5xx alarms require a non-empty ALB full name."
+    }
+  }
 
   alarm_name          = "${var.name_prefix}-gateway-alb-5xx"
   comparison_operator = "GreaterThanThreshold"

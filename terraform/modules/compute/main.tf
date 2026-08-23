@@ -387,7 +387,14 @@ resource "aws_lb_listener" "gateway" {
 # REST API private integrations include the API Gateway stage in the backend
 # path. Rewrite only the routes exposed by this API so the Spring application
 # receives its canonical paths without touching multipart request bodies.
+moved {
+  from = aws_lb_listener_rule.gateway_files_path
+  to   = aws_lb_listener_rule.gateway_files_path[0]
+}
+
 resource "aws_lb_listener_rule" "gateway_files_path" {
+  count = var.environment == "local" ? 0 : 1
+
   listener_arn = aws_lb_listener.gateway.arn
   priority     = 10
 
@@ -419,7 +426,14 @@ resource "aws_lb_listener_rule" "gateway_files_path" {
   })
 }
 
+moved {
+  from = aws_lb_listener_rule.gateway_health_path
+  to   = aws_lb_listener_rule.gateway_health_path[0]
+}
+
 resource "aws_lb_listener_rule" "gateway_health_path" {
+  count = var.environment == "local" ? 0 : 1
+
   listener_arn = aws_lb_listener.gateway.arn
   priority     = 20
 
@@ -443,6 +457,85 @@ resource "aws_lb_listener_rule" "gateway_health_path" {
         replace = "/actuator/health"
       }
     }
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-gateway-health-path"
+    Service = "gateway"
+  })
+}
+
+# LocalStack applies URL rewrites but does not return transforms from
+# DescribeRules. Keep an isolated local resource so repeat applies remain
+# idempotent without hiding transform drift in AWS environments.
+resource "aws_lb_listener_rule" "gateway_files_path_local" {
+  count = var.environment == "local" ? 1 : 0
+
+  listener_arn = aws_lb_listener.gateway.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.gateway.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/*/files", "/*/files/*"]
+    }
+  }
+
+  transform {
+    type = "url-rewrite"
+
+    url_rewrite_config {
+      rewrite {
+        regex   = "^/[^/]+/(files(?:/.*)?)$"
+        replace = "/api/v1/$1"
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [transform]
+  }
+
+  tags = merge(var.tags, {
+    Name    = "${var.name_prefix}-gateway-files-path"
+    Service = "gateway"
+  })
+}
+
+resource "aws_lb_listener_rule" "gateway_health_path_local" {
+  count = var.environment == "local" ? 1 : 0
+
+  listener_arn = aws_lb_listener.gateway.arn
+  priority     = 20
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.gateway.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/*/health"]
+    }
+  }
+
+  transform {
+    type = "url-rewrite"
+
+    url_rewrite_config {
+      rewrite {
+        regex   = "^/[^/]+/health$"
+        replace = "/actuator/health"
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [transform]
   }
 
   tags = merge(var.tags, {

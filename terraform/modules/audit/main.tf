@@ -255,7 +255,10 @@ resource "aws_cloudtrail" "main" {
   kms_key_id                    = var.kms_key_arn
   cloud_watch_logs_group_arn    = "${aws_cloudwatch_log_group.cloudtrail[0].arn}:*"
   cloud_watch_logs_role_arn     = aws_iam_role.cloudtrail_cloudwatch[0].arn
-  sns_topic_name                = aws_sns_topic.cloudtrail_alerts[0].name
+  # LocalStack reports the SNS ARN while AWS reports the topic name.
+  sns_topic_name = var.environment == "local" ? (
+    aws_sns_topic.cloudtrail_alerts[0].arn
+  ) : aws_sns_topic.cloudtrail_alerts[0].name
 
   # Management events plus S3/Lambda data events. DynamoDB item history is
   # covered by application audit records and outbox state, not KMS events.
@@ -351,6 +354,13 @@ resource "aws_cloudwatch_event_rule" "security_findings" {
 resource "aws_cloudwatch_event_target" "security_findings" {
   count = length(aws_cloudwatch_event_rule.security_findings)
 
+  lifecycle {
+    precondition {
+      condition     = can(regex("^arn:[^:]+:sns:[^:]+:[0-9]{12}:[^:]+$", var.alert_topic_arn))
+      error_message = "Security finding alerting requires a valid SNS topic ARN."
+    }
+  }
+
   rule = aws_cloudwatch_event_rule.security_findings[0].name
   arn  = var.alert_topic_arn
 }
@@ -376,6 +386,13 @@ resource "aws_cloudwatch_event_rule" "config_noncompliance" {
 
 resource "aws_cloudwatch_event_target" "config_noncompliance" {
   count = length(aws_cloudwatch_event_rule.config_noncompliance)
+
+  lifecycle {
+    precondition {
+      condition     = can(regex("^arn:[^:]+:sns:[^:]+:[0-9]{12}:[^:]+$", var.alert_topic_arn))
+      error_message = "AWS Config non-compliance alerting requires a valid SNS topic ARN."
+    }
+  }
 
   rule = aws_cloudwatch_event_rule.config_noncompliance[0].name
   arn  = var.alert_topic_arn

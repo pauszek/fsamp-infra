@@ -83,6 +83,11 @@ output "gateway_service_name" {
   value       = length(module.compute) > 0 ? module.compute[0].gateway_service_name : null
 }
 
+output "gateway_alb_dns_name" {
+  description = "Gateway ALB DNS name used for direct management-endpoint checks"
+  value       = length(module.compute) > 0 ? module.compute[0].gateway_alb_dns_name : null
+}
+
 output "processor_ecs_service_name" {
   description = "Processor ECS service name (null for local environment)"
   value       = length(module.compute) > 0 ? module.compute[0].processor_service_name : null
