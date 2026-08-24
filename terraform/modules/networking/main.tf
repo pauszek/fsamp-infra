@@ -20,6 +20,28 @@ data "aws_prefix_list" "dynamodb" {
 
 locals {
   enable_interface_endpoints = var.enable_private_endpoints
+  # LocalStack omits the optional policy-language Version field when reading
+  # VPC endpoints. Omit it only locally so repeat plans stay stable; AWS keeps
+  # the explicit modern policy version.
+  endpoint_policy_version = var.environment == "local" ? {} : {
+    Version = "2012-10-17"
+  }
+  ecr_endpoint_policy = jsonencode(merge(local.endpoint_policy_version, {
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = ["ecr:GetAuthorizationToken"]
+        Resource  = "*"
+      },
+      {
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
+        Resource  = "arn:${data.aws_partition.current.partition}:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/${var.name_prefix}-*"
+      }
+    ]
+  }))
 }
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
@@ -301,8 +323,7 @@ resource "aws_vpc_endpoint" "s3" {
     aws_route_table.private[*].id
   )
 
-  policy = jsonencode({
-    Version = "2012-10-17"
+  policy = jsonencode(merge(local.endpoint_policy_version, {
     Statement = [
       {
         Sid       = "ProjectData"
@@ -324,7 +345,7 @@ resource "aws_vpc_endpoint" "s3" {
         Resource  = "arn:${data.aws_partition.current.partition}:s3:::prod-${data.aws_region.current.region}-starport-layer-bucket/*"
       }
     ]
-  })
+  }))
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-s3-endpoint"
@@ -340,8 +361,7 @@ resource "aws_vpc_endpoint" "dynamodb" {
     aws_route_table.private[*].id
   )
 
-  policy = jsonencode({
-    Version = "2012-10-17"
+  policy = jsonencode(merge(local.endpoint_policy_version, {
     Statement = [{
       Effect    = "Allow"
       Principal = "*"
@@ -357,7 +377,7 @@ resource "aws_vpc_endpoint" "dynamodb" {
         "arn:${data.aws_partition.current.partition}:dynamodb:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${var.name_prefix}-idempotency-keys"
       ]
     }]
-  })
+  }))
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-dynamodb-endpoint"
@@ -390,23 +410,7 @@ resource "aws_vpc_endpoint" "ecr_api" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = ["ecr:GetAuthorizationToken"]
-        Resource  = "*"
-      },
-      {
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
-        Resource  = "arn:${data.aws_partition.current.partition}:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/${var.name_prefix}-*"
-      }
-    ]
-  })
+  policy              = local.ecr_endpoint_policy
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-ecr-api-endpoint"
@@ -422,7 +426,7 @@ resource "aws_vpc_endpoint" "ecr_dkr" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
-  policy              = aws_vpc_endpoint.ecr_api[0].policy
+  policy              = local.ecr_endpoint_policy
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-ecr-dkr-endpoint"
@@ -438,8 +442,7 @@ resource "aws_vpc_endpoint" "logs" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
-  policy = jsonencode({
-    Version = "2012-10-17"
+  policy = jsonencode(merge(local.endpoint_policy_version, {
     Statement = [{
       Effect    = "Allow"
       Principal = "*"
@@ -449,7 +452,7 @@ resource "aws_vpc_endpoint" "logs" {
         "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.name_prefix}-*:*"
       ]
     }]
-  })
+  }))
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-logs-endpoint"
@@ -465,15 +468,14 @@ resource "aws_vpc_endpoint" "monitoring" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
-  policy = jsonencode({
-    Version = "2012-10-17"
+  policy = jsonencode(merge(local.endpoint_policy_version, {
     Statement = [{
       Effect    = "Allow"
       Principal = "*"
       Action    = ["cloudwatch:PutMetricData"]
       Resource  = "*"
     }]
-  })
+  }))
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-monitoring-endpoint"
@@ -489,15 +491,14 @@ resource "aws_vpc_endpoint" "sqs" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
-  policy = jsonencode({
-    Version = "2012-10-17"
+  policy = jsonencode(merge(local.endpoint_policy_version, {
     Statement = [{
       Effect    = "Allow"
       Principal = "*"
       Action    = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility", "sqs:SendMessage"]
       Resource  = "arn:${data.aws_partition.current.partition}:sqs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
     }]
-  })
+  }))
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-sqs-endpoint"
@@ -513,15 +514,14 @@ resource "aws_vpc_endpoint" "sns" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
-  policy = jsonencode({
-    Version = "2012-10-17"
+  policy = jsonencode(merge(local.endpoint_policy_version, {
     Statement = [{
       Effect    = "Allow"
       Principal = "*"
       Action    = ["sns:Publish"]
       Resource  = "arn:${data.aws_partition.current.partition}:sns:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:${var.name_prefix}-*"
     }]
-  })
+  }))
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-sns-endpoint"
@@ -537,15 +537,14 @@ resource "aws_vpc_endpoint" "kms" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
-  policy = jsonencode({
-    Version = "2012-10-17"
+  policy = jsonencode(merge(local.endpoint_policy_version, {
     Statement = [{
       Effect    = "Allow"
       Principal = "*"
       Action    = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
       Resource  = var.kms_key_arn
     }]
-  })
+  }))
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-kms-endpoint"
@@ -576,15 +575,14 @@ resource "aws_vpc_endpoint" "sts" {
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
-  policy = jsonencode({
-    Version = "2012-10-17"
+  policy = jsonencode(merge(local.endpoint_policy_version, {
     Statement = [{
       Effect    = "Allow"
       Principal = "*"
       Action    = ["sts:GetCallerIdentity"]
       Resource  = "*"
     }]
-  })
+  }))
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-sts-endpoint"

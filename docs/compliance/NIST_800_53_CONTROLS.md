@@ -50,7 +50,7 @@ represent FedRAMP authorization or an ATO.
 | Control | Title | Status | Implementation | Evidence |
 |---------|-------|--------|----------------|----------|
 | **CM-2** | Baseline Configuration | Aligned | All infrastructure defined in Terraform (10 modules). State file in S3 with DynamoDB locking. AWS Config tracks configuration changes. | `terraform/` — all modules, `terraform/modules/audit/main.tf` — Config |
-| **CM-3** | Configuration Change Control | Aligned | All changes via Git PRs with required reviews. CI pipeline validates: build, test, SAST, SCA, IaC scan. Auto-versioning with `release.version`. Daily Terraform drift detection (`drift-detection.yml`) opens a labelled GitHub Issue when live state diverges from code; the issue is auto-closed once drift is reconciled. | `.github/workflows/` — build pipelines, `bump-release-version` action, `drift-detection.yml` |
+| **CM-3** | Configuration Change Control | Conditional | All changes use Git PRs and CI validation. Drift detection is implemented fail-closed but explicitly disabled until AWS accounts, state backends, and OIDC plan roles are configured; after activation it opens/updates a labelled issue on drift or plan failure and closes it after reconciliation. | `.github/workflows/`, `docs/DEPLOYMENT.md`, `drift-detection.yml` |
 | **CM-6** | Configuration Settings | Aligned | Security hardening: Spring Boot prod profile disables error details (`server.error.include-message: never`), non-essential actuator endpoints filtered. Terraform Checkov scanning. | `application.yml` — prod profile, `.checkov.yml` |
 | **CM-7** | Least Functionality | Aligned | Docker images: multi-stage builds, non-root users (UID 1001/1000), minimal base images (Corretto 21 headless, Python slim-bookworm). No SSH, no unnecessary packages. | `Dockerfile` (gateway), `Dockerfile` (processor) |
 | **CM-8** | System Component Inventory | Aligned | SBOM generated for every build (CycloneDX). Terraform tracks all AWS resources. Dependabot monitors all ecosystems. | `pom.xml` — CycloneDX Maven plugin, `build-python.yml` — cyclonedx-bom |
@@ -124,7 +124,7 @@ represent FedRAMP authorization or an ATO.
 
 | Control | Title | Status | Implementation | Evidence |
 |---------|-------|--------|----------------|----------|
-| **SA-11** | Developer Testing and Evaluation | Aligned | 686 automated tests (362 gateway + 324 processor unit) plus contract and integration tests with LocalStack. E2E tests with real Cognito auth. Architecture tests (ArchUnit). FIPS crypto tests. Load tests (k6). | Test suites in all repos |
+| **SA-11** | Developer Testing and Evaluation | Aligned | Automated unit, contract, integration, architecture, FIPS-runtime, and authenticated LocalStack E2E suites cover the gateway, processor, event contract, and infrastructure. k6 smoke/load/stress/spike/soak scripts exercise the public multipart API contract. | Test suites in all repos |
 
 ---
 

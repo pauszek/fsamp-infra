@@ -9,6 +9,14 @@ terraform {
   }
 }
 data "aws_caller_identity" "current" {}
+
+locals {
+  e2e_audit_topics = var.enable_e2e_audit_queues ? {
+    file_events       = aws_sns_topic.file_events.arn
+    processing_events = aws_sns_topic.processing_events.arn
+  } : {}
+}
+
 resource "aws_sns_topic" "file_events" {
   name              = "${var.name_prefix}-file-events"
   kms_master_key_id = var.kms_key_id
@@ -315,4 +323,66 @@ resource "aws_sns_topic_subscription" "file_events_to_processing" {
   filter_policy = jsonencode({
     eventType = ["FILE_UPLOADED"]
   })
+}
+
+resource "aws_sqs_queue" "e2e_audit" {
+  for_each = local.e2e_audit_topics
+
+  name                      = "${var.name_prefix}-${replace(each.key, "_", "-")}-audit"
+  message_retention_seconds = var.message_retention_seconds
+  kms_master_key_id         = var.kms_key_id
+
+  tags = merge(var.tags, {
+    Name        = "${var.name_prefix}-${replace(each.key, "_", "-")}-audit"
+    Purpose     = "Local E2E event-delivery evidence"
+    Environment = var.environment
+  })
+}
+
+resource "aws_sqs_queue_policy" "e2e_audit" {
+  for_each = local.e2e_audit_topics
+
+  queue_url = aws_sqs_queue.e2e_audit[each.key].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowSNSMessages"
+        Effect = "Allow"
+        Principal = {
+          Service = "sns.amazonaws.com"
+        }
+        Action   = "sqs:SendMessage"
+        Resource = aws_sqs_queue.e2e_audit[each.key].arn
+        Condition = {
+          ArnEquals = {
+            "aws:SourceArn" = each.value
+          }
+        }
+      },
+      {
+        Sid       = "DenyUnencryptedTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "sqs:*"
+        Resource  = aws_sqs_queue.e2e_audit[each.key].arn
+        Condition = {
+          Bool = {
+            "aws:SecureTransport" = "false"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_sns_topic_subscription" "e2e_audit" {
+  for_each = local.e2e_audit_topics
+
+  topic_arn            = each.value
+  protocol             = "sqs"
+  endpoint             = aws_sqs_queue.e2e_audit[each.key].arn
+  raw_message_delivery = true
+
+  depends_on = [aws_sqs_queue_policy.e2e_audit]
 }

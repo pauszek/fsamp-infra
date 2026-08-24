@@ -18,6 +18,12 @@ variable "tags" {
   type        = map(string)
 }
 
+variable "enable_e2e_audit_queues" {
+  description = "Create local-only SNS audit subscriptions used to prove both event streams end to end."
+  type        = bool
+  default     = false
+}
+
 variable "message_retention_seconds" {
   description = "SQS message retention period in seconds"
   type        = number

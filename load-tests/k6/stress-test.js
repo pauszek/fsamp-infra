@@ -55,13 +55,12 @@ export const options = {
     environment: __ENV.ENVIRONMENT || 'staging',
   },
 
-  thresholds_abort_on_fail: false,
-
-  gracefulStop: '60s',
 };
 const CONFIG = {
   baseUrl: __ENV.BASE_URL || 'http://localhost:8080',
   authToken: __ENV.AUTH_TOKEN || '',
+  healthPath: __ENV.HEALTH_PATH || '/health',
+  uploadPath: __ENV.UPLOAD_PATH || '/files/upload',
   timeout: '60s',
   uploadTimeout: '120s',
 
@@ -90,7 +89,6 @@ function generateFileContent(sizeBytes) {
 
 function buildHeaders(idempotencyKey) {
   const headers = {
-    'Content-Type': 'application/json',
     'X-Request-ID': uuidv4(),
   };
 
@@ -115,7 +113,11 @@ export function setup() {
   console.log(`Warning: this test pushes the system to failure`);
   console.log('');
 
-  const healthRes = http.get(`${CONFIG.baseUrl}/actuator/health`, {
+  if (!CONFIG.authToken) {
+    throw new Error('AUTH_TOKEN is required for authenticated upload scenarios');
+  }
+
+  const healthRes = http.get(`${CONFIG.baseUrl}${CONFIG.healthPath}`, {
     timeout: '10s',
   });
 
@@ -137,23 +139,19 @@ export default function(data) {
     const fileSize = randomItem(CONFIG.fileSizes);
     const content = generateFileContent(fileSize);
 
-    const payload = JSON.stringify({
-      filename: `stress-test-vu${vu}-${idempotencyKey}.txt`,
-      content: content,
-      contentType: 'text/plain',
-      metadata: {
-        stressTest: true,
-        vuId: vu,
-        iteration: iter,
-        activeVUs: __VU,
-      },
-    });
+    const payload = {
+      file: http.file(
+        content,
+        `stress-test-vu${vu}-${idempotencyKey}.txt`,
+        'text/plain'
+      ),
+    };
 
     const headers = buildHeaders(idempotencyKey);
 
     const startTime = new Date();
     const response = http.post(
-      `${CONFIG.baseUrl}/api/v1/files/upload`,
+      `${CONFIG.baseUrl}${CONFIG.uploadPath}`,
       payload,
       {
         headers: headers,

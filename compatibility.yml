@@ -1,9 +1,14 @@
 current:
-  gateway: "0.0.22"
-  processor: "0.0.26"
+  gateway: "0.0.23"
+  processor: "0.0.27"
+  # Latest tested, tagged fsamp-event-schema release. The release workflow
+  # updates this independently from the wire contract patch version below.
   event-schema: "1.2.0"
-  infra: "0.0.30"
-  code-ci: "0.0.82"
+  # Wire value carried in schemaVersion. Update it only with the canonical
+  # schema, both producers/consumers, and the cross-repository E2E evidence.
+  event-contract: "1.2.0"
+  infra: "0.0.31"
+  code-ci: "0.0.84"
 
 compatibility:
   gateway:

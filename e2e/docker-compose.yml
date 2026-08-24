@@ -27,14 +27,14 @@ services:
       - no-new-privileges:true
 
   localstack:
-    image: localstack/localstack-pro@sha256:5f1fb6c73ccf053e3748d57d5c43b9cd3dba109bb2ae5b7096d2cf5155082a6c
+    image: localstack/localstack-pro@sha256:0d74e1d2d7ce13a3cb25fc64cf15eb225f1c95c762e56e057bc6a9ed0ed29306
     container_name: fsamp-e2e-localstack
     ports:
       - "127.0.0.1:4566:4566"
     environment:
       LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN}
       AWS_DEFAULT_REGION: us-west-2
-      SERVICES: s3,sqs,sns,dynamodb,kms,cognito-idp,iam,sts,lambda,ecr,events,cloudwatch,logs,cloudtrail,guardduty,config
+      SERVICES: s3,sqs,sns,dynamodb,kms,cognito-idp,iam,sts,lambda,ecr,events,cloudwatch,logs,xray,cloudtrail,guardduty,config
       PERSISTENCE: 0
       DEBUG: ${LOCALSTACK_DEBUG:-0}
       ENABLE_AUDIT_SERVICES: ${ENABLE_AUDIT_SERVICES:-0}
@@ -72,6 +72,7 @@ services:
       SNS_TOPIC_ARN: arn:aws:sns:us-west-2:000000000000:fsamp-local-file-events
       DIRECT_PUBLISH_AFTER_OUTBOX: "false"
       COGNITO_REGION: us-west-2
+      COGNITO_RESOURCE_SERVER_IDENTIFIER: fsamp-api
       CONFIG_FILE: /config/fsamp-config.env
       CONFIG_WAIT_TIMEOUT: 120
     entrypoint: ["/entrypoint.sh"]
@@ -106,7 +107,7 @@ services:
       DYNAMODB_TABLE_NAME: fsamp-local-file-metadata
       OUTBOX_TABLE_NAME: fsamp-local-outbox
       USE_FIPS_ENDPOINT: "false"
-      OPENSSL_CONF: ""
+      FIPS_REQUIRED: "true"
     entrypoint: ["/bin/sh", "-c", "test -f /config/fsamp-config.env && . /config/fsamp-config.env; exec python -m processor.main"]
     volumes:
       - fsamp-config:/config:ro
@@ -116,7 +117,7 @@ services:
     networks:
       - fsamp-e2e-network
     healthcheck:
-      test: ["CMD", "python", "-c", "import processor; print('healthy')"]
+      test: ["CMD", "python", "-c", "from processor.infrastructure.fips import enforce_fips; enforce_fips(True)"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -137,7 +138,7 @@ services:
       OUTBOX_TABLE_NAME: fsamp-local-outbox
       OUTBOX_SHARD_COUNT: "16"
       USE_FIPS_ENDPOINT: "false"
-      OPENSSL_CONF: ""
+      FIPS_REQUIRED: "true"
     entrypoint:
       - /bin/sh
       - -ec
@@ -148,7 +149,7 @@ services:
     networks:
       - fsamp-e2e-network
     healthcheck:
-      test: ["CMD", "python", "-c", "from processor.outbox_publisher import retry_handler; print('healthy')"]
+      test: ["CMD", "python", "-c", "from processor.infrastructure.fips import enforce_fips; enforce_fips(True)"]
       interval: 10s
       timeout: 5s
       retries: 10

@@ -21,6 +21,7 @@ import sys
 import time
 import traceback
 import uuid
+import warnings
 from datetime import datetime
 from typing import Any
 
@@ -28,6 +29,17 @@ import boto3
 import requests
 from botocore.config import Config
 from tenacity import retry, stop_after_attempt, wait_exponential
+from urllib3.exceptions import InsecureRequestWarning
+
+
+def _environment_boolean(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized not in {"true", "false"}:
+        raise ValueError(f"{name} must be true or false")
+    return normalized == "true"
 
 
 def _discover_cognito_ids() -> tuple[str, str]:
@@ -75,6 +87,21 @@ class TestConfig:
     """Test configuration from environment variables."""
 
     GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8080")
+    GATEWAY_HEALTH_PATH = os.getenv("GATEWAY_HEALTH_PATH", "/actuator/health")
+    GATEWAY_UPLOAD_PATH = os.getenv(
+        "GATEWAY_UPLOAD_PATH", "/api/v1/files/upload"
+    )
+    GATEWAY_FILES_PATH = os.getenv("GATEWAY_FILES_PATH", "/api/v1/files")
+    GATEWAY_MANAGEMENT_URL = os.getenv("GATEWAY_MANAGEMENT_URL", GATEWAY_URL)
+    GATEWAY_MANAGEMENT_VERIFY_TLS = _environment_boolean(
+        "GATEWAY_MANAGEMENT_VERIFY_TLS", True
+    )
+    DEMO_RUNTIME = os.getenv("FSAMP_DEMO_RUNTIME", "compose")
+    ECS_CLUSTER_NAME = os.getenv("ECS_CLUSTER_NAME", "fsamp-local-cluster")
+    GATEWAY_SERVICE_NAME = os.getenv(
+        "GATEWAY_SERVICE_NAME", "fsamp-local-gateway"
+    )
+    GATEWAY_CONTAINER_NAME = os.getenv("GATEWAY_CONTAINER_NAME", "gateway")
     AWS_ENDPOINT_URL = os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566")
     AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "test")
@@ -95,6 +122,20 @@ class TestConfig:
     PROCESSING_EVENTS_AUDIT_QUEUE_NAME = os.getenv(
         "PROCESSING_EVENTS_AUDIT_QUEUE_NAME",
         "fsamp-local-processing-events-audit",
+    )
+    GATEWAY_ROLE_NAME = os.getenv("GATEWAY_ROLE_NAME", "fsamp-gateway-role")
+    PROCESSOR_ROLE_NAME = os.getenv(
+        "PROCESSOR_ROLE_NAME", "fsamp-processor-role"
+    )
+    EXPECTED_AUDIT_SERVICES = frozenset(
+        service.strip().lower()
+        for service in os.getenv(
+            "EXPECTED_AUDIT_SERVICES",
+            "cloudtrail,guardduty,config"
+            if _environment_boolean("ENABLE_AUDIT_SERVICES", False)
+            else "",
+        ).split(",")
+        if service.strip()
     )
     EVENT_SCHEMA_VERSION = "1.2.0"
 
@@ -118,6 +159,10 @@ class TestConfig:
             return
         cls.COGNITO_USER_POOL_ID, cls.COGNITO_CLIENT_ID = _discover_cognito_ids()
         cls._cognito_discovered = True
+
+
+def _join_url(base_url: str, path: str) -> str:
+    return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
 
 
 def get_boto_config() -> Config:
@@ -171,6 +216,60 @@ def get_sqs_client():
         aws_secret_access_key=TestConfig.AWS_SECRET_ACCESS_KEY,
         config=get_boto_config(),
     )
+
+
+def get_ecs_client():
+    """Get the ECS client used to locate the LocalStack parity gateway task."""
+    return boto3.client(
+        "ecs",
+        endpoint_url=TestConfig.AWS_ENDPOINT_URL,
+        aws_access_key_id=TestConfig.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=TestConfig.AWS_SECRET_ACCESS_KEY,
+        config=get_boto_config(),
+    )
+
+
+def _discover_gateway_backend_url() -> str:
+    """Resolve the running parity gateway directly on its Docker network."""
+    ecs = get_ecs_client()
+    task_arns = ecs.list_tasks(
+        cluster=TestConfig.ECS_CLUSTER_NAME,
+        serviceName=TestConfig.GATEWAY_SERVICE_NAME,
+        desiredStatus="RUNNING",
+    ).get("taskArns", [])
+    if not task_arns:
+        raise RuntimeError("no running gateway ECS task found")
+
+    tasks = ecs.describe_tasks(
+        cluster=TestConfig.ECS_CLUSTER_NAME,
+        tasks=task_arns,
+    ).get("tasks", [])
+    for task in tasks:
+        if task.get("lastStatus") != "RUNNING":
+            continue
+        for container in task.get("containers", []):
+            if (
+                container.get("name") != TestConfig.GATEWAY_CONTAINER_NAME
+                or container.get("lastStatus") != "RUNNING"
+            ):
+                continue
+            interfaces = container.get("networkInterfaces", [])
+            if not interfaces:
+                continue
+            address = interfaces[0].get("privateIpv4Address")
+            bindings = container.get("networkBindings", [])
+            port = next(
+                (
+                    binding.get("containerPort")
+                    for binding in bindings
+                    if binding.get("containerPort")
+                ),
+                8080,
+            )
+            if address:
+                return f"http://{address}:{port}"
+
+    raise RuntimeError("running gateway ECS task has no reachable network interface")
 
 
 def _string(item: dict[str, Any], attribute: str) -> str:
@@ -379,12 +478,20 @@ def log(message: str, level: str = "INFO") -> None:
 @retry(stop=stop_after_attempt(12), wait=wait_exponential(multiplier=1, min=2, max=10))
 def wait_for_gateway() -> bool:
     """Wait for gateway to be healthy."""
-    response = requests.get(f"{TestConfig.GATEWAY_URL}/actuator/health", timeout=10)
+    response = requests.get(
+        _join_url(TestConfig.GATEWAY_URL, TestConfig.GATEWAY_HEALTH_PATH),
+        timeout=10,
+    )
     response.raise_for_status()
     data = response.json()
-    if data.get("status") != "UP":
-        raise Exception(f"Gateway not healthy: {data}")
-    return True
+    if data.get("status") == "UP":
+        return True
+    if TestConfig.DEMO_RUNTIME == "terraform-local" and data == {}:
+        # LocalStack's emulated API Gateway/ALB currently preserves the status
+        # but replaces the upstream response body. The health test below also
+        # verifies the real ECS task body directly.
+        return True
+    raise Exception(f"Gateway not healthy: {data}")
 
 
 @retry(stop=stop_after_attempt(12), wait=wait_exponential(multiplier=1, min=2, max=10))
@@ -404,19 +511,38 @@ def test_gateway_health() -> TestResult:
 
     try:
         response = requests.get(
-            f"{TestConfig.GATEWAY_URL}/actuator/health",
+            _join_url(TestConfig.GATEWAY_URL, TestConfig.GATEWAY_HEALTH_PATH),
             timeout=TestConfig.UPLOAD_TIMEOUT,
         )
         response.raise_for_status()
-        data = response.json()
+        edge_data = response.json()
+        result.details["edge_status_code"] = response.status_code
 
-        result.details["status"] = data.get("status")
-        result.details["components"] = list(data.get("components", {}).keys())
+        if edge_data.get("status") == "UP":
+            health_data = edge_data
+            result.details["health_source"] = "edge"
+        elif TestConfig.DEMO_RUNTIME == "terraform-local" and edge_data == {}:
+            backend_url = _discover_gateway_backend_url()
+            backend_response = requests.get(
+                _join_url(backend_url, "/actuator/health"),
+                timeout=TestConfig.UPLOAD_TIMEOUT,
+            )
+            backend_response.raise_for_status()
+            health_data = backend_response.json()
+            result.details["health_source"] = "ecs-task"
+            result.details["backend_url"] = backend_url
+        else:
+            health_data = edge_data
 
-        if data.get("status") == "UP":
+        result.details["status"] = health_data.get("status")
+        result.details["components"] = list(
+            health_data.get("components", {}).keys()
+        )
+
+        if health_data.get("status") == "UP":
             result.passed = True
         else:
-            result.error = f"Unexpected status: {data.get('status')}"
+            result.error = f"Unexpected status: {health_data.get('status')}"
 
     except Exception as e:
         result.error = str(e)
@@ -521,7 +647,7 @@ def test_unauthenticated_request_rejected() -> TestResult:
 
     try:
         response = requests.post(
-            f"{TestConfig.GATEWAY_URL}/api/v1/files/upload",
+            _join_url(TestConfig.GATEWAY_URL, TestConfig.GATEWAY_UPLOAD_PATH),
             files={"file": ("test.txt", b"test content", "text/plain")},
             timeout=TestConfig.UPLOAD_TIMEOUT,
         )
@@ -550,40 +676,60 @@ def test_authenticated_file_upload() -> TestResult:
         auth = get_auth()
         token = auth.get_user_token()
 
-        file_id = str(uuid.uuid4())
+        upload_nonce = str(uuid.uuid4())
         file_content = (
-            f"E2E Test File - {file_id}\nCreated: {datetime.now().isoformat()}"
+            f"E2E Test File - {upload_nonce}\nCreated: {datetime.now().isoformat()}"
         )
-        filename = f"e2e-test-{file_id}.txt"
+        file_bytes = file_content.encode()
+        filename = f"e2e-test-{upload_nonce}.txt"
 
-        checksum = hashlib.sha256(file_content.encode()).hexdigest()
+        checksum = hashlib.sha256(file_bytes).hexdigest()
+        correlation_id = str(uuid.uuid4())
 
         headers = {
             "Authorization": f"Bearer {token}",
-            "X-Correlation-ID": str(uuid.uuid4()),
+            "X-Correlation-ID": correlation_id,
         }
 
         response = requests.post(
-            f"{TestConfig.GATEWAY_URL}/api/v1/files/upload",
-            files={"file": (filename, file_content.encode(), "text/plain")},
+            _join_url(TestConfig.GATEWAY_URL, TestConfig.GATEWAY_UPLOAD_PATH),
+            files={"file": (filename, file_bytes, "text/plain")},
             headers=headers,
             timeout=TestConfig.UPLOAD_TIMEOUT,
         )
 
         result.details["status_code"] = response.status_code
-        result.details["file_id"] = file_id
-        result.details["checksum"] = checksum[:16] + "..."
-
-        if response.status_code in (200, 201, 202):
-            try:
-                result.details["response"] = response.json()
-            except Exception:
-                result.details["response_text"] = response.text[:200]
-            result.passed = True
-        else:
+        if response.status_code != 201:
             result.error = (
-                f"Upload failed: {response.status_code} - {response.text[:200]}"
+                f"Expected upload status 201, got {response.status_code}: "
+                f"{response.text[:200]}"
             )
+            result.duration = time.time() - start
+            return result
+
+        upload_response = response.json()
+        server_file_id = upload_response.get("fileId")
+        if not server_file_id:
+            raise AssertionError("upload response has no fileId")
+        try:
+            uuid.UUID(server_file_id)
+        except (TypeError, ValueError) as exc:
+            raise AssertionError("upload response fileId is not a UUID") from exc
+        if upload_response.get("filename") != filename:
+            raise AssertionError("upload response filename does not match request")
+        if upload_response.get("checksum") != checksum:
+            raise AssertionError("upload response checksum does not match content")
+        if upload_response.get("sizeBytes") != len(file_bytes):
+            raise AssertionError("upload response size does not match content")
+        if upload_response.get("mimeType") != "text/plain":
+            raise AssertionError("upload response MIME type does not match request")
+        if upload_response.get("correlationId") != correlation_id:
+            raise AssertionError("upload response correlation ID does not match request")
+
+        result.details["file_id"] = server_file_id
+        result.details["checksum"] = checksum
+        result.details["response"] = upload_response
+        result.passed = True
 
     except Exception as e:
         result.error = str(e)
@@ -615,7 +761,7 @@ def test_full_processing_flow() -> TestResult:
 
         log(f"  -> Uploading file: {filename}")
         response = requests.post(
-            f"{TestConfig.GATEWAY_URL}/api/v1/files/upload",
+            _join_url(TestConfig.GATEWAY_URL, TestConfig.GATEWAY_UPLOAD_PATH),
             files={"file": (filename, file_content.encode(), "text/plain")},
             headers=headers,
             timeout=TestConfig.UPLOAD_TIMEOUT,
@@ -623,9 +769,10 @@ def test_full_processing_flow() -> TestResult:
 
         result.details["1_upload_status"] = response.status_code
 
-        if response.status_code not in (200, 201, 202):
+        if response.status_code != 201:
             raise AssertionError(
-                f"upload failed: {response.status_code} - {response.text[:200]}"
+                f"expected upload status 201, got {response.status_code}: "
+                f"{response.text[:200]}"
             )
 
         upload_response = response.json()
@@ -633,6 +780,21 @@ def test_full_processing_flow() -> TestResult:
         uploaded_file_id = upload_response.get("fileId")
         if not uploaded_file_id:
             raise AssertionError("upload response has no canonical fileId")
+
+        retry_response = requests.post(
+            _join_url(TestConfig.GATEWAY_URL, TestConfig.GATEWAY_UPLOAD_PATH),
+            files={"file": (filename, file_content.encode(), "text/plain")},
+            headers=headers,
+            timeout=TestConfig.UPLOAD_TIMEOUT,
+        )
+        if retry_response.status_code != response.status_code:
+            raise AssertionError("idempotent retry changed the HTTP status")
+        if retry_response.json().get("fileId") != uploaded_file_id:
+            raise AssertionError("idempotent retry created a different fileId")
+        result.details["1_idempotent_retry"] = {
+            "status": retry_response.status_code,
+            "sameFileId": True,
+        }
         log(f"  -> Upload successful, fileId: {uploaded_file_id}")
 
         dynamodb = get_dynamodb_client()
@@ -753,7 +915,10 @@ def test_full_processing_flow() -> TestResult:
         }
 
         get_response = requests.get(
-            f"{TestConfig.GATEWAY_URL}/api/v1/files/{uploaded_file_id}",
+            _join_url(
+                TestConfig.GATEWAY_URL,
+                f"{TestConfig.GATEWAY_FILES_PATH}/{uploaded_file_id}",
+            ),
             headers={"Authorization": f"Bearer {token}"},
             timeout=TestConfig.UPLOAD_TIMEOUT,
         )
@@ -768,9 +933,27 @@ def test_full_processing_flow() -> TestResult:
         if gateway_metadata.get("status") != "COMPLETED":
             raise AssertionError("gateway GET did not expose COMPLETED state")
 
+        denied_delete_response = requests.delete(
+            _join_url(
+                TestConfig.GATEWAY_URL,
+                f"{TestConfig.GATEWAY_FILES_PATH}/{uploaded_file_id}",
+            ),
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=TestConfig.UPLOAD_TIMEOUT,
+        )
+        if denied_delete_response.status_code != 403:
+            raise AssertionError(
+                "non-admin DELETE was not denied: "
+                f"{denied_delete_response.status_code} "
+                f"{denied_delete_response.text[:200]}"
+            )
+
         admin_token = auth.get_admin_token()
         delete_response = requests.delete(
-            f"{TestConfig.GATEWAY_URL}/api/v1/files/{uploaded_file_id}",
+            _join_url(
+                TestConfig.GATEWAY_URL,
+                f"{TestConfig.GATEWAY_FILES_PATH}/{uploaded_file_id}",
+            ),
             headers={"Authorization": f"Bearer {admin_token}"},
             timeout=TestConfig.UPLOAD_TIMEOUT,
         )
@@ -780,7 +963,11 @@ def test_full_processing_flow() -> TestResult:
                 f"{delete_response.text[:200]}"
             )
 
-        result.details["6_gateway_api"] = {"GET": 200, "DELETE": 204}
+        result.details["6_gateway_api"] = {
+            "GET": 200,
+            "userDelete": 403,
+            "adminDelete": 204,
+        }
         result.details["7_verdict"] = (
             "Gateway -> SSE-KMS S3 -> published outbox -> SNS/SQS -> processor "
             "-> current metadata -> GET/DELETE verified"
@@ -802,30 +989,42 @@ def test_gateway_api_docs() -> TestResult:
     start = time.time()
 
     try:
+        management_url = (
+            _discover_gateway_backend_url()
+            if TestConfig.DEMO_RUNTIME == "terraform-local"
+            else TestConfig.GATEWAY_MANAGEMENT_URL
+        )
         endpoints = {
             "/actuator/info": "actuator",
             "/v3/api-docs": "openapi",
-            "/swagger-ui.html": "swagger",
+            "/swagger-ui/index.html": "swagger",
         }
 
-        available = []
+        unavailable = []
         for endpoint, name in endpoints.items():
             try:
-                response = requests.get(
-                    f"{TestConfig.GATEWAY_URL}{endpoint}",
-                    timeout=10,
-                    allow_redirects=True,
-                )
+                with warnings.catch_warnings():
+                    if not TestConfig.GATEWAY_MANAGEMENT_VERIFY_TLS:
+                        warnings.simplefilter("ignore", InsecureRequestWarning)
+                    response = requests.get(
+                        _join_url(management_url, endpoint),
+                        timeout=10,
+                        allow_redirects=True,
+                        verify=TestConfig.GATEWAY_MANAGEMENT_VERIFY_TLS,
+                    )
                 if response.status_code == 200:
-                    available.append(name)
                     result.details[name] = "available"
                 else:
                     result.details[name] = f"status {response.status_code}"
+                    unavailable.append(name)
             except Exception as e:
                 result.details[name] = f"error: {str(e)[:50]}"
+                unavailable.append(name)
 
-        result.passed = len(available) > 0
-        result.details["available_endpoints"] = available
+        result.passed = not unavailable
+        result.details["required_endpoints"] = list(endpoints.values())
+        if unavailable:
+            result.error = f"Required API endpoints unavailable: {unavailable}"
 
     except Exception as e:
         result.error = str(e)
@@ -839,14 +1038,26 @@ def test_audit_services_active() -> TestResult:
     Test that audit services (CloudTrail, GuardDuty, AWS Config) are active.
 
     FedRAMP controls: AU-2/AU-3 (CloudTrail), SI-4 (GuardDuty), CM-2/CM-6 (Config).
-    Only runs when ENABLE_AUDIT_SERVICES=1 is set.
+    Only checks services explicitly listed in EXPECTED_AUDIT_SERVICES. The
+    legacy ENABLE_AUDIT_SERVICES=1 switch still selects all three services.
     """
     result = TestResult("audit_services")
     start = time.time()
 
-    if os.getenv("ENABLE_AUDIT_SERVICES", "0") != "1":
+    expected_services = TestConfig.EXPECTED_AUDIT_SERVICES
+    supported_services = {"cloudtrail", "guardduty", "config"}
+    unknown_services = expected_services - supported_services
+    if unknown_services:
+        result.error = (
+            "unsupported EXPECTED_AUDIT_SERVICES values: "
+            + ", ".join(sorted(unknown_services))
+        )
+        result.duration = time.time() - start
+        return result
+
+    if not expected_services:
         result.passed = True
-        result.details["skipped"] = "ENABLE_AUDIT_SERVICES not set"
+        result.details["skipped"] = "EXPECTED_AUDIT_SERVICES is empty"
         result.duration = time.time() - start
         return result
 
@@ -861,60 +1072,68 @@ def test_audit_services_active() -> TestResult:
         }
 
         checks_passed = 0
-        total_checks = 3
+        total_checks = len(expected_services)
+        result.details["expected_services"] = sorted(expected_services)
 
-        try:
-            ct = boto3.client("cloudtrail", **creds)
-            trails = ct.describe_trails()["trailList"]
-            fsamp_trail = [t for t in trails if "fsamp" in t.get("Name", "")]
-            if fsamp_trail:
-                status = ct.get_trail_status(Name=fsamp_trail[0]["Name"])
-                is_logging = status.get("IsLogging", False)
-                result.details["cloudtrail"] = f"active, logging={is_logging}"
-                if is_logging:
-                    checks_passed += 1
-                else:
-                    result.details["cloudtrail_warning"] = (
-                        "trail exists but not logging"
-                    )
-            else:
-                result.details["cloudtrail"] = "no fsamp trail found"
-        except Exception as e:
-            result.details["cloudtrail"] = f"error: {str(e)[:80]}"
-
-        try:
-            gd = boto3.client("guardduty", **creds)
-            detectors = gd.list_detectors()["DetectorIds"]
-            if detectors:
-                detector = gd.get_detector(DetectorId=detectors[0])
-                status = detector.get("Status", "UNKNOWN")
-                result.details["guardduty"] = (
-                    f"detector={detectors[0]}, status={status}"
-                )
-                if status == "ENABLED":
-                    checks_passed += 1
-            else:
-                result.details["guardduty"] = "no detectors found"
-        except Exception as e:
-            result.details["guardduty"] = f"error: {str(e)[:80]}"
-
-        try:
-            cfg = boto3.client("config", **creds)
-            recorders = cfg.describe_configuration_recorders()["ConfigurationRecorders"]
-            if recorders:
-                rec_status = cfg.describe_configuration_recorder_status()[
-                    "ConfigurationRecordersStatus"
+        if "cloudtrail" in expected_services:
+            try:
+                ct = boto3.client("cloudtrail", **creds)
+                trails = ct.describe_trails()["trailList"]
+                fsamp_trail = [
+                    trail for trail in trails if "fsamp" in trail.get("Name", "")
                 ]
-                recording = any(s.get("recording", False) for s in rec_status)
-                result.details["config"] = (
-                    f"recorder={recorders[0]['name']}, recording={recording}"
-                )
-                if recording:
-                    checks_passed += 1
-            else:
-                result.details["config"] = "no recorders found"
-        except Exception as e:
-            result.details["config"] = f"error: {str(e)[:80]}"
+                if fsamp_trail:
+                    status = ct.get_trail_status(Name=fsamp_trail[0]["Name"])
+                    is_logging = status.get("IsLogging", False)
+                    result.details["cloudtrail"] = f"active, logging={is_logging}"
+                    if is_logging:
+                        checks_passed += 1
+                    else:
+                        result.details["cloudtrail_warning"] = (
+                            "trail exists but not logging"
+                        )
+                else:
+                    result.details["cloudtrail"] = "no fsamp trail found"
+            except Exception as e:
+                result.details["cloudtrail"] = f"error: {str(e)[:80]}"
+
+        if "guardduty" in expected_services:
+            try:
+                gd = boto3.client("guardduty", **creds)
+                detectors = gd.list_detectors()["DetectorIds"]
+                if detectors:
+                    detector = gd.get_detector(DetectorId=detectors[0])
+                    status = detector.get("Status", "UNKNOWN")
+                    result.details["guardduty"] = (
+                        f"detector={detectors[0]}, status={status}"
+                    )
+                    if status == "ENABLED":
+                        checks_passed += 1
+                else:
+                    result.details["guardduty"] = "no detectors found"
+            except Exception as e:
+                result.details["guardduty"] = f"error: {str(e)[:80]}"
+
+        if "config" in expected_services:
+            try:
+                cfg = boto3.client("config", **creds)
+                recorders = cfg.describe_configuration_recorders()[
+                    "ConfigurationRecorders"
+                ]
+                if recorders:
+                    rec_status = cfg.describe_configuration_recorder_status()[
+                        "ConfigurationRecordersStatus"
+                    ]
+                    recording = any(s.get("recording", False) for s in rec_status)
+                    result.details["config"] = (
+                        f"recorder={recorders[0]['name']}, recording={recording}"
+                    )
+                    if recording:
+                        checks_passed += 1
+                else:
+                    result.details["config"] = "no recorders found"
+            except Exception as e:
+                result.details["config"] = f"error: {str(e)[:80]}"
 
         result.passed = checks_passed == total_checks
         result.details["checks_passed"] = f"{checks_passed}/{total_checks}"
@@ -942,7 +1161,10 @@ def test_iam_roles_exist() -> TestResult:
             region_name=TestConfig.AWS_REGION,
         )
 
-        expected_roles = ["fsamp-gateway-role", "fsamp-processor-role"]
+        expected_roles = [
+            TestConfig.GATEWAY_ROLE_NAME,
+            TestConfig.PROCESSOR_ROLE_NAME,
+        ]
         found_roles = []
 
         for role_name in expected_roles:
@@ -953,6 +1175,9 @@ def test_iam_roles_exist() -> TestResult:
                 policies = iam.list_role_policies(RoleName=role_name)
                 policy_names = policies.get("PolicyNames", [])
                 result.details[role_name] = f"exists, policies={policy_names}"
+                if not policy_names:
+                    found_roles.remove(role_name)
+                    result.details[role_name] = "exists, but has no inline policy"
             except iam.exceptions.NoSuchEntityException:
                 result.details[role_name] = "NOT FOUND"
             except Exception as e:
@@ -996,14 +1221,18 @@ def run_all_tests(
         log("OK LocalStack is ready")
     except Exception as e:
         log(f"FAIL LocalStack not ready: {e}", "ERROR")
-        return results
+        failure = TestResult("localstack_readiness")
+        failure.error = str(e)
+        return [failure]
 
     try:
         wait_for_gateway()
         log("OK Gateway is ready")
     except Exception as e:
         log(f"FAIL Gateway not ready: {e}", "ERROR")
-        return results
+        failure = TestResult("gateway_readiness")
+        failure.error = str(e)
+        return [failure]
 
     log("=" * 70)
     log("Running tests...")
@@ -1059,6 +1288,10 @@ def print_summary(results: list[TestResult]) -> int:
     print(f"Total:    {len(results)}")
     print(f"Duration: {total_duration:.2f}s")
     print("=" * 70)
+
+    if not results:
+        print("\nNo tests were executed; refusing a false-positive E2E result.")
+        return 1
 
     if failed > 0:
         print("\nFailed tests:")

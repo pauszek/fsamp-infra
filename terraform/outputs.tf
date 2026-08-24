@@ -83,6 +83,11 @@ output "gateway_service_name" {
   value       = length(module.compute) > 0 ? module.compute[0].gateway_service_name : null
 }
 
+output "gateway_alb_dns_name" {
+  description = "Gateway ALB DNS name used for direct management-endpoint checks"
+  value       = length(module.compute) > 0 ? module.compute[0].gateway_alb_dns_name : null
+}
+
 output "processor_ecs_service_name" {
   description = "Processor ECS service name (null for local environment)"
   value       = length(module.compute) > 0 ? module.compute[0].processor_service_name : null
@@ -145,6 +150,11 @@ output "cognito_user_pool_arn" {
 output "cognito_web_client_id" {
   description = "Cognito Web Client ID for application authentication"
   value       = length(module.auth) > 0 ? module.auth[0].web_client_id : null
+}
+
+output "cognito_resource_server_identifier" {
+  description = "Cognito resource server prefix used by API access-token scopes"
+  value       = length(module.auth) > 0 ? module.auth[0].resource_server_identifier : null
 }
 
 output "cognito_domain_url" {

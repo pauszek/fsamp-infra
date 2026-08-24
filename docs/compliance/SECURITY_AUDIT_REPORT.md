@@ -2,8 +2,9 @@
 
 ## Scope
 
-This review covers the six FSAMP repositories: `fsamp-infra`, `fsamp-gateway`,
-`fsamp-processor`, `fsamp-event-schema`, `fsamp-code-ci`, and `fsamp-demo-flow`.
+This review covers the seven FSAMP repositories: `fsamp-infra`, `fsamp-gateway`,
+`fsamp-processor`, `fsamp-event-schema`, `fsamp-code-ci`, `fsamp-demo-flow`, and
+the technical evidence in `fsamp-thesis`.
 
 The document records FedRAMP Moderate alignment work and FIPS 140-3-oriented
 security decisions. It is not a FedRAMP authorization package and does not
@@ -17,7 +18,7 @@ represent an ATO.
 | Cryptography | Aligned | AWS KMS, FIPS-capable providers, FIPS endpoints outside local mode |
 | Data protection | Aligned | S3, DynamoDB, SQS, SNS, CloudWatch Logs encrypted with KMS in the `us-west-2` baseline |
 | Network security | Aligned | Private compute, VPC endpoints, security groups, WAF, TLS policies |
-| Audit and monitoring | Aligned | CloudTrail, GuardDuty, AWS Config, CloudWatch alarms, structured logs |
+| Audit and monitoring | Implemented, activation pending | Terraform provisions CloudTrail, GuardDuty, AWS Config, CloudWatch alarms, and structured logs; no live AWS environment currently provides operational evidence |
 | CI/CD integrity | Aligned | reusable workflows, SBOM, dependency scanning, image signing, Terraform scanning |
 | Local development | Controlled exception | LocalStack uses local endpoints and disables FIPS-only runtime checks where needed |
 
@@ -50,9 +51,7 @@ represent an ATO.
 |---|---|---|
 | Cross-region replication is optional and disabled by default | Keeps active AWS resources in `us-west-2` for the academic/free-tier baseline | Activate via `enable_cross_region_replication=true` for a DR exercise or tenant requiring passive-region durability |
 | Non-production token lifetime can be longer than prod | Developer ergonomics in dev/staging | Keep prod at shorter lifetime |
-| Python dependencies use minimum pins | CI scans and Dependabot reduce exposure | Add lockfile generation if reproducibility becomes a requirement |
 | LocalStack is not a compliance boundary | It is only a local integration test target | Keep production controls enforced in AWS profiles |
-| E2E build target uses `REQUIRE_FIPS_PROVIDER=false` | LocalStack lacks an OpenSSL FIPS provider; full FIPS path is verified separately by the `FIPS mode check (container)` step in `build-python.yml` | Keep both validation paths in CI |
 
 ## Next Improvements
 
@@ -61,7 +60,6 @@ represent an ATO.
 | Medium | Add scheduled restore/rollback exercise and record results |
 | Medium | Add threat model notes for upload, event, and storage flows |
 | Low | Add CloudWatch SLO burn-rate alarms after real traffic exists |
-| Low | Add dependency lock generation for processor container builds |
 
 ## Conclusion
 
@@ -69,3 +67,8 @@ FSAMP is a strong FedRAMP Moderate-aligned reference implementation with a
 FIPS 140-3-oriented security posture. The current codebase avoids claiming formal
 FedRAMP authorization or cryptographic module validation for the whole system,
 which is the right wording for an academic project without external assessment.
+
+The processor now installs hash-pinned `requirements.lock` and
+`requirements-dev.lock` files in CI and container builds. LocalStack E2E uses
+the same AL2023 Lambda/FIPS image as the production path; only AWS FIPS endpoint
+selection is disabled because calls terminate at the local emulator.

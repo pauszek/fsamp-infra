@@ -118,9 +118,9 @@ resource "aws_cognito_user_pool_client" "web" {
     "email",
     "openid",
     "profile",
-    "https://${var.name_prefix}-api/files.read",
-    "https://${var.name_prefix}-api/files.write",
-    "https://${var.name_prefix}-api/files.delete"
+    "${aws_cognito_resource_server.api.identifier}/files.read",
+    "${aws_cognito_resource_server.api.identifier}/files.write",
+    "${aws_cognito_resource_server.api.identifier}/files.delete"
   ]
 
   callback_urls = var.callback_urls

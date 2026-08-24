@@ -124,7 +124,7 @@ Step 2: Deploy infrastructure (60 min)
 Step 3: Verify services (30 min)
   - ECS tasks running: aws ecs describe-services --cluster fsamp-<env>
   - Lambda active: aws lambda get-function --function-name fsamp-<env>-processor
-  - API Gateway responding: curl -f https://api.<env>.fsamp.example.com/actuator/health
+  - API Gateway responding: curl -f https://api.<env>.fsamp.example.com/health
 
 Step 4: Restore data (60 min)
   - DynamoDB: PITR restore to new tables

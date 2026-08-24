@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${FSAMP_TF_MANAGED:-0}" == "1" ]]; then
+  echo "Skipping mounted user seed; Terraform resources are not ready yet."
+  exit 0
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TERRAFORM_DIR="${ROOT_DIR}/terraform"
 AWS_REGION="${AWS_REGION:-us-west-2}"

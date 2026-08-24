@@ -54,11 +54,12 @@ export const options = {
     environment: __ENV.ENVIRONMENT || 'staging',
   },
 
-  gracefulStop: '30s',
 };
 const CONFIG = {
   baseUrl: __ENV.BASE_URL || 'http://localhost:8080',
   authToken: __ENV.AUTH_TOKEN || '',
+  healthPath: __ENV.HEALTH_PATH || '/health',
+  uploadPath: __ENV.UPLOAD_PATH || '/files/upload',
 
   timeout: '30s',
   uploadTimeout: '60s',
@@ -119,7 +120,6 @@ function generateFileContent(sizeBytes) {
  */
 function buildHeaders(idempotencyKey) {
   const headers = {
-    'Content-Type': 'application/json',
     'X-Request-ID': uuidv4(),
   };
 
@@ -142,7 +142,11 @@ export function setup() {
   console.log(`Target: ${CONFIG.baseUrl}`);
   console.log('');
 
-  const healthRes = http.get(`${CONFIG.baseUrl}/actuator/health`, {
+  if (!CONFIG.authToken) {
+    throw new Error('AUTH_TOKEN is required for authenticated upload scenarios');
+  }
+
+  const healthRes = http.get(`${CONFIG.baseUrl}${CONFIG.healthPath}`, {
     timeout: '10s',
   });
 
@@ -167,9 +171,8 @@ export default function(data) {
   const iter = __ITER;
 
   const scenarios = [
-    { name: 'upload', weight: 60 },
+    { name: 'upload', weight: 80 },
     { name: 'health', weight: 20 },
-    { name: 'status', weight: 20 },
   ];
 
   const totalWeight = scenarios.reduce((sum, s) => sum + s.weight, 0);
@@ -192,9 +195,6 @@ export default function(data) {
     case 'health':
       healthScenario();
       break;
-    case 'status':
-      statusScenario();
-      break;
   }
 
   thinkTime();
@@ -211,23 +211,15 @@ function uploadScenario(vu, iter) {
     const content = generateFileContent(fileSize);
     const filename = `load-test-vu${vu}-iter${iter}-${idempotencyKey}.${fileType.ext}`;
 
-    const payload = JSON.stringify({
-      filename: filename,
-      content: content,
-      contentType: fileType.mime,
-      metadata: {
-        testRun: true,
-        vuId: vu,
-        iteration: iter,
-        timestamp: new Date().toISOString(),
-      },
-    });
+    const payload = {
+      file: http.file(content, filename, fileType.mime),
+    };
 
     const headers = buildHeaders(idempotencyKey);
 
     const startTime = new Date();
     const response = http.post(
-      `${CONFIG.baseUrl}/api/v1/files/upload`,
+      `${CONFIG.baseUrl}${CONFIG.uploadPath}`,
       payload,
       {
         headers: headers,
@@ -278,7 +270,7 @@ function uploadScenario(vu, iter) {
 function healthScenario() {
   group('Health Check', function() {
     const startTime = new Date();
-    const response = http.get(`${CONFIG.baseUrl}/actuator/health`, {
+    const response = http.get(`${CONFIG.baseUrl}${CONFIG.healthPath}`, {
       timeout: CONFIG.timeout,
       tags: { name: 'health', endpoint: 'health' },
     });
@@ -300,28 +292,6 @@ function healthScenario() {
   });
 }
 
-/**
- * Status/info check scenario
- */
-function statusScenario() {
-  group('Status Check', function() {
-    const endpoints = [
-      '/actuator/info',
-      '/actuator/metrics',
-    ];
-
-    for (const endpoint of endpoints) {
-      const response = http.get(`${CONFIG.baseUrl}${endpoint}`, {
-        timeout: CONFIG.timeout,
-        tags: { name: 'status', endpoint: endpoint },
-      });
-
-      check(response, {
-        [`${endpoint}: status is 2xx`]: (r) => r.status >= 200 && r.status < 300,
-      });
-    }
-  });
-}
 export function teardown(data) {
   console.log(`\nLoad Test Completed`);
   console.log(`Started: ${data.startTime}`);

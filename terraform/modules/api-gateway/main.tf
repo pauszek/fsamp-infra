@@ -66,6 +66,15 @@ resource "aws_api_gateway_authorizer" "cognito" {
       condition     = var.cognito_user_pool_arn != null
       error_message = "cognito_user_pool_arn must be set when enable_cognito_authorizer is true."
     }
+
+    precondition {
+      condition = (
+        !var.enable_cognito_authorizer ||
+        var.environment == "local" ||
+        var.cognito_resource_server_identifier != null
+      )
+      error_message = "cognito_resource_server_identifier must be set for non-local Cognito authorization."
+    }
   }
 }
 
@@ -81,6 +90,17 @@ resource "aws_api_gateway_request_validator" "headers_and_params" {
 # cert (alb_tls_verified) and skipped for the self-signed cert. See ADR-008.
 locals {
   alb_scheme = var.alb_tls_enabled ? "https" : "http"
+  # Local password authentication issues access tokens with Cognito's built-in
+  # administration scope. AWS browser clients use route-specific OAuth scopes.
+  access_token_scopes = var.environment == "local" ? {
+    read   = ["aws.cognito.signin.user.admin"]
+    write  = ["aws.cognito.signin.user.admin"]
+    delete = ["aws.cognito.signin.user.admin"]
+    } : {
+    read   = ["${var.cognito_resource_server_identifier}/files.read"]
+    write  = ["${var.cognito_resource_server_identifier}/files.write"]
+    delete = ["${var.cognito_resource_server_identifier}/files.delete"]
+  }
 }
 
 resource "aws_apigatewayv2_vpc_link" "main" {
@@ -102,6 +122,7 @@ resource "aws_api_gateway_method" "upload_post" {
   http_method          = "POST"
   authorization        = var.enable_cognito_authorizer ? "COGNITO_USER_POOLS" : "NONE"
   authorizer_id        = var.enable_cognito_authorizer ? aws_api_gateway_authorizer.cognito[0].id : null
+  authorization_scopes = var.enable_cognito_authorizer ? local.access_token_scopes.write : null
   request_validator_id = aws_api_gateway_request_validator.headers_and_params.id
 
   request_parameters = {
@@ -111,7 +132,7 @@ resource "aws_api_gateway_method" "upload_post" {
 }
 
 resource "aws_api_gateway_integration" "upload_post" {
-  count = var.enable_alb_integration ? 1 : 0
+  count = var.enable_alb_integration && var.environment != "local" ? 1 : 0
 
   rest_api_id             = aws_api_gateway_rest_api.main.id
   resource_id             = aws_api_gateway_resource.upload.id
@@ -159,6 +180,7 @@ resource "aws_api_gateway_method" "file_get" {
   http_method          = "GET"
   authorization        = var.enable_cognito_authorizer ? "COGNITO_USER_POOLS" : "NONE"
   authorizer_id        = var.enable_cognito_authorizer ? aws_api_gateway_authorizer.cognito[0].id : null
+  authorization_scopes = var.enable_cognito_authorizer ? local.access_token_scopes.read : null
   request_validator_id = aws_api_gateway_request_validator.headers_and_params.id
 
   request_parameters = {
@@ -167,7 +189,7 @@ resource "aws_api_gateway_method" "file_get" {
 }
 
 resource "aws_api_gateway_integration" "file_get" {
-  count = var.enable_alb_integration ? 1 : 0
+  count = var.enable_alb_integration && var.environment != "local" ? 1 : 0
 
   rest_api_id             = aws_api_gateway_rest_api.main.id
   resource_id             = aws_api_gateway_resource.file.id
@@ -201,6 +223,7 @@ resource "aws_api_gateway_method" "file_delete" {
   http_method          = "DELETE"
   authorization        = var.enable_cognito_authorizer ? "COGNITO_USER_POOLS" : "NONE"
   authorizer_id        = var.enable_cognito_authorizer ? aws_api_gateway_authorizer.cognito[0].id : null
+  authorization_scopes = var.enable_cognito_authorizer ? local.access_token_scopes.delete : null
   request_validator_id = aws_api_gateway_request_validator.headers_and_params.id
 
   request_parameters = {
@@ -209,7 +232,7 @@ resource "aws_api_gateway_method" "file_delete" {
 }
 
 resource "aws_api_gateway_integration" "file_delete" {
-  count = var.enable_alb_integration ? 1 : 0
+  count = var.enable_alb_integration && var.environment != "local" ? 1 : 0
 
   rest_api_id             = aws_api_gateway_rest_api.main.id
   resource_id             = aws_api_gateway_resource.file.id
@@ -244,6 +267,8 @@ resource "aws_api_gateway_method" "health_get" {
 }
 
 resource "aws_api_gateway_integration" "health_get" {
+  count = var.enable_alb_integration && var.environment != "local" ? 1 : 0
+
   rest_api_id             = aws_api_gateway_rest_api.main.id
   resource_id             = aws_api_gateway_resource.health.id
   http_method             = aws_api_gateway_method.health_get.http_method
@@ -262,6 +287,80 @@ resource "aws_api_gateway_integration" "health_get" {
     }
   }
 }
+
+# LocalStack accepts VPC Link V2 integration targets on create but omits them
+# from readback. Reapplying that false drift disconnects the emulated ALB. Keep
+# the workaround isolated to local state; AWS integrations remain fully managed.
+locals {
+  local_vpc_integrations = var.enable_alb_integration && var.environment == "local" ? tomap({
+    upload = {
+      resource_id             = aws_api_gateway_resource.upload.id
+      http_method             = aws_api_gateway_method.upload_post[0].http_method
+      integration_http_method = "POST"
+      uri                     = "${local.alb_scheme}://${var.alb_dns_name}/api/v1/files/upload"
+      timeout_milliseconds    = 29000
+      request_parameters = tomap({
+        "integration.request.header.X-Idempotency-Key" = "method.request.header.X-Idempotency-Key"
+        "integration.request.header.Content-Type"      = "method.request.header.Content-Type"
+      })
+    }
+    file_get = {
+      resource_id             = aws_api_gateway_resource.file.id
+      http_method             = aws_api_gateway_method.file_get[0].http_method
+      integration_http_method = "GET"
+      uri                     = "${local.alb_scheme}://${var.alb_dns_name}/api/v1/files/{fileId}"
+      timeout_milliseconds    = 29000
+      request_parameters = tomap({
+        "integration.request.path.fileId" = "method.request.path.fileId"
+      })
+    }
+    file_delete = {
+      resource_id             = aws_api_gateway_resource.file.id
+      http_method             = aws_api_gateway_method.file_delete[0].http_method
+      integration_http_method = "DELETE"
+      uri                     = "${local.alb_scheme}://${var.alb_dns_name}/api/v1/files/{fileId}"
+      timeout_milliseconds    = 29000
+      request_parameters = tomap({
+        "integration.request.path.fileId" = "method.request.path.fileId"
+      })
+    }
+    health = {
+      resource_id             = aws_api_gateway_resource.health.id
+      http_method             = aws_api_gateway_method.health_get.http_method
+      integration_http_method = "GET"
+      uri                     = "${local.alb_scheme}://${var.alb_dns_name}/actuator/health"
+      timeout_milliseconds    = 5000
+      request_parameters      = tomap({})
+    }
+  }) : tomap({})
+}
+
+resource "aws_api_gateway_integration" "local_vpc" {
+  for_each = local.local_vpc_integrations
+
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = each.value.resource_id
+  http_method             = each.value.http_method
+  type                    = "HTTP_PROXY"
+  integration_http_method = each.value.integration_http_method
+  uri                     = each.value.uri
+  connection_type         = "VPC_LINK"
+  connection_id           = aws_apigatewayv2_vpc_link.main[0].id
+  integration_target      = var.alb_arn
+  timeout_milliseconds    = each.value.timeout_milliseconds
+  request_parameters      = each.value.request_parameters
+
+  dynamic "tls_config" {
+    for_each = var.alb_tls_enabled ? [1] : []
+    content {
+      insecure_skip_verification = !var.alb_tls_verified
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [integration_target]
+  }
+}
 resource "aws_api_gateway_deployment" "main" {
   rest_api_id = aws_api_gateway_rest_api.main.id
 
@@ -272,19 +371,38 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_resource.upload.id,
       aws_api_gateway_resource.health.id,
       aws_api_gateway_method.health_get.id,
-      aws_api_gateway_integration.health_get.id,
+      aws_api_gateway_integration.health_get[*].id,
+      aws_api_gateway_integration.health_get[*].uri,
+      aws_api_gateway_integration.health_get[*].integration_target,
       aws_api_gateway_method.upload_post[*].id,
+      aws_api_gateway_method.upload_post[*].authorization_scopes,
       aws_api_gateway_method.upload_post[*].request_parameters,
       aws_api_gateway_integration.upload_post[*].id,
+      aws_api_gateway_integration.upload_post[*].uri,
+      aws_api_gateway_integration.upload_post[*].integration_target,
       aws_api_gateway_integration.upload_post[*].request_parameters,
       aws_api_gateway_method.file_get[*].id,
+      aws_api_gateway_method.file_get[*].authorization_scopes,
       aws_api_gateway_method.file_get[*].request_parameters,
       aws_api_gateway_integration.file_get[*].id,
+      aws_api_gateway_integration.file_get[*].uri,
+      aws_api_gateway_integration.file_get[*].integration_target,
       aws_api_gateway_integration.file_get[*].request_parameters,
       aws_api_gateway_method.file_delete[*].id,
+      aws_api_gateway_method.file_delete[*].authorization_scopes,
       aws_api_gateway_method.file_delete[*].request_parameters,
       aws_api_gateway_integration.file_delete[*].id,
+      aws_api_gateway_integration.file_delete[*].uri,
+      aws_api_gateway_integration.file_delete[*].integration_target,
       aws_api_gateway_integration.file_delete[*].request_parameters,
+      [for integration in values(aws_api_gateway_integration.local_vpc) : {
+        id  = integration.id
+        uri = integration.uri
+        # LocalStack normalizes an empty request-parameter map to null on
+        # readback. Hash the semantic empty map in both cases so a fresh apply
+        # is immediately idempotent.
+        request_parameters = coalesce(integration.request_parameters, tomap({}))
+      }],
     ]))
   }
 
@@ -301,6 +419,7 @@ resource "aws_api_gateway_deployment" "main" {
     aws_api_gateway_integration.file_get,
     aws_api_gateway_method.file_delete,
     aws_api_gateway_integration.file_delete,
+    aws_api_gateway_integration.local_vpc,
   ]
 }
 
@@ -329,7 +448,9 @@ resource "aws_api_gateway_stage" "main" {
 
   xray_tracing_enabled = true
 
-  tags = merge(var.tags, {
+  # LocalStack omits stage tags from readback. Keep AWS tags fully managed and
+  # avoid a false local update on every parity plan.
+  tags = var.environment == "local" ? {} : merge(var.tags, {
     Name = "${var.name_prefix}-api-${var.environment}"
   })
 }

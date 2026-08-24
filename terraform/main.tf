@@ -18,7 +18,7 @@ resource "terraform_data" "environment_contract" {
     }
 
     precondition {
-      condition     = !(local.is_staging || local.is_production) || (var.alb_certificate_mode == "acm" && var.alb_domain_name != null && length(trimspace(var.alb_domain_name)) > 0 && !endswith(var.alb_domain_name, ".example.com"))
+      condition     = !(local.is_staging || local.is_production) || (var.alb_certificate_mode == "acm" && local.normalized_alb_domain_name != "" && !endswith(local.normalized_alb_domain_name, ".example.com"))
       error_message = "staging and prod require alb_certificate_mode=acm and a non-placeholder alb_domain_name."
     }
 
@@ -80,6 +80,7 @@ module "messaging" {
   processor_timeout_seconds   = 300
   alarm_notification_endpoint = var.alarm_notification_endpoint
   alarm_notification_protocol = var.alarm_notification_protocol
+  enable_e2e_audit_queues     = local.is_local && local.deploy_edge
 
   depends_on = [module.security]
 }
@@ -87,12 +88,13 @@ module "messaging" {
 module "observability" {
   source = "./modules/observability"
 
-  name_prefix         = local.name_prefix
-  tags                = local.common_tags
-  enable_alarms       = !local.is_local
-  alarm_sns_topic_arn = module.messaging.topic_arns.operations_alerts
+  name_prefix           = local.name_prefix
+  tags                  = local.common_tags
+  enable_alarms         = !local.is_local
+  enable_gateway_alarms = !local.is_local && local.deploy_edge
+  enable_outbox_alarm   = !local.is_local
+  alarm_sns_topic_arn   = module.messaging.topic_arns.operations_alerts
 
-  outbox_table_name                  = module.storage.dynamodb_table_names.outbox
   gateway_alb_full_name              = length(module.compute) > 0 ? module.compute[0].gateway_alb_arn_suffix : ""
   gateway_alb_target_group_full_name = length(module.compute) > 0 ? module.compute[0].gateway_alb_target_group_arn_suffix : ""
 }
@@ -119,19 +121,20 @@ module "api_gateway" {
   source = "./modules/api-gateway"
   count  = local.deploy_edge ? 1 : 0
 
-  environment                 = var.environment
-  name_prefix                 = local.name_prefix
-  tags                        = local.common_tags
-  kms_key_arn                 = module.security.kms_key_arn
-  cognito_user_pool_arn       = module.auth[0].user_pool_arn
-  enable_cognito_authorizer   = true
-  enable_waf                  = local.enable_waf_computed
-  private_subnet_ids          = module.networking[0].private_subnet_ids
-  vpc_link_security_group_ids = [module.networking[0].alb_security_group_id]
-  enable_alb_integration      = true
-  alb_arn                     = module.compute[0].gateway_alb_arn
-  alb_dns_name                = module.compute[0].gateway_endpoint_host
-  alb_tls_verified            = module.compute[0].alb_tls_verified
+  environment                        = var.environment
+  name_prefix                        = local.name_prefix
+  tags                               = local.common_tags
+  kms_key_arn                        = module.security.kms_key_arn
+  cognito_user_pool_arn              = module.auth[0].user_pool_arn
+  cognito_resource_server_identifier = module.auth[0].resource_server_identifier
+  enable_cognito_authorizer          = true
+  enable_waf                         = local.enable_waf_computed
+  private_subnet_ids                 = module.networking[0].private_subnet_ids
+  vpc_link_security_group_ids        = [module.networking[0].alb_security_group_id]
+  enable_alb_integration             = true
+  alb_arn                            = module.compute[0].gateway_alb_arn
+  alb_dns_name                       = module.compute[0].gateway_endpoint_host
+  alb_tls_verified                   = module.compute[0].alb_tls_verified
 
   depends_on = [module.auth, module.compute]
 }
@@ -199,15 +202,16 @@ module "compute" {
   alb_domain_name              = var.alb_domain_name
   localstack_internal_endpoint = local.is_local ? var.localstack_internal_endpoint : ""
 
-  sqs_queue_url          = module.messaging.queue_urls.file_processing
-  sns_topic_arn          = module.messaging.topic_arns.processing_events
-  file_events_topic_arn  = module.messaging.topic_arns.file_events
-  s3_bucket_name         = module.storage.bucket_names.files
-  dynamodb_table_name    = module.storage.dynamodb_table_names.file_metadata
-  outbox_table_name      = module.storage.dynamodb_table_names.outbox
-  idempotency_table_name = module.storage.dynamodb_table_names.idempotency_keys
-  cognito_user_pool_id   = module.auth[0].user_pool_id
-  cognito_client_id      = module.auth[0].web_client_id
+  sqs_queue_url                      = module.messaging.queue_urls.file_processing
+  sns_topic_arn                      = module.messaging.topic_arns.processing_events
+  file_events_topic_arn              = module.messaging.topic_arns.file_events
+  s3_bucket_name                     = module.storage.bucket_names.files
+  dynamodb_table_name                = module.storage.dynamodb_table_names.file_metadata
+  outbox_table_name                  = module.storage.dynamodb_table_names.outbox
+  idempotency_table_name             = module.storage.dynamodb_table_names.idempotency_keys
+  cognito_user_pool_id               = module.auth[0].user_pool_id
+  cognito_client_id                  = module.auth[0].web_client_id
+  cognito_resource_server_identifier = module.auth[0].resource_server_identifier
 
   gateway_image = (
     var.gateway_image_digest != ""
@@ -240,6 +244,7 @@ module "audit" {
   # forced off locally even when their flags are set.
   enable_guardduty    = !local.is_local && var.enable_guardduty
   enable_security_hub = !local.is_local && var.enable_security_hub
+  enable_alerting     = true
   alert_topic_arn     = module.messaging.topic_arns.operations_alerts
   data_bucket_arns    = values(module.storage.bucket_arns)
 

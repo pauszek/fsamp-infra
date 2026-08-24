@@ -12,13 +12,14 @@
 import http from 'k6/http';
 import { check, sleep, group } from 'k6';
 import { Rate, Trend } from 'k6/metrics';
+import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 
 const errorRate = new Rate('errors');
 const uploadDuration = new Trend('upload_duration');
 
 export const options = {
-  vus: 3,
-  duration: '1m',
+  vus: Number(__ENV.SMOKE_VUS || 3),
+  duration: __ENV.SMOKE_DURATION || '1m',
 
   thresholds: {
     http_req_failed: ['rate<0.01'],      // <1% errors
@@ -34,9 +35,10 @@ export const options = {
 
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
 const AUTH_TOKEN = __ENV.AUTH_TOKEN || '';
+const HEALTH_PATH = __ENV.HEALTH_PATH || '/health';
+const UPLOAD_PATH = __ENV.UPLOAD_PATH || '/files/upload';
 
 const headers = {
-  'Content-Type': 'application/json',
   'Authorization': AUTH_TOKEN ? `Bearer ${AUTH_TOKEN}` : '',
   'X-Idempotency-Key': '', // Will be set per-request
 };
@@ -70,7 +72,11 @@ function generateTestFile(sizeBytes) {
 export function setup() {
   console.log(`Starting smoke test against: ${BASE_URL}`);
 
-  const healthRes = http.get(`${BASE_URL}/actuator/health`, { timeout: '10s' });
+  if (!AUTH_TOKEN) {
+    throw new Error('AUTH_TOKEN is required for authenticated upload scenarios');
+  }
+
+  const healthRes = http.get(`${BASE_URL}${HEALTH_PATH}`, { timeout: '10s' });
 
   if (healthRes.status !== 200) {
     console.error(`Health check failed: ${healthRes.status}`);
@@ -91,7 +97,7 @@ export function setup() {
 export default function(data) {
 
   group('Health Endpoints', function() {
-    const healthRes = http.get(`${BASE_URL}/actuator/health`);
+    const healthRes = http.get(`${BASE_URL}${HEALTH_PATH}`);
     check(healthRes, {
       'health status is 200': (r) => r.status === 200,
       'health response has status UP': (r) => {
@@ -104,12 +110,6 @@ export default function(data) {
       },
     }) || errorRate.add(1);
 
-    sleep(0.5);
-
-    const infoRes = http.get(`${BASE_URL}/actuator/info`);
-    check(infoRes, {
-      'info status is 200': (r) => r.status === 200,
-    }) || errorRate.add(1);
   });
 
   group('Upload Endpoint', function() {
@@ -119,16 +119,15 @@ export default function(data) {
     });
 
     const testContent = generateTestFile(1024);
+    const filename = `smoke-test-${idempotencyKey}.txt`;
     const payload = {
-      filename: `smoke-test-${idempotencyKey}.txt`,
-      content: testContent,
-      contentType: 'text/plain',
+      file: http.file(testContent, filename, 'text/plain'),
     };
 
     const startTime = new Date();
     const uploadRes = http.post(
-      `${BASE_URL}/api/v1/files/upload`,
-      JSON.stringify(payload),
+      `${BASE_URL}${UPLOAD_PATH}`,
+      payload,
       { headers: reqHeaders, timeout: '30s' }
     );
     const duration = new Date() - startTime;
@@ -157,8 +156,8 @@ export default function(data) {
       sleep(0.5);
 
       const retryRes = http.post(
-        `${BASE_URL}/api/v1/files/upload`,
-        JSON.stringify(payload),
+        `${BASE_URL}${UPLOAD_PATH}`,
+        { file: http.file(testContent, filename, 'text/plain') },
         { headers: reqHeaders, timeout: '30s' }
       );
 
@@ -177,20 +176,30 @@ export default function(data) {
   });
 
   group('Error Handling', function() {
-    const notFoundRes = http.get(`${BASE_URL}/api/v1/nonexistent-endpoint`);
+    const notFoundRes = http.get(`${BASE_URL}/api/v1/nonexistent-endpoint`, {
+      // API Gateway REST APIs use 403 for an undefined edge resource, while
+      // the gateway container itself returns the conventional 404.
+      responseCallback: http.expectedStatuses(403, 404),
+    });
     check(notFoundRes, {
-      'nonexistent endpoint returns 404': (r) => r.status === 404,
+      'nonexistent endpoint is rejected': (r) => r.status === 403 || r.status === 404,
     });
 
     sleep(0.5);
 
     const invalidRes = http.post(
-      `${BASE_URL}/api/v1/files/upload`,
+      `${BASE_URL}${UPLOAD_PATH}`,
       '{"invalid": json}',
-      { headers: { 'Content-Type': 'application/json' } }
+      {
+        headers: {
+          'Authorization': `Bearer ${AUTH_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        responseCallback: http.expectedStatuses(400, 415),
+      }
     );
     check(invalidRes, {
-      'invalid JSON returns 400': (r) => r.status === 400,
+      'non-multipart upload is rejected': (r) => r.status === 400 || r.status === 415,
     });
   });
 
@@ -206,12 +215,20 @@ export function teardown(data) {
   console.log(`Ended at: ${new Date().toISOString()}`);
 }
 
+function collectChecks(group) {
+  return (group.groups || []).reduce(
+    (checks, childGroup) => checks.concat(collectChecks(childGroup)),
+    group.checks || []
+  );
+}
+
 export function handleSummary(data) {
-  const passed = data.root_group.checks.filter(c => c.passes > 0 && c.fails === 0);
-  const failed = data.root_group.checks.filter(c => c.fails > 0);
+  const checks = collectChecks(data.root_group);
+  const passed = checks.filter(c => c.passes > 0 && c.fails === 0);
+  const failed = checks.filter(c => c.fails > 0);
 
   console.log('\nSmoke test summary');
-  console.log(`Total Checks: ${data.root_group.checks.length}`);
+  console.log(`Total Checks: ${checks.length}`);
   console.log(`Passed: ${passed.length}`);
   console.log(`Failed: ${failed.length}`);
 
@@ -225,5 +242,3 @@ export function handleSummary(data) {
     'smoke-test-results.json': JSON.stringify(data, null, 2),
   };
 }
-
-import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';

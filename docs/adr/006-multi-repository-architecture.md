@@ -70,6 +70,15 @@ tags for human-friendly promotion.
 `fsamp-infra/compatibility.yml` records the currently tested combination of
 gateway, processor, schema, infrastructure, and shared CI versions.
 
+The `current.event-schema` entry is the latest tested tagged repository release
+and is updated by `update-compatibility.yml`. `current.event-contract` is the
+independent wire `schemaVersion`; it has no tag of its own and is intentionally
+excluded from release dispatches. A wire-version change must update the
+canonical schema, producers, consumers, this entry, and the cross-repository E2E
+expectation in one coordinated change. CI verifies that a package-only patch
+release (for example `1.2.1` carrying contract `1.2.0`) remains compatible while
+minor or major drift fails closed.
+
 ## Consequences
 
 Positive outcomes:

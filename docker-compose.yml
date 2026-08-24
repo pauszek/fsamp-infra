@@ -27,7 +27,7 @@ services:
       - no-new-privileges:true
 
   localstack:
-    image: localstack/localstack-pro@sha256:5f1fb6c73ccf053e3748d57d5c43b9cd3dba109bb2ae5b7096d2cf5155082a6c
+    image: localstack/localstack-pro@sha256:0d74e1d2d7ce13a3cb25fc64cf15eb225f1c95c762e56e057bc6a9ed0ed29306
     container_name: fsamp-localstack
     ports:
       - "127.0.0.1:${LOCALSTACK_PORT:-4566}:4566"
@@ -36,9 +36,9 @@ services:
       - FSAMP_TF_MANAGED=${FSAMP_TF_MANAGED:-0}
       - AWS_DEFAULT_REGION=${AWS_REGION:-us-west-2}
       - LOCALSTACK_HOST=${LOCALSTACK_HOST:-localhost.localstack.cloud:4566}
-      - DNS_SERVER=${LOCALSTACK_DNS_SERVER:-8.8.8.8}
+      - DNS_SERVER=${LOCALSTACK_DNS_SERVER:-127.0.0.11}
 
-      - SERVICES=s3,sqs,sns,dynamodb,kms,lambda,iam,sts,cloudwatch,logs,events,secretsmanager,ssm,apigateway,apigatewayv2,cognito-idp,ecs,ecr,ec2,elbv2,acm,route53,cloudtrail,config,guardduty,cloudfront,wafv2,application-autoscaling
+      - SERVICES=s3,sqs,sns,dynamodb,kms,lambda,iam,sts,cloudwatch,logs,xray,events,secretsmanager,ssm,apigateway,apigatewayv2,cognito-idp,ecs,ecr,ec2,elbv2,acm,route53,cloudtrail,config,guardduty,cloudfront,wafv2,application-autoscaling
       - EAGER_SERVICE_LOADING=1
 
       - ENFORCE_IAM=1

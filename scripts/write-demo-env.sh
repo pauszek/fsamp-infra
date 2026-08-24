@@ -34,8 +34,13 @@ topics="$(tf_output sns_topic_arns)"
 
 api_gateway_endpoint="$(tf_raw api_gateway_endpoint)"
 api_gateway_id="$(tf_raw api_gateway_id)"
+gateway_alb_dns_name="$(tf_raw gateway_alb_dns_name)"
+ecs_cluster_name="$(tf_raw ecs_cluster_name)"
+gateway_service_name="$(tf_raw gateway_service_name)"
 processor_lambda_name="$(tf_raw processor_lambda_name)"
 outbox_publisher_lambda_name="$(tf_raw outbox_publisher_lambda_name)"
+gateway_role_arn="$(tf_raw ecs_task_role_arn)"
+processor_role_arn="$(tf_raw lambda_role_arn)"
 
 files_bucket="$(require_jq "${s3_buckets}" '.files')"
 metadata_table="$(require_jq "${tables}" '.file_metadata')"
@@ -48,9 +53,12 @@ processing_events_topic_arn="$(require_jq "${topics}" '.processing_events')"
 kms_key_arn="$(tf_raw kms_key_arn)"
 cognito_user_pool_id="$(tf_raw cognito_user_pool_id)"
 cognito_client_id="$(tf_raw cognito_web_client_id)"
+cognito_resource_server_identifier="$(tf_raw cognito_resource_server_identifier)"
 
 queue_name="${processing_queue_url##*/}"
 dlq_name="${processing_dlq_url##*/}"
+gateway_role_name="${gateway_role_arn##*/}"
+processor_role_name="${processor_role_arn##*/}"
 api_gateway_stage="${api_gateway_endpoint%/}"
 api_gateway_stage="${api_gateway_stage##*/}"
 localstack_edge_port="$(printf '%s' "${LOCALSTACK_ENDPOINT}" | sed -E 's#^https?://[^/:]+:([0-9]+).*$#\1#')"
@@ -72,7 +80,10 @@ DIRECT_PUBLISH_AFTER_OUTBOX=false
 
 GATEWAY_URL=${local_api_gateway_endpoint}
 GATEWAY_UPLOAD_PATH=/files/upload
+GATEWAY_FILES_PATH=/files
 GATEWAY_HEALTH_PATH=/health
+GATEWAY_MANAGEMENT_URL=https://${gateway_alb_dns_name}:${localstack_edge_port}
+GATEWAY_MANAGEMENT_VERIFY_TLS=false
 
 AWS_ENDPOINT_URL=${LOCALSTACK_ENDPOINT}
 AWS_REGION=${AWS_REGION}
@@ -88,6 +99,9 @@ SQS_QUEUE_NAME=${queue_name}
 SQS_QUEUE_URL=${processing_queue_url}
 SQS_PROCESSING_DLQ_NAME=${dlq_name}
 SQS_PROCESSING_DLQ_URL=${processing_dlq_url}
+FILE_EVENTS_AUDIT_QUEUE_NAME=fsamp-local-file-events-audit
+PROCESSING_EVENTS_AUDIT_QUEUE_NAME=fsamp-local-processing-events-audit
+EXPECTED_AUDIT_SERVICES=cloudtrail,config
 
 SNS_TOPIC_ARN=${file_events_topic_arn}
 FILE_EVENTS_TOPIC_ARN=${file_events_topic_arn}
@@ -96,8 +110,16 @@ KMS_KEY_ID=${kms_key_arn}
 
 COGNITO_USER_POOL_ID=${cognito_user_pool_id}
 COGNITO_CLIENT_ID=${cognito_client_id}
+COGNITO_RESOURCE_SERVER_IDENTIFIER=${cognito_resource_server_identifier}
 TEST_USER=e2e@test.local
 TEST_PASSWORD=E2eTestPass123!
+ADMIN_USER=admin@test.local
+ADMIN_PASSWORD=E2eAdminPass123!
+GATEWAY_ROLE_NAME=${gateway_role_name}
+PROCESSOR_ROLE_NAME=${processor_role_name}
+ECS_CLUSTER_NAME=${ecs_cluster_name}
+GATEWAY_SERVICE_NAME=${gateway_service_name}
+GATEWAY_CONTAINER_NAME=gateway
 
 PROCESSOR_LAMBDA_NAME=${processor_lambda_name}
 OUTBOX_PUBLISHER_LAMBDA_NAME=${outbox_publisher_lambda_name}

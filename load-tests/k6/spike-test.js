@@ -50,6 +50,7 @@ export const options = {
 const CONFIG = {
   baseUrl: __ENV.BASE_URL || 'http://localhost:8080',
   authToken: __ENV.AUTH_TOKEN || '',
+  uploadPath: __ENV.UPLOAD_PATH || '/files/upload',
 };
 
 const TEST_PHASES = {
@@ -78,6 +79,10 @@ export function setup() {
   console.log(`Pattern: 10 VUs -> 200 VUs -> 10 VUs (sudden spike)`);
   console.log('');
 
+  if (!CONFIG.authToken) {
+    throw new Error('AUTH_TOKEN is required for authenticated upload scenarios');
+  }
+
   return {
     startTime: Date.now(),
     baseUrl: CONFIG.baseUrl,
@@ -90,19 +95,15 @@ export default function(data) {
 
   group(`${phase} - Request`, function() {
     const idempotencyKey = uuidv4();
-    const payload = JSON.stringify({
-      filename: `spike-test-${phase}-${idempotencyKey}.txt`,
-      content: 'Spike test content - minimal payload for maximum throughput',
-      contentType: 'text/plain',
-      metadata: {
-        phase: phase,
-        elapsedSeconds: Math.floor(elapsedSeconds),
-        activeVUs: __VU,
-      },
-    });
+    const payload = {
+      file: http.file(
+        'Spike test content - minimal payload for maximum throughput',
+        `spike-test-${phase}-${idempotencyKey}.txt`,
+        'text/plain'
+      ),
+    };
 
     const headers = {
-      'Content-Type': 'application/json',
       'X-Idempotency-Key': idempotencyKey,
       'X-Request-ID': uuidv4(),
     };
@@ -113,7 +114,7 @@ export default function(data) {
 
     const startTime = new Date();
     const response = http.post(
-      `${CONFIG.baseUrl}/api/v1/files/upload`,
+      `${CONFIG.baseUrl}${CONFIG.uploadPath}`,
       payload,
       {
         headers: headers,

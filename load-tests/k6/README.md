@@ -23,26 +23,31 @@ sudo apt-get update
 sudo apt-get install k6
 
 # Docker
-docker pull grafana/k6
+docker pull grafana/k6@sha256:e7eeddf1ce2361df6920d925297f487c0ba549c44be242c6a9c22f28d9b08efa
 ```
 
 ### Configure Environment
 
 ```bash
-# Copy example config
-cp config.example.json config.json
-
-# Edit with your values
-vim config.json
+export BASE_URL="https://api-id.execute-api.us-west-2.amazonaws.com/staging"
+export AUTH_TOKEN="<Cognito access token>"
 ```
+
+The scripts target the public API Gateway routes by default: `GET /health` and
+multipart `POST /files/upload`. To test the gateway container directly, set
+`HEALTH_PATH=/actuator/health` and `UPLOAD_PATH=/api/v1/files/upload`.
+
+`config.example.json` is a planning template only; k6 does not load it
+automatically. Runtime values are supplied through the environment variables
+above so credentials never need to be written to the repository.
 
 ## Test Types
 
 | Script | Purpose | Duration |
 |--------|---------|----------|
 | `smoke-test.js` | Verify system works under minimal load | ~1 min |
-| `load-test.js` | Normal load testing | ~10 min |
-| `stress-test.js` | Find breaking points | ~15 min |
+| `load-test.js` | Normal load testing | ~15 min |
+| `stress-test.js` | Find breaking points | ~22 min |
 | `spike-test.js` | Sudden traffic spikes | ~5 min |
 | `soak-test.js` | Extended duration testing | ~1 hour |
 
@@ -50,17 +55,27 @@ vim config.json
 
 ```bash
 # Run smoke test first
-k6 run smoke-test.js
+AUTH_TOKEN="$AUTH_TOKEN" k6 run smoke-test.js
 
 # Run full load test
 k6 run load-test.js
 
 # Run with custom config
-k6 run -e BASE_URL=https://api.example.com load-test.js
+k6 run -e BASE_URL=https://api.example.com -e AUTH_TOKEN="$AUTH_TOKEN" load-test.js
 
 # Run with Docker
-docker run -i grafana/k6 run - < load-test.js
+docker run --rm -i \
+  -e BASE_URL -e AUTH_TOKEN \
+  -v "$PWD:/work" -w /work \
+  grafana/k6@sha256:e7eeddf1ce2361df6920d925297f487c0ba549c44be242c6a9c22f28d9b08efa \
+  run load-test.js
 ```
+
+The pinned image currently provides k6 v2.1.0. Before running a release, use
+`bash ../../scripts/test-k6-scripts.sh` from this directory to parse every
+scenario and exercise the smoke test's public routes, multipart body,
+authorization, idempotent retry, and expected error responses against a strict
+local server.
 
 ## Test Scenarios
 
@@ -110,6 +125,15 @@ Sudden dramatic increases in traffic:
 
 ```bash
 k6 run spike-test.js
+```
+
+### 5. Soak Test
+
+Hold 20 VUs for 50 minutes between five-minute ramps to detect resource leaks,
+queue growth, and degradation over time:
+
+```bash
+k6 run soak-test.js
 ```
 
 ## Thresholds (SLO Validation)
@@ -171,7 +195,7 @@ K6_CLOUDWATCH_NAMESPACE=FSAMP/LoadTests k6 run load-test.js
     filename: load-tests/k6/load-test.js
   env:
     BASE_URL: ${{ secrets.API_URL }}
-    AUTH_TOKEN: ${{ secrets.TEST_AUTH_TOKEN }}
+    AUTH_TOKEN: ${{ secrets.TEST_ACCESS_TOKEN }}
 ```
 
 ### GitLab CI

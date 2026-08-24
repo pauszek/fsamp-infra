@@ -1,4 +1,4 @@
-.PHONY: help fmt fmt-check validate lint security clean ci-validate ci-plan up down logs init-local plan-local apply-local destroy-local seed-local local-core local-parity-up wait-localstack local-parity-bootstrap local-parity-images local-parity-apply local-demo-env local-parity-down local-parity-reset local-parity local-all init-dev plan-dev apply-dev destroy-dev init-staging plan-staging apply-staging init-prod plan-prod apply-prod
+.PHONY: help fmt fmt-check validate lint security clean ci-validate ci-plan up down logs init-local plan-local apply-local destroy-local seed-local local-core local-parity-up wait-localstack verify-localstack-docker-proxy local-parity-bootstrap local-parity-images local-parity-apply local-parity-plan-evidence local-demo-env local-parity-e2e local-parity-down local-parity-reset local-parity local-all init-dev plan-dev apply-dev destroy-dev init-staging plan-staging apply-staging init-prod plan-prod apply-prod
 
 SHELL := /bin/bash
 
@@ -11,6 +11,7 @@ STATE_KEY ?= $(ENV)/terraform.tfstate
 DOCKER_COMPOSE ?= docker compose
 LOCALSTACK_ENDPOINT ?= http://localhost:4566
 LOCAL_PARITY_IMAGE_TAG ?= local-parity
+LOCAL_PARITY_E2E_IMAGE ?= fsamp-e2e-runner:local
 GATEWAY_DIR ?= ../fsamp-gateway
 PROCESSOR_DIR ?= ../fsamp-processor
 DEMO_ENV_PATH ?= ../fsamp-demo-flow/.env.local
@@ -40,7 +41,11 @@ help:
 	@echo "Applying:"
 	@echo "  apply-local    Apply to LocalStack"
 	@echo "  local-core     Apply the lightweight Terraform-managed LocalStack core"
-	@echo "  local-parity   Build/push images and apply ECS/API Gateway/Lambda parity stack"
+	@echo "  local-parity   Build, apply and verify the complete LocalStack parity flow"
+	@echo "  local-parity-plan-evidence"
+	@echo "                 Fail on drift beyond pinned LocalStack readback gaps"
+	@echo "  local-parity-e2e"
+	@echo "                 Run authenticated end-to-end proof against the parity stack"
 	@echo "  local-parity-down"
 	@echo "                 Stop LocalStack parity containers and free the Docker network"
 	@echo "  local-parity-reset"
@@ -117,6 +122,9 @@ wait-localstack:
 	echo "LocalStack did not become healthy"; \
 	exit 1
 
+verify-localstack-docker-proxy:
+	@$(DOCKER_COMPOSE) exec -T localstack curl -fsS http://docker-proxy:2375/_ping >/dev/null
+
 local-parity-bootstrap:
 	cd terraform && terraform apply -var-file=envs/local.tfvars \
 		-target=module.security -target=module.ecr -auto-approve -parallelism=4
@@ -130,9 +138,34 @@ local-parity-images:
 local-parity-apply:
 	cd terraform && terraform apply $(LOCAL_PARITY_VARS) -auto-approve -parallelism=4
 
+local-parity-plan-evidence:
+	@set +e; \
+	cd terraform && terraform plan $(LOCAL_PARITY_VARS) -detailed-exitcode \
+		-out=.terraform/local-parity-repeat.tfplan -no-color; \
+	plan_exit=$$?; \
+	set -e; \
+	if [ "$$plan_exit" -eq 1 ]; then exit 1; fi; \
+	python3 ../scripts/check-localstack-plan.py .terraform/local-parity-repeat.tfplan
+
 local-demo-env:
 	LOCALSTACK_ENDPOINT="$(LOCALSTACK_ENDPOINT)" AWS_REGION="$(AWS_REGION)" \
 		./scripts/write-demo-env.sh "$(DEMO_ENV_PATH)"
+
+local-parity-e2e: local-demo-env
+	@set -euo pipefail; \
+	api_host="$$(terraform -chdir=terraform output -raw api_gateway_id).execute-api.localhost.localstack.cloud"; \
+	alb_host="$$(terraform -chdir=terraform output -raw gateway_alb_dns_name)"; \
+	localstack_ip="$$(docker inspect --format '{{(index .NetworkSettings.Networks "fsamp-network").IPAddress}}' fsamp-localstack)"; \
+	test -n "$$api_host"; \
+	test -n "$$alb_host"; \
+	test -n "$$localstack_ip"; \
+	docker build -f e2e/Dockerfile.e2e -t "$(LOCAL_PARITY_E2E_IMAGE)" e2e; \
+	docker run --rm --network fsamp-network \
+		--add-host="$$api_host:$$localstack_ip" \
+		--add-host="$$alb_host:$$localstack_ip" \
+		--env-file "$(DEMO_ENV_PATH)" \
+		-e AWS_ENDPOINT_URL=http://localstack:4566 \
+		"$(LOCAL_PARITY_E2E_IMAGE)" --verbose
 
 local-parity-down:
 	@$(DOCKER_COMPOSE) down --remove-orphans || true
@@ -156,7 +189,7 @@ local-parity-reset:
 
 # Full LocalStack Pro parity stack: API Gateway -> ALB -> ECS gateway ->
 # DynamoDB Streams -> outbox-publisher Lambda -> SNS -> SQS -> processor Lambda.
-local-parity: local-parity-up wait-localstack init-local local-parity-bootstrap local-parity-images local-parity-apply seed-local local-demo-env
+local-parity: local-parity-up wait-localstack verify-localstack-docker-proxy init-local local-parity-bootstrap local-parity-images local-parity-apply local-parity-plan-evidence seed-local local-demo-env local-parity-e2e
 
 local-all: local-parity
 

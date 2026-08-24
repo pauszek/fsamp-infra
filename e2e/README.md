@@ -35,12 +35,18 @@ It is not a strict runtime clone of AWS because two pieces are shortened:
 
 For stricter LocalStack Pro parity, use the Terraform-managed local environment.
 It builds and pushes gateway/processor images to LocalStack ECR, enables
-ECS/API Gateway and creates both Lambda event-source mappings:
+ECS/API Gateway, creates both Lambda event-source mappings and runs the
+authenticated nine-scenario E2E proof:
 
 ```bash
 cd ../fsamp-infra
 make local-parity
 ```
+
+After the stack is already provisioned, rerun only the same proof with
+`make local-parity-e2e`. The runner image is built from the hash-locked Python
+dependencies and resolves the emulated API Gateway and ALB names inside the
+Docker network explicitly.
 
 This mirrors the AWS eventing contract: `DynamoDB Streams -> outbox-publisher Lambda -> SNS -> SQS -> processor Lambda`. LocalStack Pro is the primary repeatable evidence path for the thesis demo; a short-lived real `us-west-2` AWS run can supplement it with CloudTrail, IAM and managed-service outputs, but is not required to prove the local runtime parity flow.
 
@@ -75,8 +81,11 @@ docker-compose up -d localstack
 docker-compose up -d gateway processor
 docker-compose --profile test up e2e-tests
 
-# Or run tests locally
-pip install boto3 requests tenacity
+# Or run tests locally with the reviewed dependency set
+python3.14 -m venv .venv
+. .venv/bin/activate
+python -m pip install --require-hashes -r requirements.lock
+python -m unittest test_run_e2e_tests.py
 python run-e2e-tests.py --verbose
 docker-compose down -v
 ```
@@ -87,9 +96,11 @@ docker-compose down -v
 |------|-------------|---------------|
 | `gateway_health` | Health check endpoint | No |
 | `localstack_resources` | Verify S3, SQS, DynamoDB, Cognito | No |
-| `api_docs` | OpenAPI/Swagger availability | No |
+| `api_docs` | Actuator info, OpenAPI and Swagger UI all return successfully | No |
+| `iam_roles` | Terraform-selected gateway/processor roles and inline policies | No |
 | `cognito_authentication` | JWT token acquisition | Yes |
 | `unauthenticated_rejected` | 401 for missing auth | N/A |
+| `audit_services` | Every explicitly expected emulated audit service is active | No |
 | `authenticated_file_upload` | Upload with JWT | Yes |
 | `full_processing_flow` | Complete upload -> store -> process | Yes |
 
@@ -99,13 +110,21 @@ docker-compose down -v
 |---------------------|---------|-------------|
 | `LOCALSTACK_AUTH_TOKEN` | required | LocalStack Pro license |
 | `GATEWAY_URL` | `http://localhost:8080` | Gateway endpoint |
+| `GATEWAY_HEALTH_PATH` | `/actuator/health` | Health path exposed by the selected gateway edge |
+| `GATEWAY_UPLOAD_PATH` | `/api/v1/files/upload` | Multipart upload path exposed by the selected gateway edge |
+| `GATEWAY_FILES_PATH` | `/api/v1/files` | File resource path exposed by the selected gateway edge |
+| `GATEWAY_MANAGEMENT_URL` | same as `GATEWAY_URL` | Direct management endpoint for OpenAPI/actuator evidence |
+| `ECS_CLUSTER_NAME` | `fsamp-local-cluster` | ECS cluster used to resolve the direct parity task health endpoint |
+| `GATEWAY_SERVICE_NAME` | `fsamp-local-gateway` | ECS service used to locate the running gateway task |
+| `GATEWAY_ROLE_NAME` | `fsamp-gateway-role` | Gateway IAM role that must exist with an inline policy |
+| `PROCESSOR_ROLE_NAME` | `fsamp-processor-role` | Processor IAM role that must exist with an inline policy |
 | `AWS_ENDPOINT_URL` | `http://localhost:4566` | LocalStack endpoint |
 | `AWS_REGION` | `us-west-2` | AWS region |
 | `COGNITO_USER_POOL_ID` | `us-west-2_fsamp-local` | Cognito User Pool |
 | `COGNITO_CLIENT_ID` | `fsamp-local-client` | Cognito App Client |
 | `DIRECT_PUBLISH_AFTER_OUTBOX` | `true` in compose, `false` in parity | Quick compose fallback that publishes to SNS after the transactional outbox write; parity disables it |
 | `FSAMP_DEMO_RUNTIME` | `compose` or `terraform-local` | Demo label used by `fsamp-demo-flow` evidence |
-| `ENABLE_AUDIT_SERVICES` | `0` | Enables LocalStack CloudTrail, GuardDuty and AWS Config bootstrap evidence |
+| `EXPECTED_AUDIT_SERVICES` | empty | Comma-separated services that must be active (`cloudtrail`, `guardduty`, `config`) |
 
 ## LocalStack Resources
 
@@ -119,7 +138,7 @@ Created by `../localstack/init-aws.sh`:
 - **KMS**: `alias/fsamp-local-master-key`
 - **Lambda/ECR/Events**: API surface available for LocalStack Pro parity runs
 - **CloudWatch/Logs**: API surface available for local observability checks
-- **Optional audit**: `fsamp-local-trail`, GuardDuty detector and AWS Config recorder when `ENABLE_AUDIT_SERVICES=1`
+- **Parity audit**: `fsamp-local-trail` and AWS Config recorder; GuardDuty is checked only in AWS environments because LocalStack does not emulate it
 
 ## Demo Flow Evidence
 
@@ -145,6 +164,19 @@ For each upload, the console shows:
 
 LocalStack Pro is the primary API-level integration proof for the thesis evidence set. A real `us-west-2` AWS run remains a useful optional follow-up for CloudWatch, CloudTrail, AWS Config, KMS, ECS/Lambda and DynamoDB managed-service outputs, but it is not a prerequisite for the LocalStack parity demonstration.
 
+The root `make local-parity` target also runs the E2E proof and a second
+Terraform plan. The
+pinned LocalStack image currently omits three Lambda KMS ARNs from readback.
+`check-localstack-plan.py` accepts exactly those three in-place differences and
+fails closed on every additional change, creation or deletion. Local VPC Link
+target readback is ignored only on the emulator-specific integration resources,
+because reapplying that false drift disconnects the emulated ALB; AWS integration
+targets remain fully drift-managed.
+The same emulator also replaces proxied ALB response bodies with `{}`. The E2E
+proof therefore requires a successful public edge response and independently
+discovers the running ECS task to verify the actual health, OpenAPI and Swagger
+responses; production AWS continues to use the public edge response directly.
+
 ## Manual Testing
 
 ```bash
@@ -158,7 +190,7 @@ TOKEN=$(aws cognito-idp admin-initiate-auth \
   --query 'AuthenticationResult.AccessToken' --output text)
 
 # Upload file with auth
-curl -X POST http://localhost:8080/api/v1/files \
+curl -X POST http://localhost:8080/api/v1/files/upload \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@test.pdf"
 
