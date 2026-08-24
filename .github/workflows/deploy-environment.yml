@@ -68,7 +68,7 @@ jobs:
       TF_VAR_alb_domain_name: ${{ vars.ALB_DOMAIN_NAME || '' }}
       TF_VAR_cognito_callback_urls: ${{ vars.COGNITO_CALLBACK_URLS_JSON || '[]' }}
       TF_VAR_cognito_logout_urls: ${{ vars.COGNITO_LOGOUT_URLS_JSON || '[]' }}
-      TRUSTED_CODE_CI_WORKFLOW_SHA: ${{ vars.TRUSTED_CODE_CI_WORKFLOW_SHA || '3be5121f484722007182b432327f9a6a27d32458' }}
+      TRUSTED_CODE_CI_WORKFLOW_SHA: ${{ vars.TRUSTED_CODE_CI_WORKFLOW_SHA || 'fd553ff9598c1d8548cb808b15b967c1610ccfc4' }}
     steps:
       - name: Validate inputs
         shell: bash
