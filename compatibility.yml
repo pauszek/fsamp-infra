@@ -1,6 +1,6 @@
 current:
   gateway: "0.0.25"
-  processor: "0.0.30"
+  processor: "0.0.31"
   # Latest tested, tagged fsamp-event-schema release. The release workflow
   # updates this independently from the wire contract patch version below.
   event-schema: "1.2.2"
