@@ -116,7 +116,7 @@ represent FedRAMP authorization or an ATO.
 
 | Control | Title | Status | Implementation | Evidence |
 |---------|-------|--------|----------------|----------|
-| **RA-5** | Vulnerability Scanning | Aligned | **Java**: OWASP Dependency-Check (CVSS ≥ 7 gate). **Python**: pip-audit, bandit, safety. **Containers**: Trivy (CRITICAL+HIGH). **IaC**: Checkov. All in CI pipeline. | `build-java.yml`, `build-python.yml`, `security-scan/action.yml` |
+| **RA-5** | Vulnerability Scanning | Aligned | **Java**: OWASP Dependency-Check (CVSS ≥ 7 gate). **Python**: pip-audit (SCA), Bandit and Semgrep (SAST). **Containers**: Trivy (CRITICAL+HIGH). **IaC**: Checkov. All in CI pipeline. | `build-java.yml`, `build-python.yml`, `security-scan/action.yml` |
 
 ---
 
@@ -155,7 +155,7 @@ represent FedRAMP authorization or an ATO.
 
 | Control | Title | Status | Implementation | Evidence |
 |---------|-------|--------|----------------|----------|
-| **SI-2** | Flaw Remediation | Aligned | Dependabot weekly PRs (Maven, pip, Docker, GH Actions, Terraform). OWASP dep-check + pip-audit + safety in CI. Trivy image scanning. | `dependabot.yml` (all 5 repos), CI pipelines |
+| **SI-2** | Flaw Remediation | Aligned | Dependabot weekly PRs (Maven, pip, Docker, GH Actions, Terraform). OWASP Dependency-Check and pip-audit in CI. Trivy image scanning. | `dependabot.yml` in component repositories, CI pipelines |
 | **SI-4** | System Monitoring | Aligned | GuardDuty threat detection (S3 + CloudTrail + DNS). 9 CloudWatch alarms + composite critical alarm. VPC Flow Logs. | `terraform/modules/audit/main.tf` — GuardDuty, `observability/main.tf` |
 | **SI-7** | Software and Information Integrity | Aligned | CloudTrail log file validation. Docker image provenance attestation (BuildKit). cosign keyless signing (Sigstore/Fulcio OIDC). SBOM attached to images. | `docker-build/action.yml` — provenance + SBOM + cosign |
 | **SI-10** | Information Input Validation | Aligned | Spring Bean Validation on DTOs. Apache Tika content-type detection (prevents extension spoofing). File size limits (configurable per profile). WAF SQL injection protection. | `FileUploadRequestDto.java`, `TikaContentValidatorAdapter.java`, WAF rules |

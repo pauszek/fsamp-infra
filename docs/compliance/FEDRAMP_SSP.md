@@ -234,10 +234,9 @@ control family:
 |------|-------|-----------|------|
 | OWASP Dependency-Check | Java dependencies | Every build | Fail on CVSS ≥ 7 |
 | pip-audit | Python dependencies | Every build | Fail on any vulnerability |
-| bandit | Python SAST | Every build | Fail on HIGH |
-| safety | Python CVE scan | Every build | Fail on any |
+| bandit | Python SAST | Every build | Fail on MEDIUM/HIGH severity |
 | Trivy | Docker images | Every build | Fail on CRITICAL/HIGH |
-| Checkov | Terraform IaC | Every build | SARIF report |
+| Checkov | Terraform IaC | Every build | Fail on HIGH/CRITICAL |
 | Dependabot | All ecosystems | Weekly | Auto-PR |
 | SonarCloud | Code quality + SAST | Every build | Quality gate |
 
