@@ -110,12 +110,20 @@ jobs:
           SERVICE: ${{ steps.params.outputs.service }}
           VERSION: ${{ steps.params.outputs.version }}
         run: |
+          set -euo pipefail
           COMPAT_FILE="compatibility.yml"
+          RELEASE_VERSION="$(tr -d '[:space:]' < release.version)"
+          [[ "${RELEASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::release.version must contain a stable semantic version"
+            exit 1
+          }
+          export RELEASE_VERSION
 
           echo "Current values:"
           yq '.current' "$COMPAT_FILE"
 
           yq -i '.current[strenv(SERVICE)] = strenv(VERSION)' "$COMPAT_FILE"
+          yq -i '.current.infra = strenv(RELEASE_VERSION)' "$COMPAT_FILE"
 
           echo ""
           echo "Updated values:"

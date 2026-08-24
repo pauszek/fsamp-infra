@@ -135,6 +135,16 @@ def verify_code_ci_workflow_identity() -> None:
         )
 
 
+def verify_compatibility_update_tracks_infra_release() -> None:
+    workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "update-compatibility.yml"
+    ).read_text()
+    if not re.search(r"yq -i '\.current\.infra = strenv\(RELEASE_VERSION\)'", workflow):
+        raise AssertionError(
+            "compatibility updates must record the infra version released by their merge"
+        )
+
+
 def main() -> None:
     current = read_current_versions()
     release = parse_semver("current.event-schema", current["event-schema"])
@@ -157,6 +167,7 @@ def main() -> None:
     assert not is_patch_compatible((2, 0, 0), (1, 2, 0))
     verify_schema_constraints(contract)
     verify_code_ci_workflow_identity()
+    verify_compatibility_update_tracks_infra_release()
     print(
         f"Compatibility verified: release {current['event-schema']} carries wire contract "
         f"{current['event-contract']}"

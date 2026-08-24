@@ -7,8 +7,8 @@ current:
   # Wire value carried in schemaVersion. Update it only with the canonical
   # schema, both producers/consumers, and the cross-repository E2E evidence.
   event-contract: "1.2.0"
-  infra: "0.0.30"
-  code-ci: "0.0.82"
+  infra: "0.0.31"
+  code-ci: "0.0.84"
 
 compatibility:
   gateway:
