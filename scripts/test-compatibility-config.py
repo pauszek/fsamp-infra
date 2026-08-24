@@ -83,6 +83,13 @@ def is_patch_compatible(
     return release[:2] == contract[:2] and release[2] >= contract[2]
 
 
+def is_infra_release_aligned(
+    current: tuple[int, int, int], next_release: tuple[int, int, int]
+) -> bool:
+    patch_distance = next_release[2] - current[2]
+    return current[:2] == next_release[:2] and patch_distance in (0, 1)
+
+
 def verify_schema_constraints(contract: tuple[int, int, int]) -> None:
     content = (PROJECT_ROOT / "compatibility.yml").read_text()
     constraints = re.findall(
@@ -150,6 +157,10 @@ def main() -> None:
     release = parse_semver("current.event-schema", current["event-schema"])
     contract = parse_semver("current.event-contract", current["event-contract"])
     e2e_contract = parse_semver("E2E event schema", read_e2e_contract_version())
+    infra_release = parse_semver("current.infra", current["infra"])
+    next_infra_release = parse_semver(
+        "release.version", (PROJECT_ROOT / "release.version").read_text().strip()
+    )
 
     if contract != e2e_contract:
         raise AssertionError(
@@ -159,12 +170,20 @@ def main() -> None:
         raise AssertionError(
             "current.event-schema must have the wire contract's major/minor and an equal or newer patch"
         )
+    if not is_infra_release_aligned(infra_release, next_infra_release):
+        raise AssertionError(
+            "current.infra must equal release.version or its immediately preceding patch"
+        )
 
     assert is_patch_compatible((1, 2, 0), (1, 2, 0))
     assert is_patch_compatible((1, 2, 1), (1, 2, 0))
     assert not is_patch_compatible((1, 1, 9), (1, 2, 0))
     assert not is_patch_compatible((1, 3, 0), (1, 2, 0))
     assert not is_patch_compatible((2, 0, 0), (1, 2, 0))
+    assert is_infra_release_aligned((0, 0, 34), (0, 0, 34))
+    assert is_infra_release_aligned((0, 0, 34), (0, 0, 35))
+    assert not is_infra_release_aligned((0, 0, 33), (0, 0, 35))
+    assert not is_infra_release_aligned((0, 1, 0), (0, 0, 1))
     verify_schema_constraints(contract)
     verify_code_ci_workflow_identity()
     verify_compatibility_update_tracks_infra_release()
