@@ -102,11 +102,8 @@ resource "aws_sqs_queue" "dlq" {
   })
 }
 
-# Dedicated DLQ for outbox publisher Lambda. Receives DynamoDB Streams
-# batches that exhaust the maximum_retry_attempts budget configured on the
-# event source mapping. Without a dedicated destination, failed batches are
-# silently dropped, which would break the at-least-once delivery guarantee
-# of the transactional outbox pattern. (FedRAMP CP-9, AU-2)
+# Stream batches that exhaust maximum_retry_attempts land here; without it
+# they are dropped and the outbox loses at-least-once delivery (CP-9, AU-2).
 resource "aws_sqs_queue" "outbox_publisher_dlq" {
   name                      = "${var.name_prefix}-outbox-publisher-dlq"
   message_retention_seconds = 1209600

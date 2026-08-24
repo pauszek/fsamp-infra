@@ -10,34 +10,15 @@ terraform {
   }
 }
 
-# This module provisions cross-region replication for buckets that hold
-# tenant data and audit logs. It owns:
-#   - the destination buckets in the replica region (with versioning,
-#     SSE-KMS, public access block, TLS-only policy);
-#   - a dedicated KMS key in the replica region used to encrypt the
-#     replicated objects;
-#   - the IAM role and policy that S3 assumes to perform replication;
-#   - the aws_s3_bucket_replication_configuration on the source buckets.
-#
-# The module is intentionally feature-flagged via the count gate on
-# var.enabled. When disabled, no replica resources are created and no
-# replication configuration is attached to the source buckets, which
-# allows local and dev environments to skip the cost and complexity.
-#
-# FedRAMP control mapping:
-#   - CP-9 Information System Backup
-#   - AU-9 Protection of Audit Information
-#   - SC-28(1) Cryptographic Protection (replica also encrypted)
-#
+# Cross-region replication for tenant data and audit logs (CP-9, AU-9,
+# SC-28(1)). Every resource is gated on var.enabled so local and dev skip
+# the cost entirely.
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 data "aws_region" "primary" {}
 
-# Replica-region KMS key. The source bucket SSE-KMS uses the primary KMS
-# key, but replicated objects must be re-encrypted with a key that lives
-# in the destination region; otherwise S3 replication fails. The key is
-# also used by replicated CloudTrail logs that the audit module copies
-# into the replica trail bucket.
+# Replicated objects must be re-encrypted with a key in the destination
+# region, otherwise S3 replication fails.
 resource "aws_kms_key" "replica" {
   count = var.enabled ? 1 : 0
 

@@ -22,16 +22,6 @@ output "dynamodb_table_names" {
   }
 }
 
-output "dynamodb_table_arns" {
-  description = "Map of table purposes to ARNs"
-  value = {
-    file_metadata    = aws_dynamodb_table.file_metadata.arn
-    events           = aws_dynamodb_table.events.arn
-    outbox           = aws_dynamodb_table.outbox.arn
-    idempotency_keys = aws_dynamodb_table.idempotency_keys.arn
-  }
-}
-
 output "outbox_stream_arn" {
   description = "ARN of the DynamoDB Streams for the outbox table"
   value       = aws_dynamodb_table.outbox.stream_arn

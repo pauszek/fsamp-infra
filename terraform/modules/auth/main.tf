@@ -168,13 +168,9 @@ resource "aws_cognito_user_pool_client" "web" {
     "name"
   ]
 }
-# Machine-to-machine client for the OAuth2 client-credentials flow (demo /
-# future service consumers). No deployed workload consumes it today: the
-# secret exists only in Terraform state as a sensitive output and is never
-# injected into any task definition or environment variable. When a consumer
-# appears, distribute the secret through Secrets Manager with a task-def
-# `secrets.valueFrom` reference (the ECS execution role already holds
-# secretsmanager:GetSecretValue for fsamp-* secrets) - IA-5.
+# Machine-to-machine client for the client-credentials flow. No workload
+# consumes it yet; a future consumer must read the secret from Secrets
+# Manager rather than an environment variable (IA-5).
 resource "aws_cognito_user_pool_client" "service" {
   name         = "${var.name_prefix}-service-client"
   user_pool_id = aws_cognito_user_pool.main.id
