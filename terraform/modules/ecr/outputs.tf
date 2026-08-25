@@ -5,13 +5,6 @@ output "repository_urls" {
   }
 }
 
-output "repository_arns" {
-  description = "ECR repository ARNs"
-  value = {
-    for k, v in aws_ecr_repository.repos : k => v.arn
-  }
-}
-
 output "repository_names" {
   description = "ECR repository names"
   value = {

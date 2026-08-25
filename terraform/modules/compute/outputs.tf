@@ -8,11 +8,6 @@ output "ecs_cluster_name" {
   value       = aws_ecs_cluster.main.name
 }
 
-output "gateway_task_definition_arn" {
-  description = "ARN of the gateway task definition"
-  value       = aws_ecs_task_definition.gateway.arn
-}
-
 output "gateway_service_name" {
   description = "Name of the gateway ECS service"
   value       = aws_ecs_service.gateway.name
@@ -43,19 +38,9 @@ output "gateway_alb_target_group_arn_suffix" {
   value       = aws_lb_target_group.gateway.arn_suffix
 }
 
-output "ecs_log_group_name" {
-  description = "CloudWatch log group name used by ECS tasks"
-  value       = aws_cloudwatch_log_group.ecs.name
-}
-
 output "gateway_alb_dns_name" {
   description = "DNS name of the internal Gateway ALB"
   value       = aws_lb.gateway.dns_name
-}
-
-output "gateway_alb_listener_arn" {
-  description = "ARN of the internal Gateway ALB listener"
-  value       = aws_lb_listener.gateway.arn
 }
 
 output "processor_lambda_arn" {

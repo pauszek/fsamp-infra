@@ -284,11 +284,8 @@ resource "aws_lb_target_group" "gateway" {
   })
 }
 
-# DNS-validated ACM certificate (alb_certificate_mode = "acm"): removes the
-# self-signed SC-23 exception entirely - the certificate chain is verifiable
-# and the API Gateway integrations enforce verification. Requires a publicly
-# delegated domain in real AWS; under LocalStack Pro validation succeeds
-# locally without delegation.
+# alb_certificate_mode = "acm" drops the self-signed SC-23 exception, but
+# real AWS needs a delegated domain; LocalStack validates without one.
 resource "aws_route53_zone" "alb" {
   count = local.use_acm_cert ? 1 : 0
 
@@ -844,16 +841,8 @@ resource "aws_ecs_service" "processor" {
 }
 
 resource "aws_lambda_function" "processor" {
-  # Container-image Lambdas cannot use AWS Signer code signing profiles
-  # (CKV_AWS_272) because that feature is restricted to ZIP-based functions.
-  # Supply-chain integrity is therefore enforced one layer down:
-  #   - ECR repositories run with image_tag_mutability=IMMUTABLE so tags
-  #     cannot be re-pushed once published.
-  #   - All images are signed keyless with cosign and Sigstore Fulcio in
-  #     the build pipeline; the Lambda execution role only has read access
-  #     to the FSAMP-owned ECR registry.
-  #   - Inspector enhanced continuous scanning (FedRAMP RA-5) covers the
-  #     image after deployment.
+  # AWS Signer profiles only cover ZIP Lambdas, so container images rely on
+  # immutable ECR tags, keyless cosign signatures and Inspector scanning.
   # checkov:skip=CKV_AWS_272: Container Lambdas use cosign + ECR immutable tags + Inspector enhanced scanning instead.
   count = var.enable_lambdas ? 1 : 0
 
